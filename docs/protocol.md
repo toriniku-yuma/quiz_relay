@@ -1,0 +1,78 @@
+# 連合プロトコル v1（提案）
+
+企画で確定しているのは独自HTTPS JSON、手動承認peer、参加・問題・結果共有という境界です。以下のパス、フィールド、署名方式、数値は実装用の提案で、相互運用仕様の確定と契約テストが必要です。ActivityPub互換ではありません。
+
+## 信頼と識別
+
+originはパス・クエリ・fragment・userinfoを持たないHTTPS originへ正規化して完全一致で扱う。actorIdは不変のhomeOriginとsubjectの組から生成し、外部URLを自動取得しない。matchId、resultId、eventIdは発行originと組で一意。rulesHashの対象は版付き競技設定全体とし、表示名・説明文・作成日時は除く。大会は別途questionSet方針とscoringVersionを固定する。
+
+管理者がoriginと公開鍵・kid・有効期間を別経路で確認してpinする。未知のkidを受信しただけで鍵を自動取得・承認しない。相互参加のデモでは両方向の承認を行う。認証されたpeerでも大会の認定開催元でなければ結果を集計しない。
+
+## エンドポイント案
+
+| メソッド・パス | 呼出主体・目的 |
+| --- | --- |
+| GET `/federation/v1/metadata` | origin、protocolVersion、公開鍵情報の提示。自動信頼しない |
+| POST `/api/v1/participation-tickets` | 所属元にログインした本人が開催元・matchIdを指定 |
+| POST `/api/v1/participation/exchange` | 開催元でチケットを一度だけ交換 |
+| GET `/api/v1/rooms/{roomId}/socket` | 開催元セッションを検証してWebSocketへupgrade |
+| POST `/federation/v1/question-set-export` | 承認peerが固定版の問題セットを要求 |
+| POST `/federation/v1/inbox` | 結果・取消イベントの永続受領 |
+
+問題共有はサーバー間のみ。任意URLを受け付けず、peer originに対して固定パスを構成する。
+
+## 自動マッチングとの接続（追加提案）
+
+2026-09-07の回答により、参加後は自動マッチング完了時に即開始する。matchIdに結び付いた既存のチケット案を維持するため、開催元が待機試合のmatchIdと有効期限付き予約を先に割り当て、所属元がそのmatchId向けチケットを発行する案とする。予約だけではプレイヤーの本人確認や参加権を認めない。
+
+交換で本人と予約を結び付け、参加WebSocketの認証と問題・ルール取得が完了したactorだけをマッチング人数へ数える。固定大会定義のplayersPerMatch人がそろったら即開始する。人数は設定可能、初期値は仮置き2人。版・人数が異なる待機列は混ぜない。予約期限切れ・取消で枠を解放し、同時予約・交換・開始を開催元で直列化する。開始後の新規actorを受理しない。予約APIのパス、予約認証、TTL、待機中の重複排除は実装前に契約へ追加し、予約だけを大量作成する枠占有への制限を設ける。
+
+## 参加チケット
+
+1. BでSupabase Authの本人確認を行い、B APIがユーザーの所属actorを確定する。
+2. Bが署名チケットを発行する。必須claimは `iss, sub, aud, matchId, jti, iat, exp, protocolVersion`、TTL初期案は60秒。メールは含めない。
+3. ブラウザーはチケットをAへHTTPS POSTし、Aは署名、pin済みkid、iss、aud=A、matchId、期限、peer状態を検証する。
+4. Aは `(iss,jti)` を永続ストアで原子的に消費し、開催元の参加セッションを作る。同時交換は1件だけ成功する。
+5. セッションでWebSocketに接続し、再接続でもactorとmatchの権限を検証する。
+
+チケットをURL、アクセスログ、localStorageへ保存しない。開催元ページへの遷移後に交換する方式を提案し、cross-originで受け渡す場合は厳密なorigin指定とpostMessage送受信元検証を契約に追加する。開催元セッションはHttpOnly・Secureのcookieを提案する。交換を含むHTTPとWebSocketのOrigin検証、CSRF対策、cookieのSameSite、Authからの遷移方法は認証方式確定後にE2E検証する。交換応答消失時は新規チケットで同じactorの参加を回復し、参加枠を重複作成しない。
+
+## 署名・正規化案
+
+署名はEd25519のJWS、algは固定allowlistとし、チケットと連合メッセージで用途を分離する提案。実行環境・採用ライブラリの互換性と公式仕様を確認してADRで確定する。独自暗号処理は実装しない。
+
+連合HTTPはJSONで `{ "message": "<compact JWS>" }` を送る案。署名対象payloadに `protocolVersion, messageType, issuer, audience, issuedAt, expiresAt, nonce, method, path, bodyHash, body` を含める。bodyHashとrulesHashはRFC 8785のJSON正規化後のUTF-8をSHA-256しbase64url化する提案。重複JSONキー、非有限数、規定外の型を拒否する。署名は受信したJWS signing inputを検証し、bodyを再正規化してhashも確認する。
+
+配送イベント本体も発行者署名付きで保存し、永続イベントの署名と有効期限の短い配送署名を分ける。再送ではeventIdとイベント本体は不変、配送nonce・発行時刻・署名だけ更新する。期限切れ配送を受理して過去イベントを回復する運用にはしない。取消も同じ封筒を用いる。
+
+受信順序はサイズ制限→JSON/JWS構造→承認origin/kid/alg→署名→宛先・用途・method/path→時刻→本文hash→nonce→本文スキーマ・権限。HTTPヘッダーを信頼の根拠にしない。署名不正はDB投影に到達させない。
+
+初期の上限案：配送TTL 60秒、時計許容差5秒、通常イベント256KiB、問題セット2MiB。レート制限とnonce保持時間はsecurity.mdと合わせて確定する。過去イベント検証用に旧公開鍵と承認履歴を保存し、現行鍵の期限と過去署名の監査可能性を混同しない。
+
+## 問題共有
+
+要求はquestionSetIdとversion。作成元は呼出peerへの利用・再共有許諾を検証する。返却する固定manifestにはowner、セット版・hash、順序付きquestionId/questionVersion、本文、許容解答、パネル用カタカナ読み・ダミー候補、解説、出典、許諾条件を含め、署名付きで返す。受信側はhash・署名・利用先と許諾を検証し非公開領域へ保存する。
+
+改訂は新しい版。署名済みセットの同一ID・版に別内容が届いたら上書きせず隔離する。将来の共有停止は新規取得・利用の停止として扱う提案で、進行中の固定試合や結果を黙って書き換えない。具体的な許諾と削除条件は未決。受領した運営者が正解を読めるため、悪意ある運営者への秘匿は保証できない。
+
+## 無効試合
+
+人数条件でINVALIDとなった試合は、開催元で理由と終了を永続化し、ランキング用のresult.finalizedを発行しない案とする。参加者には開催元接続/APIで無効終了を返す。再接続でも終了状態を復元する。すでに確定した結果を後から無効と判断した場合は、下記の取消イベントを使う。開催元が試合中の接続中actorを1人以下と判定したら、0人を含め猶予なしで無効とする。待機中とFINISHED後は対象外。
+
+## 結果と取消
+
+`result.finalized` の必須内容：eventId、origin、resultId、matchId、competitionId、固定ルール各識別子、問題セット版・hash、startedAt、finishedAt、試合成立条件に必要な記録、参加actor、各得点、勝敗・順位。問題の正解や入力解答は送らない。
+
+`result.revoked` はeventId、origin、対象 `(origin,resultId)`、理由コード、発行時刻を持つ。開催元だけが自身の結果を取り消せる。取消が先着してもtombstoneを保持し、後着した結果を有効化しない。MVPでは取消は不可逆とする提案。訂正が必要なら旧結果取消＋新resultIdと置換元を持つ結果を発行し、同一matchの有効結果は最大1件にする。
+
+ローカル管理者の除外は自インスタンスの投影だけに作用し、他の開催元の取消を偽装しない。除外解除はローカル方針履歴に記録して再計算する。
+
+## 受領、再送、収束
+
+inboxは `(origin,eventId)` を一意にする。同じID・同じhashは重複成功、同じID・別hashは409と隔離。新規イベントは署名原本と検証情報を永続化して202、重複は200を返す。受領成功は順位反映完了を意味しない。
+
+outboxは宛先単位でattempts、nextAttemptAt、lease、最終エラー、状態を保持する。指数バックオフとjitter（1秒〜15分を初期案）、429のRetry-Afterを考慮。通信断・5xx・429は再送、仕様違反・認証エラー・409は隔離して管理者が修正後に再送する。peer停止は配送を保留し、再承認後に再開する。回数超過だけで未配送結果を破棄しない。
+
+再送の起動とlease失効でプロセス停止から復帰する。受領側は未投影イベントを再処理可能にし、投影失敗を受領済みだからと取りこぼさない。エラーは `{code, retryable, correlationId}` 形式とし、秘密や入力解答を返さない。
+
+同じ大会定義、有効イベント、除外方針を持つA/Bで最終順位が一致することを契約テストで確認する。
