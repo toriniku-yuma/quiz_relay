@@ -13,14 +13,14 @@
 | peers | instance_id, approval_state, approved_at | pending/approved/suspended/rejected。承認履歴を別途保持 |
 | actors | actor_id, home_origin, subject, display_name | home_origin+subject一意。表示名は非一意 |
 | ruleset_versions | owner, ruleset_id, version, rules_hash, config | owner+id+version一意。過去版不変 |
-| question_versions | owner, question_id, version, body, explanation, source, permission | owner+id+version一意。修正は追加 |
+| question_versions | owner, question_id, version, body, explanation, source, permission | owner+id+version一意。改訂は新しいquestion_idで追加。同じIDの増版で改訂しない |
 | question_answers | owner, question_id, version, accepted_answers, panel_readings, distractors | 問題版へのFK。表示用正答とパネル用カタカナ読みを分離。ダミー候補を含め非公開 |
 | question_sets | owner, set_id, version, manifest_hash, permission | owner+id+version一意 |
 | question_set_items | owner, set_id, set_version, ordinal, question_owner, question_id, question_version | セット版と問題版へのFK。セット内ordinal一意 |
 | competitions | owner, competition_id, definition_version, rules_hash, scoring_version, start_at, end_at, conditions | 開始後は定義不変。start_at < end_at |
 | competition_hosts | competition識別子, host_origin | 認定開催元。固定大会定義の一部 |
 | matches | host_origin, match_id, competition識別子, 固定版, started_at, finished_at, status, invalid_reason | INVALIDは集計対象外。host+match_id一意。結果から固定条件を追跡可能 |
-| participants | host_origin, match_id, actor_id, joined_at | 試合+actor一意。再接続で追加しない |
+| participants | host_origin, match_id, actor_id, joined_at, correct_count, mistake_count, disqualified | 試合+actor一意。再接続で追加しない |
 | answers | host_origin, match_id, question識別子, actor_id, command_id, adjudication_seq, verdict, score_delta | 裁定連番一意。入力解答の保存は必要性と保持期限を確定してから |
 | result_events | origin, event_id, result_id, event_type, target_origin, target_result_id, payload_hash, signed_payload, validation_state | origin+event_id一意。確定イベントはorigin+result_id一意 |
 | result_revocations | target_origin, target_result_id, revocation_event_id | 未到着の結果も参照可能。対象結果への即時FKを要求しない |
@@ -32,11 +32,15 @@
 | ranking_projections | scope_key, actor_id, wins, total_score, participation_count, rank, generation | scope+actor一意。有効イベントから再生成可能 |
 | ranking_projection_runs | scope_key, generation, computed_at, input_revision, state | 再計算世代と反映状況 |
 
+問題改訂時は新しいquestion_idで問題と解答を登録し、既存行を変更しない。question_versionsとquestionVersionは固定参照の契約として保持し、新規問題の初期versionは1とする案。新問題を使う問題セットは新しいセット版で参照し、過去の結果・旧セットの参照は維持する。改訂元との専用の関連付けはMVPでは設けない。問題の不変内容とは別にquestion_availability（owner, question_id, retired_at）で新規出題停止を管理する案。改訂元を停止し、新規開始時に旧セット版からの参照も拒否する。待機中なら取消・更新済みセットへ再参加とし、開始済み試合の固定参照と過去結果は変更しない。
+
 ## 調整値の保存
 
-ruleset_versions.configにchoiceCount、answerTimeMs、revealIntervalMs、judgedDisplayMs、fullRevealWaitMsを保存し、rules_hashの対象にする。competitions.conditionsにplayersPerMatchと「接続中actorが1人以下なら猶予なく無効」の成立条件を含める。matchesから参照する版は開始前に固定する。
+ruleset_versions.configにchoiceCount、characterAnswerTimeMs、correctAnswersToWin、mistakesToDisqualify、revealIntervalMs、judgedDisplayMs、fullRevealWaitMsを保存し、rules_hashの対象にする。competitions.conditionsにplayersPerMatchと「接続中actorが1人以下、または失格していない参加者が1人以下なら猶予なく無効」の成立条件を含める。matchesから参照する版は開始前に固定する。
 
 初期定数の変更でDBの既存版を上書きしない。新しい値は新ルール版・大会定義へ適用する。開始前に固定choiceCount分の一意な候補を全問題で作れることを検証し、ダミー不足や重複候補を黙って減らして配信しない。
+
+characterAnswerTimeMsの初期値は3000ms。終了理由には接続人数不足、失格による残存人数不足、7問先取、問題枯渇を区別して保存する。将来のルーム戦では試合種別と部屋設定を結果から追跡できるようにし、カジュアル戦を順位投影へ含めない契約を追加する。
 
 ## 制約とindex
 
@@ -53,9 +57,9 @@ ruleset_versions.configにchoiceCount、answerTimeMs、revealIntervalMs、judged
 
 ## 順位の再生成
 
-1. 検証済み確定イベントから、認定開催元・固定大会条件・期間・成立条件に合うものを抽出する。
+1. 将来のカジュアルなルーム戦はレート・ローカルおよび連合ランキングの全指標から除外する。検証済み確定イベントから、認定開催元・固定大会条件・期間・成立条件に合うものを抽出する。
 2. 取消tombstoneとローカル除外を適用し、同一試合の置換結果を解決する。矛盾する複数結果は隔離する。
-3. actorごとに勝数、総得点、参加数を集計する。有効試合の同点優勝者は各1勝。INVALIDは勝数・総得点・参加数のすべてから除外する。
+3. actorごとに勝数、総得点、参加数を集計する。有効試合の7問先取または問題枯渇による勝者に1勝。失格者は勝者にしない。問題枯渇時の正解数比較・引き分けと集計はspecification.mdの仮案を参照する。INVALIDは勝数・総得点・参加数のすべてから除外する。
 4. wins降順、total_score降順だけでRANKを求める。actorIdは最終表示のORDER BYにのみ加え、同順位を崩さない。
 5. 新世代の投影を作り、同一TXで参照世代を切り替える。途中計算をUIへ出さない。
 
