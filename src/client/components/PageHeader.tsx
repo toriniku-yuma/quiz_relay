@@ -1,4 +1,4 @@
-import { DEBUG_PATH } from '../app/paths';
+import { DEBUG_PATH, GAME_PATH } from '../app/paths';
 
 type Props = { title: string; description: string };
 
@@ -11,6 +11,7 @@ export default function PageHeader({ title, description }: Props) {
 
       <nav className="flex gap-5 text-sm sm:ml-auto" aria-label="検証ページ">
         <a href={DEBUG_PATH}>動作検証</a>
+        <a href={GAME_PATH}>クイズ検証</a>
       </nav>
 
       <h1 className="w-full text-3xl leading-tight tracking-tight sm:text-5xl">

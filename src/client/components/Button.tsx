@@ -1,7 +1,7 @@
-import type { ButtonHTMLAttributes } from 'react';
+import type { ComponentPropsWithRef } from 'react';
 import { cn } from '../lib/cn';
 
-type Props = ButtonHTMLAttributes<HTMLButtonElement> & {
+type Props = ComponentPropsWithRef<'button'> & {
   tone?: 'primary' | 'neutral';
 };
 

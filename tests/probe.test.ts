@@ -7,6 +7,7 @@ import app from '../src/worker/index';
 const runtime = env as unknown as Env;
 const bindings: Env = {
   PROBE: runtime.PROBE,
+  GAME_ROOM: runtime.GAME_ROOM,
   ASSETS: runtime.ASSETS,
   PROBES_ENABLED: 'false',
 };

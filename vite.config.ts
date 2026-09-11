@@ -22,7 +22,7 @@ export default defineConfig(({ command }) => ({
                 { binding: 'HYPERDRIVE', id: '49ed9c4348e1429d8f04cc6a47755e21' },
               ],
             }
-          : {},
+          : { vars: { LOCAL_GAME_ENABLED: 'true' } },
     }),
   ],
   server: {
