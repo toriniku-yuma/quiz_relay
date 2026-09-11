@@ -1,0 +1,33 @@
+@import "tailwindcss";
+@theme {
+  --font-sans:
+    "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  --shadow-button: 0 3px 0 var(--color-edge);
+  --shadow-button-pressed: 0 1px 0 var(--color-edge);
+  --color-paper: #ffffff;
+  --color-surface: #ffffff;
+  --color-input: #ffffff;
+  --color-result: #f5eded;
+  --color-ink: #3e3636;
+  --color-muted: #3e3636;
+  --color-line: #3e3636;
+  --color-key: #f5eded;
+  --color-accent: #d72323;
+  --color-edge: #3e3636;
+  --color-emphasis: #000000;
+  --color-on-accent: #ffffff;
+}
+@layer base {
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    line-height: 1.7;
+  }
+  a {
+    text-underline-offset: 0.25em;
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-accent);
+    outline-offset: 4px;
+  }
+}
