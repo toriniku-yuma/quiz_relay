@@ -1,0 +1,9 @@
+{
+  "nodeVersion": "v26.8.1",
+  "publicKey": {
+    "crv": "Ed25519",
+    "x": "dzHYY776XWAQLjjcmHmNYEhULELfDjKj7epc0WTrqqo",
+    "kty": "OKP"
+  },
+  "message": "eyJhbGciOiJFZERTQSIsImtpZCI6Im5vZGUtZml4dHVyZSIsInR5cCI6InF1aXotcmVsYXktZGVsaXZlcnkrandzIn0.eyJhdWRpZW5jZSI6Imh0dHBzOi8vd29ya2Vycy5leGFtcGxlIiwiYm9keSI6eyJudW1iZXJzIjpbMCwxLjUsMTAwMDAwMDAwMDAwMDAwMDAwMDAwXSwic291cmNlIjoiTm9kZS5qcyIsInZhbHVlIjoi44Kr44K_44Kr44OKIn0sImJvZHlIYXNoIjoiMl93MEVCWDk0TkVzQ0RYYkl0UU80VzVjODBHZmV0c1pLN0RReWgzb2tXRSIsImV4cGlyZXNBdCI6MTA2MCwiaXNzdWVkQXQiOjEwMDAsImlzc3VlciI6Imh0dHBzOi8vbm9kZS5leGFtcGxlIiwibWVzc2FnZVR5cGUiOiJwcm9iZSIsIm1ldGhvZCI6IlBPU1QiLCJub25jZSI6ImFjMDk5ZWY3LTExNjMtNDUwNS1hNDk0LTUyNGZhNjQ2MDhmNyIsInBhdGgiOiIvZmVkZXJhdGlvbi92MS9pbmJveCIsInByb3RvY29sVmVyc2lvbiI6MX0.2EG-cj-pvcFNr4Ajopnmx_SaoSxImBceedMKTdQDJwgtNPNX8BCS4rH1bFIeFmKKB9rvZeu92q2-dZsPe-7dDw"
+}

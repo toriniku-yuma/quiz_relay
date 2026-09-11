@@ -1,0 +1,19 @@
+# Copy to .dev.vars. Generate a private random token; never commit it.
+PROBES_ENABLED=true
+PROBE_TOKEN=
+# Supavisor transaction pooler / dedicated quiz_probe login / TLS required
+DATABASE_URL=
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=
+
+# Optional browser origin for direct HTTPS or Tailscale Serve; empty for local-only development.
+PROBE_ORIGIN=
+
+# Optional self-signed Vite HTTPS certificate and private key paths.
+DEV_TLS_CERT=
+DEV_TLS_KEY=
+
+# Supabase CA PEM for Node DB probes (use quoted PEM with escaped newlines).
+DATABASE_CA_CERT=
+# Local Miniflare trusts this CA at startup; download from Supabase Database Settings.
+# NODE_EXTRA_CA_CERTS=.wrangler/supabase-ca.crt
