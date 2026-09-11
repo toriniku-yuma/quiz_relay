@@ -15,3 +15,5 @@
 | [Tailwind CSS / クラス検出](https://tailwindcss.com/docs/detecting-classes-in-source-files) | 完全なクラス文字列で状態別スタイルを定義 |
 
 署名・正規化の公式標準、ドライバー、Auth実装の公式資料は段階0で確認・追記する。現時点のprotocol.mdは確定した標準実装手順ではない。
+
+0A・0Bで追加確認したVite/DOテスト・Postgres.js・jose/JCS・PKCEの公式資料は[ADR 0006](adr/0006-phase-zero-foundation.md)に記録する。

@@ -13,3 +13,7 @@
 [0005-visual-design-and-sound.md](0005-visual-design-and-sound.md)：2026-09-08要望反映。素朴なフラットデザイン、凸状の回答ボタン、ユーザーが手動で割り当てる効果音。
 
 新しい重要判断は番号付き文書に日付、状態、背景、決定、影響、代替案を記録する。提案を承認済みと表記しない。DB接続方式・署名方式は技術検証後に個別ADRで確定する。
+
+[0006-phase-zero-foundation.md](0006-phase-zero-foundation.md)：0A・0Bのローカル検証基盤、署名プロファイル、実環境で残る検証。
+
+[0007-source-structure-and-debug-pages.md](0007-source-structure-and-debug-pages.md)：責務別のフォルダー、1 TSX 1コンポーネント、整形、デバッグと比較ページの分離。

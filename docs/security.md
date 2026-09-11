@@ -33,3 +33,11 @@ kid、有効期間、署名、宛先、用途、本文hash、型、サイズ、n
 UIではローカル保存、peer受領、順位反映を区別する。遅延や隔離を「同期済み」と表示しない。ログ保持期間、個人情報削除、バックアップ頻度、復旧目標RPO/RTO、警告しきい値は公開前の確認項目。
 
 PostgresバックアップだけではDOに残る未保存結果を回復できない。復元対象にDOストレージと鍵履歴・設定を含める方法を先行検証する。復旧後は重複配送と順位再生成を安全に実行する。破壊的な障害試験は分離したデモ環境で行う。
+
+## 0Bで採用した限定送信経路（2026-09-10）
+
+初期検証は手動承認したworker.account.workers.dev形式のHTTPS origin完全一致に限定する。独自ドメイン・別ポート・任意URLは拒否する。Cloudflare管理の名前に限定することでpeer管理者による独自DNSの変更を対象経路から除外し、一般のDNS rebinding対策の実測とは区別する。global_fetch_strictly_publicを有効にし、公開経路、固定path、manual redirectと3xx拒否を使用する。Cloudflareの名前解決・公開ルーティングを信頼境界に含む。
+
+任意の独自ドメインを許可する変更では、内部IP解決・DNS変更・リダイレクトと秘密非転送を実経路で検証するまで有効化しない。単にこのホスト制限を削除して拡張しない。S01全体は未完了。
+
+[公開fetchの公式仕様](https://developers.cloudflare.com/workers/runtime-apis/fetch/)と[Workersのルーティング](https://developers.cloudflare.com/workers/reference/how-workers-works/)を参照。

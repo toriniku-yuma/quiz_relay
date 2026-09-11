@@ -1,0 +1,271 @@
+# 検証記録
+
+## 2026-09-08：0A・0Bローカル基盤
+
+対象：基点commit `39e819c` に対する未コミットの0A・0B実装。Windows、Node 26.8.1、npm 11.19.0。依存はpackage-lock.jsonで固定。Vitest 4.1.11、Cloudflare Vitest plugin 1.1.5、Wrangler 4.129.1 / workerd 1.20260907.1、compatibility_date 2026-09-08、nodejs_compat。クラウドの地域・構成・RTT・負荷は未測定。
+
+| 検証 | 結果・条件 |
+| --- | --- |
+| `npm run typecheck` | 成功 |
+| `npm test` | Workers runtime内、2ファイル34件成功。検証コードのテストであり、ゲームのG/A/F/Dケース完了ではない |
+| `npm run build` | UIとWorkerの本番ビルド成功、Tailwind生成CSSを含む |
+| APIの公開境界 | health公開、検証API既定無効、未認証拒否、異なるOrigin拒否、未設定DB/Authの503を確認 |
+| DO保存・競合 | 8件同時incrementで8増加。storageの値を確認 |
+| Alarm | 期限前は再設定、期限後は処理して期限を消去、再実行で結果不変。実HTTPの5秒Alarmも確認 |
+| WebSocket | Hibernation APIでacceptし、保存状態を取得。クラウドでの実休止・復帰は未検証 |
+| ローカル再起動 | Vite/ローカルWorkersを停止・再起動し、count/deadline/firedAtが再起動前の保存値と完全一致 |
+| Ed25519/JCS | Workers内round-trip、Node生成fixtureをWorkersで検証、実HTTPで取得したWorkers署名をNodeで検証 |
+| 署名拒否 | 改ざん、異なる鍵/kid、期限境界、宛先/用途/版/method/path/hash不一致、重複nonce、上限超過、重複JSONキー、非有限数、孤立サロゲートを拒否 |
+| 送信先検証 | HTTP・IP/loopback/link-local表記・未承認origin・任意path・3xxを拒否。実ネットワーク送信とDNS rebindingは未検証 |
+| `npm run probe` | health/persistence/alarm/Workers→Node署名PASS、DBはNOT_CONFIGURED、AuthはMANUAL_CHECK_REQUIRED |
+| ブラウザー | PlaywrightからEdgeを起動し、疎通・専用トークンでの設定状態・署名ボタンを操作。ページ例外なし。1100px幅の画面を目視、390px幅の横overflowなしを確認 |
+
+試行中にWorkersではRequestのredirect:errorが非対応、WebSocketのclose code 1005が非対応と分かった。manual＋3xx拒否、正常close code 1000へ修正し、上記テストを再実施して成功した。
+
+通常のコマンド実行とブラウザー接続ツールはrunner接続タイムアウトになったため、別のコマンド実行経路とPlaywright CLIを使用した。これはアプリの動作不具合とは分けて記録する。
+
+## 未実施・次に必要なもの
+
+- Cloudflare上のDO/Alarm/Hibernation復帰と実WebSocket維持。
+- Supabase Transaction poolerへのTLS接続・commit/rollback・RLS/grants。専用migrationは作成済みだが未適用。
+- メール・GoogleのPKCE遷移、redirect制限、ブラウザー間の参加チケット受け渡し。
+- クラウド送信経路のDNS/SSRF検証と送信方式の確定。
+- 永続nonce/jti消費、参加セッション、Q11〜Q14の契約確定、問題セットのサイズ・schema検証。
+- Firefox/WebKit、実スマートフォン、負荷・性能・運用上限。
+
+0Aは実環境DB・Auth・DO検証待ち。0Bは暗号/送信先のローカル検証までで、クラウド送信境界・Auth・契約の確定待ち。両方とも完了扱いにしない。準備・再実施の手順は[0A・0Bの実行手順](phase-0.md)を参照する。
+
+## 2026-09-08：Supabase公開設定の接続確認
+
+ユーザーがSUPABASE_URLとSUPABASE_PUBLISHABLE_KEYを設定した後、開発サーバーを再起動して確認した。値は記録しない。
+
+- Workerの保護されたauth-config経路に設定が反映されていることを確認。
+- 設定したpublishable keyでSupabase Authのsettingsを読み取り、HTTP 200を確認。
+- メール認証は有効、Google認証は無効。新規登録は禁止されていない。
+- npm run probeの疎通・DO保存・Alarm・Workers→Node署名は引き続き成功。
+- DATABASE_URLは未設定。DB接続は未実施。
+- メール送信・ユーザー作成・ログイン遷移は未実施。次にAuthのredirect設定とユーザー操作によるメールログインを確認する。
+
+## 2026-09-08：Tailscale接続準備
+
+- Tailscale接続済み、既存Serve設定なしを確認。Serve実行はtailnet側の有効化待ち。
+- ローカル設定のPROBE_ORIGINからVite allowedHostsとWorkerの許可Originを設定。X-Forwardedヘッダーだけでは許可しないテストを追加。
+- 実際の.dev.varsを自動テストの設定に流用しないよう、テスト用bindingsを明示。型検査・35テスト・本番ビルド成功。
+- TailscaleのHost/Originを指定したローカルHTTPで、画面・health・保護されたstatusが200。元/生成済みの.dev.vars取得は403でトークン露出なし。
+- クラウドVite pluginがWorker用distにpreview用.dev.varsを生成することを確認。client bundleへの配布とは区別する。
+- 外出先端末からのHTTPSアクセスとTailscale URLでのAuth遷移は未確認。
+
+ユーザー指定によりServeの有効化待ちを取り消し、Viteを100.102.202.80:5173で再起動。Tailscale IP直接指定のHTTPで疎通・保存・Alarm・署名検証が成功。外出先端末からの接続とAuth遷移は未確認。
+
+## 2026-09-08：Tailscale HTTPでの認証失敗の切り分け
+
+ユーザーからPKCE WebCrypto警告とCORS失敗の報告。メールを送信せずAuth OTPのOPTIONSを同一ヘッダーで比較した結果、Tailscale IPのHTTP Originは403・Allow-Originなし、localhostとTailscale HTTPS Originは200・Allow-Originあり。HTTPS化後の実ログインはまだ未確認。
+
+HTTPの非secure contextではログインを開始しない画面表示とガードを追加。型検査・ビルド成功。EdgeでHTTP接続時にメール/Googleボタンが無効、理由表示ありを確認。画面接続とAuth動作を分けずにHTTPでのログインを案内した点を修正する。
+
+## 2026-09-08：Viteの自己署名HTTPS
+
+ユーザー指定によりOpenSSLで30日有効の証明書と秘密鍵を.wrangler/tlsへ生成し、Vite自身のTLSを有効化。CAのシステム登録やServeは行っていない。
+
+- HTTPS IPのOTP preflightは403・Allow-Originなし。HTTPS Tailscale DNS名（ポート5173）は200・Allow-Originあり。同じIPへ解決されるDNS名をログイン用URLとして採用。
+- Edgeの初回証明書警告を実際に詳細設定→続行して表示。ignoreHTTPSErrorsや証明書検証無効化フラグは使用していない。isSecureContext=true、WebCryptoのSHA-256が32バイト、health=200、メール入力後のログインボタン有効を確認。
+- NodeはNODE_EXTRA_CA_CERTSに今回の証明書を指定。HTTPSの疎通・DO保存・Alarm・Workers→Node署名検証成功。
+- 秘密鍵と.dev.varsのHTTP取得は403。証明書・鍵はGit管理外。
+- 型検査、35テスト、本番ビルド成功。
+- Supabase側の新しいRedirect URL登録、外出先端末での警告続行、実メールログインはユーザー操作待ち。メールはこの検証で送信していない。
+
+## 2026-09-08：認証結果の自動表示
+
+メールから戻っても実行結果が「未実行」のままになる表示上の不備を修正。Auth SDKのinitialize完了後にgetUserで本人確認し、結果を自動表示する。既存ログイン状態のある再読込でも確認する。別タブなど開始時の情報がない場合とリンク交換失敗は説明を表示し、処理後のURLから認証code/errorを除く。
+
+型検査・本番ビルド成功。EdgeでSupabase通信をテスト応答に差し替え、コード交換→本人確認成功、交換拒否、開始情報なしの3ケース成功。証明書はUI回帰テストのブラウザーcontextに限ってignoreHTTPSErrorsを使用。実メール送信や実ユーザーのログイン成功は未確認。
+
+## 2026-09-08：認証の回数制限表示
+
+Supabase AuthのエラーについてHTTP statusとcodeを表示し、429は回数制限として案内する。送信成功時も連続再送を避ける説明を追加した。型検査・本番ビルド成功。EdgeでOTP応答を429に差し替え、制限メッセージ・status/codeの表示とリクエストが1回のみであることを確認した（.wrangler/check-auth-rate-limit.mjs、Git管理外、証明書検証の省略はテストcontextのみ）。実メールは送信していない。実環境の制限解除とログイン成功は未確認。
+## 2026-09-08：メール認証の別タブ対応
+
+開始情報を失う原因の一つだったsessionStorageのタブ制限を解消し、公開Auth設定とSDKの保存先をlocalStorageへ変更した。同一ブラウザー・同一originの別タブでPKCE verifierと認証状態を共有する。別端末・別ブラウザーへの引き継ぎは対象外。認証状態はブラウザー終了後も残るためログアウトを案内した。
+
+型検査・本番ビルド成功。Edgeの2タブでSDKによるPKCE challenge生成→別タブでのverifier一致→getUser成功を確認。ログアウトで保存セッション削除、別ブラウザーcontextで開始情報なしの表示も確認（.wrangler/auth-cross-tab-check.mjs、Git管理外）。Auth通信は全てテスト応答、自己署名の検証省略はテストcontextのみ。実メールのログイン成功はユーザー確認待ち。ユーザー報告によりGmail SMTP設定済み、実送信成功は未確認。
+## 2026-09-08：実メールログイン成功（ユーザー確認）
+
+Gmailの独自SMTP設定と別タブ対応の修正後、ユーザーが実メールリンクを開き、検証画面で authenticated: true と本人確認成功の表示を確認した。Supabase AuthのgetUserによる実ユーザーの本人確認まで成功。上記の実メールログイン未確認という残件は、この報告により解消した。Google OAuth、実環境のログアウト・再ログイン、DB接続、クラウド配置などの残件は引き続き未完了であり、0A・0B全体の完了とは扱わない。
+## 2026-09-08：実環境のログアウト・再ログイン成功（ユーザー確認）
+
+ユーザーがログアウト後の本人確認で authenticated: false、新しい実メールによる再ログインで本人確認成功まで確認した。メール送信→リンクからログイン→getUserによる本人確認→ログアウト→未認証確認→再ログインの一連の検証は完了。直前の記録にある実環境のログアウト・再ログイン未確認の残件は解消した。Google OAuth、DB接続、クラウド配置などは引き続き別の残件とする。
+
+## 2026-09-09：npm run devのTailscale起動
+
+ユーザー指定によりdevスクリプトをvite --host 100.102.202.80 --port 5173へ変更。npm run devで自己署名HTTPSサーバーが起動し、証明書を指定したcurlでTailscale DNS名の/api/healthが成功することを確認した。起動手順も更新。
+
+## 2026-09-09：pnpmへの移行
+
+ユーザー指定によりインストール済みpnpm 10.28.2へ統一し、packageManagerに固定した。pnpm importで既存package-lock.jsonからpnpm-lock.yamlを生成し、旧lockfileは削除。直接依存の指定バージョンは維持した。esbuildとworkerdのpostinstallのみ許可し、node_modulesを削除後、pnpm install --frozen-lockfileが成功。pnpm run checkで型検査、35テスト、本番ビルドが成功した。pnpm devの起動とTailscale DNS名へのHTTPS /api/health応答も確認。実行手順を更新し、過去のnpm実行記録は当時の実績として残した。
+## 2026-09-09：DB検証用migration適用（ユーザー報告）
+
+ユーザーがSupabase SQL Editorで202609080001_probe.sqlを実行し、成功を報告した。quiz_probe接続用パスワードの設定と実DB接続・権限制御の検証は次の作業。psql未導入のため、一時管理者設定をGit管理外の.env.db-adminへ分離し、既存のPostgres.jsで設定する準備をした。Workerへこの管理者設定は渡さない。接続情報入力後、検証ロールのパスワード設定とDATABASE_URLへの反映を行い、一時ファイルを削除する予定。まだ管理者接続・パスワード設定は実行していない。
+## 2026-09-09：実Supabase DB接続成功
+
+ユーザー取得のprod-ca-2021.crtをsupabase-ca.crtとして使用。Node側はCA指定と証明書/hostname検証を有効にして管理者接続が成功。quiz_probeにsuperuser/createdb/createrole/bypassrlsがなく、runsでRLS有効を確認。専用パスワードを乱数生成し、SCRAM verifierで設定した。専用ロールとしてcommit/rollback、anon/authenticatedのschema/table権限なし、quiz_probeのschema CREATE権限なし、実DDLの42501拒否を確認した。
+
+ローカルWorkerは初回Network connection lostで失敗。Postgres.jsのworkerd実装ではcaオプションがTLSへ渡らないため、Miniflareが起動時に読むNODE_EXTRA_CA_CERTSを設定した。pnpm devを.dev.vars読込付きへ変更・再起動後、pnpm run probeがhealth/persistence/alarm/Workers→Node署名/databaseすべてPASS。検証後のrunsは0行。一時診断APIとドライバーaliasは撤去し、一般エラー応答を維持した。型検査・35テスト・ビルドも成功。管理者設定.env.db-adminは作業完了後に削除した。
+
+これはローカルWorker→実Supabaseの結果であり、Cloudflare配置後の接続・CA互換性は未検証。Googleログインは設定完了の報告を受けたが、実ログイン成功の確認はメール認証とは区別する。
+## 2026-09-09：Cloudflare初回配置
+
+OAuthログイン後、既存Workerがないことを確認。ビルドとdry-runに成功し、quiz-relay-probeをPROBES_ENABLED=falseで初回配置した。Wranglerがworkers.devサブドメインを登録し、https://quiz-relay-probe.quiz-relay.workers.dev を返した。Version ID: 61e80dc8-1917-4f40-852f-24f6bf277f36。直後の公開URLへのfetchは接続失敗であり、疎通は未確認。
+
+DB接続URL・CA・Supabase設定とクラウド専用検証トークンをSecret登録する操作は、具体的な秘密情報の外部転送への明示的承認がないとして自動承認レビューに拒否された。登録操作は実行されていない。ユーザー承認後にSecret登録、検証APIの一時有効化、DB/DO/Alarm/WebSocketの実環境検証を行う。検証後はAPIを再び無効化する。
+## 2026-09-09：Cloudflare Secret登録・無料条件の確認待ち
+
+ユーザーが検証用Secret登録を承認（費用がかからないことが条件）。クラウド専用トークン、検証ロールのDATABASE_URL、DATABASE_CA_CERT、SUPABASE_URL、SUPABASE_PUBLISHABLE_KEYをSecret登録した。登録用の一時JSONは削除済み。クラウドの専用トークンとoriginはGit管理外の.wrangler/.env.cloud-probeに保存。公開/api/healthは200。検証APIは無効のまま。
+
+契約プラン確認のsubscriptions APIはOAuth権限不足で403。workers/standardのstandard:trueは無料プラン確認の証拠として扱わず、ユーザーへWorkers Freeの表示確認を依頼した。有料プランへの変更や有料サービス追加は行っていない。
+
+WebSocketのDO再生成判定用instanceIdを実装し、接続時刻attachmentとの比較スクリプトを準備。型検査・35テスト・ビルド成功。今回のinstanceId変更のクラウド配置と実検証は無料条件確認後に行う。
+## 2026-09-09：Workers Free実環境検証
+
+ユーザーがWorkers Freeを確認。検証APIを一時有効化し、実HTTPでhealth、DO保存、Alarm、Workers署名のNode検証まで成功。DBプローブはHTTP 500で失敗し、全項目PASSではない。WebSocketは30秒無通信の前後で接続を維持し、countとconnectedAt attachmentが一致、instanceIdが変化した。DO再生成後の状態・attachment復元を確認した。
+
+DBの代替としてHyperdrive Free（1日100,000クエリ、上限超過時はエラー）でSupabase CAを用いたverify-full接続を準備。CA登録成功、ID 8510a1fc-296c-40fc-9cc9-4d5e264fdc6b。設定案はquiz-relay-probe-db、検証専用ロール、Supavisor session port 5432、キャッシュ無効、接続上限5。Hyperdriveの作成と資格情報登録は自動承認レビューに拒否され、未実行。既存WorkerのSecret登録とは別の明示承認待ち。
+
+検証APIをPROBES_ENABLED=falseへ戻し、認証トークン付きstatusが404であることを確認。最終Version ID 549348cc-5d89-4d74-8d39-cd796a8827bf。有料プラン変更なし。クラウドDB接続、クラウドURLでのAuth、DNS/SSRFと連合契約の残件は未完了。
+## 2026-09-09：Hyperdrive Free経由のクラウドDB成功
+
+ユーザーが無料Hyperdrive作成と検証DB資格情報登録を明示承認。quiz-relay-probe-db（ID 49ed9c4348e1429d8f04cc6a47755e21）を作成し、Supavisor session port 5432、quiz_probeロール、CA ID 8510a1fc-296c-40fc-9cc9-4d5e264fdc6b、sslmode verify-full、キャッシュ無効、origin_connection_limit 5を設定。作成時の接続確認成功。
+
+Viteの本番ビルドだけにHYPERDRIVE bindingを追加し、ローカルは既存DATABASE_URL経路を維持。Hyperdriveの内部接続ではドライバー側TLSを開始せず、Hyperdrive→DBのverify-fullを設定で担保する。API結果はhyperdrive-managedと表示する。型検査・35テスト・ビルド成功。
+
+Cloudflare上でpnpm相当のscripts/probe.mjsを実行し、health、DO保存、Alarm、Workers署名のNode検証、DB commit/rollbackすべてPASS。未認証401・異なるOrigin403、公開URLから秘密値が返らないことも確認した。WebSocketの休止復帰は直前のクラウド検証で成功済み。検証後のDB行は0行、検証ロールでDDL拒否を再確認。
+
+Workerに重複していたDATABASE_URL/DATABASE_CA_CERT secretsは削除し、DB資格情報をHyperdrive設定へ集約。PROBES_ENABLED=falseへ戻し、トークン付きstatusの404を確認。最終Version ID cd64eb1c-b5a7-41c1-8b49-6e5e89acb7c4。Workers Freeのまま、有料プラン変更なし。クラウドURLでのAuthとDNS/SSRF・連合契約は未完了であり0A・0B全体完了とはしない。
+## 2026-09-10：クラウドGoogleログイン成功（ユーザー確認）
+
+ユーザーがローカルのGoogleログイン成功を報告。続いてWorkers URLをSupabaseのRedirect URLsとGoogle OAuthクライアントのJavaScript生成元に追加したと報告した。検証APIを一時有効化し、statusとauth-configのHTTP 200を確認。クラウド専用PROBE_TOKENでの操作を案内した後、ユーザーがクラウドでのGoogleログイン成功を報告した。クラウドでのメール認証・ログアウト・再ログインは今回の確認範囲に含めない。
+
+確認後はPROBES_ENABLED=falseへ戻し、トークン付きstatusが404 / PROBES_DISABLEDであることを確認。Version ID: fcd24451-e610-4097-bf83-62971397f5f0。コード変更やテスト再実行はなし。DNS/SSRFの実環境検証と連合契約の残件は維持する。
+## 2026-09-10：0A・0Bの完了判定と限定egress検証
+
+文書と実績を照合。0Aは開発・ビルド、ローカルDB、クラウドHyperdrive/DB、DO保存・Alarm・WebSocket再生成復帰、メールとGoogleのAuth結果がそろい完了と判定した。Authのユーザー報告範囲は前項を維持し、Googleログアウト等の追加実測を捏造しない。
+
+旧0B計画には詳細契約確定も含まれていた。今回の範囲整理でチケットは2A、大会・共有は2B、本番配送は2C、取消・訂正は3Aの着手前へ移動。旧条件の全件成功ではなく、限定技術基盤としての完了判定である。
+
+DNS変更可能なドメインをユーザーは持っていないため購入せず、peerRequestを承認したworker.account.workers.devのHTTPS完全一致へ制限。独自ドメイン、紛らわしいsuffix、別ポート、余分なラベルを拒否する39テスト・型検査・ビルドが成功。URL拒否と3xx拒否はWorkersローカルテストで確認しており、実DNS切り替えや実3xxサーバーは今回試験していない。
+
+クラウドの固定自Worker宛POSTは初回500。公式仕様に基づきglobal_fetch_strictly_publicを追加すると成功した（初回の詳細例外は取得していない）。未実装inboxのJSON 404を確認する疎通であり、配送機能は未実装。送信本文は公開のダミー文字列、宛先はコード内固定で、入力URL・Authorization・cookieを転送しない。scripts/probe-egress.mjsで疎通・未認証401・異なるOrigin403がPASS。DNS rebindingはNOT_TESTEDと明示。
+
+変更後のクラウドhealth・DO保存・Alarm・Workers→Node署名・DB commit/rollbackもPASS。有効時Version ID 828b30b0-a686-43db-9f83-811e210e17a1。終了後はAPI無効へ戻し、トークン付きstatusとegressの404 / PROBES_DISABLEDを確認。最終Version ID cea32f2b-9db3-455f-a86b-5e5841f9f4fb。有料リソース追加なし。
+
+結論：0A完了、0Bは承認workers.dev限定・詳細契約は後続ゲートという条件で完了。S01全体、独立A/Bの通信、参加交換や永続nonceは未完了。1Aへ進む際に追加アカウント・ドメイン購入は必要ない。
+
+## 2026-09-10：コードレビュー3件の修正
+
+検証APIの失敗をHTTP status・code付きの専用エラーとして画面へ表示し、401（トークン不一致）、404（検証API無効）、503（Auth未設定）を区別した。SupabaseのURLまたは公開キーが変わった場合は、旧Authクライアントのdisposeで自動更新・イベント購読等を終了して新しいクライアントへ置き換える。同じ設定なら既存クライアントを再利用する。Viteの開発用TLS証明書読込をcommand=serveに限定し、本番ビルドから分離した。
+
+scripts/check-review-regressions.mjsをpnpm run checkに追加。実装から抽出した実際の処理をテスト応答で実行し、3種類のエラー表示、接続先と公開キー変更時の置き換え・旧クライアント破棄、同設定での再利用を確認した。Vite設定はファイル読込とpluginを差し替え、証明書欠落時もbuildでは読まず、serveでは欠落を検知することを確認。秘密ファイルの移動・削除や実Auth通信は行っていない。
+
+型検査、Workersの39テスト、上記回帰チェック、本番ビルドが成功。今回の修正のクラウド配置および実Google/メールログインの再確認は未実施。ブラウザーの表示確認ではなく処理単位の回帰確認である。
+## 2026-09-10：責務分割・比較ページ・入口分離
+
+ユーザー指摘に基づきclientの画面・共通UI・認証・検証・デザインを分割し、workerのprobes/federationを分離した。DOのexport名・binding・保存キーは維持。main.tsxは起動と入口のリダイレクトのみ、TSXは1ファイル1コンポーネント。Prettier 3.9.6を固定し、format/checkへ整形確認を追加した。
+
+/debug/へデバッグ画面を移動し、/からquery/hashを維持してlocation.replaceする。Auth SDKは到着後に初期化する。/design/に4配色・3ボタンと早押し・文字選択のUIサンプルを作成。採用色・ボタンは未決で、ゲーム本体は未実装。
+
+整形・型検査・44テスト・Viteの証明書回帰チェック・ビルド成功。UIの文字列切出し回帰チェックは直接importするtests/client.test.tsへ移行した。Edgeでビルド成果物をローカルHTTP配信し、トップ遷移、401表示、4候補、配色/ボタン選択、Spaceキーの早押し、回答選択、390px幅の横溢れなし・例外なしを確認。1440pxと390pxのスクリーンショットを目視確認した。
+
+実SDKでPKCE生成→別タブのルートcallback→/debug/へ移動→交換・getUser成功、logoutでセッション削除、別ブラウザーの開始情報不足を確認した。Auth通信は全てテスト応答で、実メール送信はしていない。
+
+公開反映：Version ID 39ec4e14-7342-4d05-aeb1-94001ddfc6fb。ユーザーの検証継続希望に従いPROBES_ENABLED=trueを維持。公開Edgeで/→/debug/と/design/の4候補表示を確認。クラウドhealth・DO保存・Alarm・Workers→Node署名・DB commit/rollback・固定egress・未認証401・異Origin403が成功。実Googleログインの再試行は今回行っていない。
+## 2026-09-10：Biomeへ移行
+
+Prettier依存・設定を撤去し、Biome 2.5.12を固定。2スペース・90文字・single quoteを引き継ぎ、Tailwind v4・HTML整形を有効にした。対象をコードと指定設定ファイルへ限定。migrateがpreset=noneを生成したため、recommendedへ明示修正し、推奨Lintで検証した。
+
+EffectのrunをuseCallbackで安定化して依存へ追加。命名可能なfigureで配色・回答表示のラベルを表現し、非null断定を明示チェックへ変更した。Lintの一括抑制は追加していない。推奨Lintはエラー・警告なし、型検査・44テスト・証明書回帰チェック・ビルドが成功。今回の変更はクラウド未配置。
+
+## 2026-09-10：参考サイトを基に配色を再検討
+
+ユーザーは段差付きボタンを支持。比較ページのボタンを段差付きに揃え、従来4配色を白×赤・黄×黒・グレー×緑の3案へ置き換えた。色の最終採用は未決。背景を無彩色、問題面を白にし、主操作へ色を集中させる。
+
+- [任天堂](https://www.nintendo.com/jp/)：実サイトの白い情報面と赤の対比を画面確認し、赤い主操作へ応用。
+- [LEGO公式ヒストリー](https://www.lego.com/en-dk/history/articles/f-a-modern-international-company)：原色と黒い輪郭を参考に黄×黒を提案。ショップは自動ブラウザーで確認画面となったため、ショップ全体の視覚確認済みとは扱わない。
+- [GitHub Primer](https://primer.style/product/primitives/color/)：公式の役割別カラーと白・グレーの情報面を確認し、緑の主操作へ応用。
+
+参考元のロゴや画面は転載せず、リンクと取り入れた点を比較ページに記載。色コードは当アプリ用に調整した値で、ブランド公式値の転記ではない。
+
+Biome推奨Lint・型検査・44テスト・ビルド成功。Edgeで3案の切替、段差付き早押し、文字入力、390pxで横溢れなしを確認。デスクトップスクリーンショットを目視確認。本文・補助文字・主ボタン・得点文字の色ペアは全案4.5:1以上（無効状態を除く）。Authの模擬別タブ復帰も成功し、実メールは送信していない。
+公開配置：Version ID 256aca05-ed0e-431c-95de-324da26fd104。/design/が更新後のassetsを返すことを確認。検証APIは有効を維持。Biome移行時の修正も今回のビルドに含まれる。
+
+## 2026-09-11：採用した赤白パレットを見本へ反映
+
+ユーザーが選んだColor Huntの000000/3E3636/D72323/F5EDEDを初期表示に採用。主操作は赤、文字と段差は濃いグレー、問題面には純白を追加した。旧2案は比較用として残し、採用済みであることを画面と仕様に明記した。
+
+Biome・型検査・44テスト・証明書回帰チェック・ビルド成功。再開後、Edgeで3案切替・段差付きボタンのキーボード操作・回答操作・390px幅の横溢れなし・例外なしを再確認し、デスクトップ画面を目視確認。Authの模擬別タブ復帰も成功。実メールは送信していない。
+
+公開配置：Version ID 3aa8c760-4803-49e0-a3a9-a0ebeaf19171。公開/design/が更新後のindex-BOAaW-l0.jsを返すことを確認。検証APIは有効を維持。
+
+## 2026-09-11：赤白の共通テーマ化・見本ページ削除
+
+採用配色をTailwind @themeへ移し、共通Buttonを段差付きに統一。ログインの主操作を赤で表示する。/design/のページ・導線・配色データ・比較部品・専用CSSを削除した。
+
+Biome・型検査・44テスト・証明書回帰確認・ビルドが成功。主操作のtone指定追加後もBiome・ビルドとローカルEdgeの表示確認が成功。背景と主操作・段差の計算済みスタイル、390px幅の横溢れなし、/design/の未検出画面、トップの/debug/遷移、APIエラー表示、模擬Authの別タブ復帰を確認。スマホ画面を目視確認した。実メール送信・Workersへのデプロイは行っていない。
+
+## 2026-09-11：白基調の用途別テーマ
+
+背景・カード・入力欄・通常ボタンを白へ変更し、枠を濃いグレーに統一。入力面と結果表示の色を専用トークンへ分け、結果表示の淡赤と主操作の赤を維持した。
+
+Biome・ビルドが成功。ローカルEdgeで背景・カード・入力欄・通常ボタンの白、濃い枠、赤い主操作と段差、結果表示の淡赤を計算済みスタイルで確認。390px幅の横溢れなしとスマホ画面を目視確認。既存の模擬Auth復帰確認も成功。Workersへのデプロイは行っていない。
+
+## 2026-09-11：Noto Sans JPの導入
+
+Google Fonts CSS APIからNoto Sans JPの400〜800をdisplay=swapで読み込み、Tailwindのfont-sansとbodyに適用。日本語の代替フォントも指定した。
+
+Biome・ビルド成功。ローカルEdgeでGoogle Fontsのフォントがloadedとなり、本文・見出し・入力欄・ボタンの共通指定を確認。390px幅の横溢れなし、既存の模擬認証確認も成功。全Unicode文字の収録・全端末での表示を保証する試験ではない。Workersには未デプロイ。
+
+## 2026-09-11：コンポーネント内Tailwindへ移行
+
+global.cssをテーマと最低限のbase設定へ縮小。Button・TextField・PageHeader・各ページの見た目をTSX内のTailwindクラスへ移した。共通Panelに枠・余白・見出しを集約し、色はテーマ参照を維持する。リセットはPreflightを使用。
+
+Biome・型検査・44テスト・証明書回帰チェック・ビルド成功。ローカルEdgeで配色、段差、Noto Sans JPの読み込みと共通指定、390px幅の横溢れなし、APIエラー、模擬Auth別タブ復帰を確認。スマホ画面も目視確認した。Workersには未デプロイ。
+
+## 2026-09-11：clsx・tailwind-mergeの導入
+
+clsx 2.1.1とtailwind-merge 3.6.0を固定し、src/client/lib/cn.tsへ結合処理を集約。Button・TextFieldで基本クラス、tone、外部classNameの順に結合する。固定クラスのみの箇所は変更していない。
+
+Biome・型検査・45テスト・証明書回帰確認・ビルド成功。追加テストでは実コンポーネントに渡した余白・テーマ色・状態修飾子の上書きと、文字サイズ・文字色・無効状態の維持を確認。ローカルEdgeで配色・段差・フォント・スマホ幅・模擬Auth復帰も成功。Workersには未デプロイ。
+
+## 2026-09-11：Tailwind標準値へ整理
+
+余白・幅・文字サイズ・太さ・角丸・ブレークポイントを標準クラスへ整理。見出しはtext-3xl/sm:text-5xl、ページ幅はmax-w-4xl/7xl、切替はsmに統一した。ヘッダーはflexで構成。採用済みの段差のみshadow-button/pressedをテーマへ定義し、TSX内の任意値クラスを解消した。
+
+Biome・型検査・45テスト・証明書回帰確認・ビルド成功。ローカルEdgeで配色・段差・フォント・390px幅の横溢れなしを確認。Workersには未デプロイ。
+
+## 2026-09-11：意味のまとまりに沿う空行
+
+先にdevelopment.mdへ空行ルールを追加し、client・worker・テスト・スクリプト・設定の宣言間、処理段階、JSXのまとまりを整理した。関連する定数・assert群はまとめ、コメントは対象の処理に隣接させた。
+
+初回編集で空行以外の行を変えていないことを比較確認。Biomeによる整形後、型検査・45テスト・証明書回帰確認・ビルドが成功し、クライアントのJS/CSS成果物名は変更前と同一。最後の空行微調整後もBiome確認成功。動作変更・依存追加・デプロイは行っていない。
+
+## 2026-09-11：ルート定義と処理の分離
+
+app/routes.tsをパスとページ・転送先の宣言一覧に限定し、Appが一覧を参照する。起動時の転送判定はapp/redirect.ts、認証コールバック判定はfeatures/auth/callback.tsへ分離。共用パスはページ依存のないapp/paths.tsに置き、循環依存を避けた。
+
+型検査・45テスト・証明書回帰確認・ビルド成功。整形指摘修正後もBiome・ビルド成功。ローカルEdgeでトップ→debug、未登録ページ、模擬SDKでの別タブcallback→交換→本人確認、logoutを確認。実メール送信・Workersデプロイは行っていない。
+
+## 2026-09-11：Workerルートの責務分離
+
+probes/routes.tsをメソッド・パス・ミドルウェア・ハンドラーの登録一覧に変更。認可をprobes/authorize.ts、検証APIのHTTP処理をprobes/handlers.tsへ分離した。入口index.tsのhealth・404・エラー応答もhttp/handlers.tsへ移し、ルート宣言に統一。DB・署名等の専門処理と認可順序は維持した。
+
+Biome・型検査・45テスト・証明書回帰チェック・ビルド成功。既存のAPI有効判定、トークンとOrigin制限、設定不足、DO保存・Alarm・WebSocketのテストを含む。Workersへのデプロイ・実外部サービスへの追加通信は行っていない。
+
+## 2026-09-11：APIパスの共通化
+
+src/shared/api-paths.tsへ完全なAPIパスと検証APIの接頭辞を集約。clientのfetch・認証設定取得・検証ボタン、Worker登録と認可範囲、CLI検証を共通定義へ移した。Workerの検証サブルートを/へマウントし、URLの二重接頭辞を避けた。既存URL契約を検証するテストのリテラルは維持。
+
+Biome・型検査・45テスト・証明書回帰確認・ビルド成功。ローカルEdgeでAPIエラー表示、トップ遷移、模擬認証の別タブ復帰を確認。クラウドへのデプロイ・CLIによる実外部サービス検証は行っていない。
+
+## 2026-09-11：独自段差のクラス競合を修正
+
+cn.tsでextendTailwindMergeのshadowテーマへbutton・button-pressedを登録。通常時と押下時に外部classNameのshadow-none等が優先されるようにした。
+
+追加テストが修正前に失敗することを確認し、修正後は通常の影・独自の段差の相互上書き、押下時の上書き、影の色クラスと位置移動の維持が成功。Biome・型検査・46テスト・証明書回帰確認・ビルドが成功。Workersには未デプロイ。

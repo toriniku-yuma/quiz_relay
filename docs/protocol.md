@@ -1,6 +1,6 @@
 # 連合プロトコル v1（提案）
 
-企画で確定しているのは独自HTTPS JSON、手動承認peer、参加・問題・結果共有という境界です。以下のパス、フィールド、署名方式、数値は実装用の提案で、相互運用仕様の確定と契約テストが必要です。ActivityPub互換ではありません。
+企画で確定しているのは独自HTTPS JSON、手動承認peer、参加・問題・結果共有という境界です。以下のパス、フィールド、署名方式、数値は実装用の提案で、相互運用仕様の確定と契約テストが必要です。ActivityPub互換ではありません。0Bでは[ADR 0006](adr/0006-phase-zero-foundation.md)の検証用署名プロファイルを実装しましたが、以下の本番契約全体を実装・確定したものではありません。
 
 ## 信頼と識別
 
@@ -19,7 +19,7 @@ originはパス・クエリ・fragment・userinfoを持たないHTTPS originへ�
 | POST `/federation/v1/question-set-export` | 承認peerが固定版の問題セットを要求 |
 | POST `/federation/v1/inbox` | 結果・取消イベントの永続受領 |
 
-問題共有はサーバー間のみ。任意URLを受け付けず、peer originに対して固定パスを構成する。
+問題共有はサーバー間のみ。任意URLを受け付けず、peer originに対して固定パスを構成する。2026-09-10の0Bで採用した初期送信プロファイルは手動承認したworker.account.workers.devのHTTPS origin完全一致に限定する。独自ドメインは未対応で、追加前にDNS変更を含む送信境界の検証が必要（security.md参照）。
 
 ## 自動マッチングとの接続（MVPの追加提案）
 

@@ -4,7 +4,7 @@
 
 ## 文書の状態
 
-「回答反映」は2026-09-07および2026-09-08のユーザー回答を反映した方針、「企画要件」は提示された方針、「提案」は実装を具体化するための仮置き、「未決」は回答・検証待ちです。提案は採用済みと扱わず、関係する実装前に確定します。動作・性能・デプロイはすべて未検証です。企画で言及された付属モック、protocol.md、self-host.mdの現物は提供されていないため、本書群は新規の草案です。
+「回答反映」は2026-09-07および2026-09-08のユーザー回答を反映した方針、「企画要件」は提示された方針、「提案」は実装を具体化するための仮置き、「未決」は回答・検証待ちです。提案は採用済みと扱わず、関係する実装前に確定します。0A・0Bのローカル検証は[検証記録](verification-results.md)を参照してください。クラウドの基盤配置・DB・DO復帰・Googleログインは確認済みです。0A完了、0Bは承認workers.dev限定の技術基盤として完了判定し、詳細契約は後続段階へ移動しました。ゲーム本体・性能は未検証です。企画で言及された付属モック、protocol.md、self-host.mdの現物は提供されていないため、本書群は新規の草案です。
 
 現在のフロントエンド構成はReact + TypeScript + Tailwind CSSです。[ADR 0003](adr/0003-tailwind-css.md)にユーザー承認済みの採用判断を記録しています。
 
@@ -18,6 +18,8 @@
 | [schema.md](schema.md) | データ構造、制約、順位投影 |
 | [security.md](security.md) | 認可、秘密、SSRF、運用 |
 | [self-host.md](self-host.md) | A/Bの独立デプロイ手順案 |
+| [phase-0.md](phase-0.md) | 0A・0Bの起動・設定・外部サービス準備 |
+| [verification-results.md](verification-results.md) | 実施済みの検証結果と残件 |
 | [verification.md](verification.md) | 実装段階、テスト、発表、受入条件 |
 | [open-questions.md](open-questions.md) | 回答記録・追加確認・技術検証待ち |
 | [development.md](development.md) | 実装・文書更新の作業方針 |
