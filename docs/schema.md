@@ -4,7 +4,7 @@
 
 ## 公開境界
 
-内部テーブルは非公開スキーマへ配置する。ブラウザー向けには必要最小限のAPI・viewだけを公開し、問題本文の未表示部分、許容解答、入力解答、配送原本を公開しない。署名秘密鍵はDBテーブルに保存せずWorker secretsで管理する。
+内部テーブルは非公開スキーマへ配置する。ブラウザー向けには必要最小限のAPI・viewだけを公開し、問題本文の未表示部分、許容解答、配送原本を公開しない。入力解答は共有設定オンの試合で受理済みの選択文字だけを公開し、オフの場合は配信しない。署名秘密鍵はDBテーブルに保存せずWorker secretsで管理する。
 
 | テーブル | 主な属性・キー | 制約・用途 |
 | --- | --- | --- |
@@ -14,7 +14,7 @@
 | actors | actor_id, home_origin, subject, display_name | home_origin+subject一意。表示名は非一意 |
 | ruleset_versions | owner, ruleset_id, version, rules_hash, config | owner+id+version一意。過去版不変 |
 | question_versions | owner, question_id, version, body, explanation, source, permission | owner+id+version一意。改訂は新しいquestion_idで追加。同じIDの増版で改訂しない |
-| question_answers | owner, question_id, version, accepted_answers, panel_readings, distractors | 問題版へのFK。表示用正答とパネル用カタカナ読みを分離。ダミー候補を含め非公開 |
+| question_answers | owner, question_id, version, accepted_answers, panel_readings, distractors | 問題版へのFK。表示用正答とパネル用ひらがな読みを分離。ダミー候補を含め非公開 |
 | question_sets | owner, set_id, version, manifest_hash, permission | owner+id+version一意 |
 | question_set_items | owner, set_id, set_version, ordinal, question_owner, question_id, question_version | セット版と問題版へのFK。セット内ordinal一意 |
 | competitions | owner, competition_id, definition_version, rules_hash, scoring_version, start_at, end_at, conditions | 開始後は定義不変。start_at < end_at |

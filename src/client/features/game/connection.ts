@@ -3,6 +3,7 @@ export type ConnectionStatus = 'idle' | 'connecting' | 'open' | 'closed' | 'stop
 export function connectGameSocket(
   url: URL,
   callbacks: {
+    sync: () => string;
     opened: (socket: WebSocket) => void;
     message: (data: string) => boolean;
     status: (status: ConnectionStatus) => void;
@@ -10,66 +11,84 @@ export function connectGameSocket(
   },
 ) {
   let disposed = false;
-  let failures = 0;
   let socket: WebSocket | undefined;
   let retry: ReturnType<typeof setTimeout>;
   let timeout: ReturnType<typeof setTimeout>;
   let sync: ReturnType<typeof setInterval>;
+  let retryWindow: ReturnType<typeof setTimeout> | undefined;
 
-  function connect() {
-    callbacks.status('connecting');
-    const ws = new WebSocket(url);
-    socket = ws;
-    timeout = setTimeout(() => ws.close(), 10000);
-
-    ws.onopen = () => {
-      if (disposed) return;
-      callbacks.opened(ws);
-      ws.send('sync');
-      sync = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) ws.send('sync');
-      }, 5000);
-    };
-
-    ws.onmessage = ({ data }) => {
-      if (disposed) return;
-      if (callbacks.message(String(data))) {
-        // 接続が開いただけでは成功扱いにせず、サーバー状態の受信を確認する。
-        clearTimeout(timeout);
-        failures = 0;
-        callbacks.status('open');
-      }
-    };
-
-    ws.onclose = ({ code }) => {
-      clearTimeout(timeout);
-      clearInterval(sync);
-      if (disposed) return;
-
-      failures++;
-      if (code === 1008 || failures >= 5) {
-        callbacks.status('stopped');
-        callbacks.error(
-          code === 1008
-            ? '接続が拒否されました。他のタブを閉じ、再接続してください。'
-            : '接続に5回続けて失敗したため、自動再接続を停止しました。通信状態と他のタブを確認し、再接続してください。',
-        );
-        return;
-      }
-
-      callbacks.status('closed');
-      retry = setTimeout(connect, 1500);
-    };
-    ws.onerror = () => ws.close();
-  }
-
-  connect();
-
-  return () => {
+  function dispose() {
     disposed = true;
     clearTimeout(retry);
     clearTimeout(timeout);
     clearInterval(sync);
+    clearTimeout(retryWindow);
     socket?.close();
-  };
+    socket = undefined;
+  }
+
+  function stop(message: string) {
+    dispose();
+    callbacks.status('stopped');
+    callbacks.error(message);
+  }
+
+  function disconnected(ws: WebSocket, code = 1006) {
+    if (disposed || socket !== ws) return;
+    // closeイベントが届かない通信断でも、古い接続を切り離して再試行する。
+    socket = undefined;
+    clearTimeout(timeout);
+    clearInterval(sync);
+    ws.close();
+
+    if (code === 1008) {
+      stop('接続が拒否されました。他のタブを閉じ、再接続してください。');
+      return;
+    }
+    if (retryWindow === undefined) {
+      retryWindow = setTimeout(() => {
+        stop(
+          '30秒間接続を復旧できなかったため、自動再接続を停止しました。通信状態を確認し、再接続してください。',
+        );
+      }, 30000);
+    }
+
+    callbacks.status('closed');
+    retry = setTimeout(connect, 1500);
+  }
+
+  function connect() {
+    if (disposed) return;
+    callbacks.status('connecting');
+    const ws = new WebSocket(url);
+    socket = ws;
+    timeout = setTimeout(() => disconnected(ws), 10000);
+
+    ws.onopen = () => {
+      if (disposed || socket !== ws) return;
+      callbacks.opened(ws);
+      ws.send(callbacks.sync());
+      sync = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(callbacks.sync());
+      }, 5000);
+    };
+
+    ws.onmessage = ({ data }) => {
+      if (disposed || socket !== ws) return;
+      if (callbacks.message(String(data))) {
+        // ACKではなく、有効な状態の受信をもって接続復旧とする。
+        clearTimeout(timeout);
+        timeout = setTimeout(() => disconnected(ws), 15000);
+        clearTimeout(retryWindow);
+        retryWindow = undefined;
+        callbacks.status('open');
+      }
+    };
+
+    ws.onclose = ({ code }) => disconnected(ws, code);
+    ws.onerror = () => disconnected(ws);
+  }
+
+  connect();
+  return dispose;
 }

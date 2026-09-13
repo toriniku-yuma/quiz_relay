@@ -25,6 +25,8 @@ function playing() {
     correct: 0,
     mistakes: 0,
     locked: false,
+    disqualified: false,
+    connected: true,
   }));
   state.phase = 'REVEALING';
   state.deadline = 10000;
@@ -115,11 +117,13 @@ describe('1A adjudication', () => {
   it('G11: NFKC, combining marks, small kana and long vowels use graphemes and unique choices', () => {
     expect(graphemes('  ｶﾞキ\u3099ャー  ')).toEqual(['ガ', 'ギ', 'ャ', 'ー']);
     expect(questions.length).toBeGreaterThanOrEqual(10);
+    expect(graphemes('  がき\u3099ゃー  ')).toEqual(['が', 'ぎ', 'ゃ', 'ー']);
 
     for (const question of questions) {
       for (const letter of graphemes(question.answer)) {
         const choices = choicesFor(letter);
         expect(choices).toHaveLength(4);
+        expect(choices.every(({ text }) => /^[ぁ-ゖー]$/u.test(text))).toBe(true);
         expect(new Set(choices.map(({ text }) => text)).size).toBe(4);
         expect(choices.filter(({ text }) => text === letter)).toHaveLength(1);
       }
@@ -156,7 +160,8 @@ describe('1A adjudication', () => {
     expect(state.players[0].correct).toBe(1);
     expect(state.judgment?.result).toBe('correct');
     advance(state, 5200);
-    expect(state.phase).toBe('ENDED');
+    expect(state.phase).toBe('REVEALING');
+    expect(state.questionIndex).toBe(1);
   });
 
   it('G12: full reveal waits ten seconds and an incorrect answer preserves remaining wait', () => {
@@ -206,7 +211,16 @@ describe('1A adjudication', () => {
     ]) {
       expect(parseCommand(input)).toBeNull();
     }
-    expect(parseJoin({ name: 'A', players: 2, questionIndex: 0 })).not.toBeNull();
+    expect(parseJoin({ name: 'A', players: 2, questionIndex: 0 })?.showSelections).toBe(
+      true,
+    );
+    expect(
+      parseJoin({ name: 'A', players: 2, questionIndex: 0, showSelections: false })
+        ?.showSelections,
+    ).toBe(false);
+    expect(
+      parseJoin({ name: 'A', players: 2, questionIndex: 0, showSelections: 'false' }),
+    ).toBeNull();
     expect(parseJoin({ name: ' ', players: 2, questionIndex: 0 })).toBeNull();
     expect(parseJoin({ name: 'A', players: 5, questionIndex: 0 })).toBeNull();
   });
@@ -312,26 +326,40 @@ it('DO G01/G02/G08/G09: concurrent sockets, durable ack, private panel and dupli
 
 it('DO G04/G17: alarm timeout is persisted once and duplicate alarm does not add mistakes', async () => {
   const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  const state = playing();
-  adjudicate(
-    state,
-    'alice',
-    command(state),
-    Date.now() - rules.characterAnswerTimeMs - 1,
-  );
-  await runInDurableObject(stub, async (_instance, ctx) => {
-    await ctx.storage.put('room', { state, sessions: {} });
-    await ctx.storage.setAlarm(Date.now() - 1);
-  });
+  const sockets: WebSocket[] = [];
+  for (const name of ['A', 'B']) {
+    const joined = await stub.join({ name, players: 2, questionIndex: 0 }, undefined);
+    if (!joined.ok) throw new Error('join failed');
+    sockets.push((await socketFor(stub, joined.token)).socket);
+  }
 
-  await runDurableObjectAlarm(stub);
-  await runDurableObjectAlarm(stub);
+  try {
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      const saved = await ctx.storage.get<{
+        state: State;
+        sessions: Record<string, string>;
+      }>('room');
+      if (!saved) throw new Error('Missing room');
+      adjudicate(
+        saved.state,
+        saved.state.players[0].id,
+        command(saved.state),
+        Date.now() - rules.characterAnswerTimeMs - 1,
+      );
+      await ctx.storage.put('room', saved);
+      await ctx.storage.setAlarm(Date.now() - 1);
+    });
+    await runDurableObjectAlarm(stub);
+    await runDurableObjectAlarm(stub);
 
-  await runInDurableObject(stub, async (_instance, ctx) => {
-    const saved = await ctx.storage.get<{ state: State }>('room');
-    expect(saved?.state.players[0].mistakes).toBe(1);
-    expect(saved?.state.judgment?.result).toBe('timeout');
-  });
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      const saved = await ctx.storage.get<{ state: State }>('room');
+      expect(saved?.state.players[0].mistakes).toBe(1);
+      expect(saved?.state.judgment?.result).toBe('timeout');
+    });
+  } finally {
+    for (const socket of sockets) socket.close();
+  }
 });
 
 it('local game API denies disabled access, cross-origin requests, missing sessions and invalid room', async () => {
@@ -385,12 +413,12 @@ it('local game API denies disabled access, cross-origin requests, missing sessio
 
 it('keeps fixed rules and old ACKs when the 1A command budget is exhausted', () => {
   const state = playing();
-  expect(state.rules).toEqual(rules);
+  expect(state.rules).toEqual({ ...rules, showSelections: true });
   expect(state.rules).not.toBe(rules);
   const buzz = command(state);
   const first = adjudicate(state, 'alice', buzz, 100);
 
-  for (let i = 1; i < 128; i++)
+  for (let i = 1; i < 256; i++)
     adjudicate(state, 'alice', { ...command(state), matchId: 'old' }, 101);
 
   expect(adjudicate(state, 'alice', buzz, 102)).toEqual(first);
@@ -415,7 +443,7 @@ it('rejects an oversized join body before parsing', async () => {
 it('one actor cannot consume another actors command allowance', () => {
   const state = playing();
 
-  for (let i = 0; i < 128; i++)
+  for (let i = 0; i < 256; i++)
     adjudicate(state, 'alice', { ...command(state), matchId: 'old' }, 100);
   expect(adjudicate(state, 'alice', command(state), 101).code).toBe('COMMAND_LIMIT');
 

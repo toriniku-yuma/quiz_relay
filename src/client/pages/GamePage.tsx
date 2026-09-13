@@ -19,7 +19,7 @@ export default function GamePage() {
     <main className="mx-auto max-w-4xl px-4 pt-6 pb-10 sm:px-8 sm:pt-10 sm:pb-16">
       <PageHeader
         title="早押しクイズ"
-        description="1A：1問の出題から判定までを確認するローカル専用画面です。"
+        description="7問先取・3回お手つきで失格。ローカル専用の試合確認画面です。"
       />
       <p className="text-sm" role="status">
         {connections[game.connection]}
@@ -37,8 +37,13 @@ export default function GamePage() {
       )}
 
       {game.snapshot ? <GameBoard game={game} /> : <JoinGame game={game} />}
+      {game.snapshot && (
+        <Button className="mt-5" onClick={game.leave}>
+          退出して別のルームへ
+        </Button>
+      )}
       <p className="mt-6 text-sm text-muted">
-        試合全体の進行・人数不足による無効化・差分復帰は1B、結果のDB保存は1Dで実装します。
+        対戦結果はローカルに保持されます。正式な結果のDB保存とランキング反映は1Dで実装します。
       </p>
     </main>
   );

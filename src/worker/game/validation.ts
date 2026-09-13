@@ -43,6 +43,7 @@ export function parseJoin(value: unknown) {
   if (
     !record(value) ||
     typeof value.name !== 'string' ||
+    (value.showSelections !== undefined && typeof value.showSelections !== 'boolean') ||
     !value.name.trim() ||
     value.name.length > 24 ||
     !Number.isInteger(value.questionIndex) ||
@@ -56,7 +57,32 @@ export function parseJoin(value: unknown) {
 
   return {
     name: value.name.trim(),
+    showSelections: value.showSelections !== false,
     questionIndex: Number(value.questionIndex),
     players: Number(value.players),
   };
+}
+
+export function parseSync(message: string | ArrayBuffer) {
+  if (message === 'sync') return { lastSeq: null, matchId: null };
+  if (typeof message !== 'string' || message.length > 256) return null;
+  try {
+    const value: unknown = JSON.parse(message);
+    if (
+      !record(value) ||
+      value.type !== 'sync' ||
+      !(value.matchId === null || id(value.matchId)) ||
+      !(
+        value.lastSeq === null ||
+        (Number.isSafeInteger(value.lastSeq) && Number(value.lastSeq) >= 0)
+      )
+    )
+      return null;
+    return {
+      lastSeq: value.lastSeq as number | null,
+      matchId: value.matchId as string | null,
+    };
+  } catch {
+    return null;
+  }
 }

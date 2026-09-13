@@ -9,11 +9,12 @@ export default function JoinGame({ game }: { game: Game }) {
   const [room, setRoom] = useState('1');
   const [players, setPlayers] = useState('2');
   const [question, setQuestion] = useState('1');
+  const [showSelections, setShowSelections] = useState(true);
 
   return (
-    <Panel title="1問を遊ぶ">
+    <Panel title="試合に参加する">
       <p className="mt-3 text-sm text-muted">
-        別のブラウザーでも同じルーム番号・人数・問題番号を指定してください。全員が接続すると出題します。同じブラウザーの別タブは同じ参加者になります。
+        別のブラウザーでも同じルーム番号・人数・問題番号・回答表示設定を指定してください。全員が接続すると出題します。同じブラウザーの別タブは同じ参加者になります。
       </p>
 
       <form
@@ -24,6 +25,7 @@ export default function JoinGame({ game }: { game: Game }) {
             name,
             players: Number(players),
             questionIndex: Number(question) - 1,
+            showSelections,
           });
         }}
       >
@@ -59,7 +61,7 @@ export default function JoinGame({ game }: { game: Game }) {
           />
           <TextField
             id="question-number"
-            label="問題番号（1〜12）"
+            label="最初の問題番号（1〜12）"
             type="number"
             min={1}
             max={12}
@@ -68,6 +70,15 @@ export default function JoinGame({ game }: { game: Game }) {
             onChange={(event) => setQuestion(event.target.value)}
           />
         </div>
+
+        <TextField
+          id="show-selections"
+          label="回答者が選んだ文字を全員に表示する（試合共通）"
+          type="checkbox"
+          checked={showSelections}
+          onChange={(event) => setShowSelections(event.target.checked)}
+          className="size-5 accent-accent"
+        />
 
         <Button type="submit" tone="primary" disabled={game.connection === 'connecting'}>
           参加する

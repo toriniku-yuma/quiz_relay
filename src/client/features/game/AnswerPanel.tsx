@@ -14,7 +14,11 @@ export default function AnswerPanel({ game }: { game: Game }) {
 
   if (!panel) return null;
 
-  const remaining = Math.max(0, (panel.deadline - game.clock) / 1000);
+  const paused = game.snapshot?.reconnect;
+  const remaining = Math.max(
+    0,
+    paused ? (paused.remaining ?? 0) / 1000 : (panel.deadline - game.clock) / 1000,
+  );
   return (
     <section className="mt-6 border-2 border-accent p-4" aria-label="文字を選ぶ">
       <p className="mb-4 font-bold">
@@ -28,7 +32,9 @@ export default function AnswerPanel({ game }: { game: Game }) {
             ref={index === 0 ? firstChoice : undefined}
             key={choice.id}
             className="min-h-20 text-3xl"
-            disabled={game.connection !== 'open' || game.pending || remaining === 0}
+            disabled={
+              game.connection !== 'open' || game.pending || remaining === 0 || !!paused
+            }
             onClick={() =>
               game.send('choose', {
                 attemptId: panel.attemptId,

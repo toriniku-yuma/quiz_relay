@@ -25,7 +25,10 @@ export const joinGame: Handler<{ Bindings: Env }> = async (c) => {
 
   const room = c.req.query('room') as string;
   const cookie = `qr_dev_${room}`;
-  const result = await c.env.GAME_ROOM.getByName(room).join(input, getCookie(c, cookie));
+  const result = await c.env.GAME_ROOM.getByName(`1b-hiragana:${room}`).join(
+    input,
+    getCookie(c, cookie),
+  );
   if (!result.ok)
     return c.json({ code: result.code }, result.code === 'CONNECTION_LIMIT' ? 429 : 409);
 
@@ -46,5 +49,7 @@ export const connectGame: Handler<{ Bindings: Env }> = async (c) => {
 
   const headers = new Headers(c.req.raw.headers);
   headers.set('X-Game-Session', token);
-  return c.env.GAME_ROOM.getByName(room).fetch(new Request(c.req.raw, { headers }));
+  return c.env.GAME_ROOM.getByName(`1b-hiragana:${room}`).fetch(
+    new Request(c.req.raw, { headers }),
+  );
 };

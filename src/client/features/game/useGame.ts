@@ -3,32 +3,37 @@ import { API_PATHS } from '../../../shared/api-paths';
 import type { Command, GameMessage, Panel, Snapshot } from '../../../shared/game';
 import { type ConnectionStatus, connectGameSocket } from './connection';
 
+import { applyGameUpdate, readGameSession, saveGameSession } from './recovery';
+
 const messages: Record<string, string> = {
   LOCAL_GAME_DISABLED: 'ローカル開発環境でのみ利用できます。',
   ORIGIN_REJECTED: '接続元が許可されていません。',
   INVALID_ROOM: 'ルーム番号は1〜16で指定してください。',
   INVALID_SETUP: '名前・人数・問題番号を確認してください。',
   SETUP_MISMATCH:
-    'このルームの人数または問題番号が違います。最初の参加者と同じ値を指定してください。',
+    'このルームの人数・問題番号・回答表示設定が違います。最初の参加者と同じ値を指定してください。',
   ROOM_CLOSED:
     '参加枠が埋まっているか、出題が始まっています。別のルームを選んでください。',
+  RECONNECT_WAIT: '切断した参加者の復帰を待っています。',
   BUZZ_REJECTED: '今回は早押しを受け付けられませんでした。',
   PANEL_REJECTED: '解答権またはパネルの期限が変わりました。',
   CONNECTION_LIMIT:
     '同じ参加者の接続は3タブまでです。他のタブを閉じてから参加してください。',
-  COMMAND_LIMIT: 'この問題であなたが送信できる入力の上限に達しました。',
+  COMMAND_LIMIT: 'この試合であなたが送信できる入力の上限に達しました。',
   STALE_COMMAND: '出題が変わったため入力を受け付けませんでした。',
 };
 
 export function useGame() {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [saved] = useState(readGameSession);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(saved?.snapshot ?? null);
+  const currentSnapshot = useRef<Snapshot | null>(saved?.snapshot ?? null);
   const [panel, setPanel] = useState<Panel | null>(null);
   const [actorId, setActorId] = useState('');
   const [connection, setConnection] = useState<ConnectionStatus>('idle');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [clock, setClock] = useState(Date.now());
-  const [room, setRoom] = useState<{ id: string } | null>(null);
+  const [room, setRoom] = useState<{ id: string } | null>(saved?.room ?? null);
   const socket = useRef<WebSocket | null>(null);
   const pendingCommand = useRef<Command | null>(null);
   const offset = useRef(0);
@@ -42,6 +47,12 @@ export function useGame() {
 
     const disconnect = connectGameSocket(url, {
       status: setConnection,
+      sync: () =>
+        JSON.stringify({
+          type: 'sync',
+          lastSeq: currentSnapshot.current?.roomSeq ?? null,
+          matchId: currentSnapshot.current?.matchId ?? null,
+        }),
       error: setError,
       opened: (ws) => {
         socket.current = ws;
@@ -49,9 +60,19 @@ export function useGame() {
       },
       message: (data) => {
         const message = JSON.parse(data) as GameMessage;
-        if (message.type === 'state') {
+        if (message.type === 'state' || message.type === 'delta') {
+          const next = applyGameUpdate(currentSnapshot.current, message);
+          if (!next) {
+            currentSnapshot.current = null;
+            socket.current?.send(
+              JSON.stringify({ type: 'sync', lastSeq: null, matchId: null }),
+            );
+            return false;
+          }
+          currentSnapshot.current = next;
+          saveGameSession(room, next);
           offset.current = message.serverTime - Date.now();
-          setSnapshot(message.snapshot);
+          setSnapshot(next);
           setPanel(message.panel);
           setActorId(message.actorId);
           return true;
@@ -82,6 +103,7 @@ export function useGame() {
     name: string;
     players: number;
     questionIndex: number;
+    showSelections: boolean;
   }) {
     setError('');
     setConnection('connecting');
@@ -95,17 +117,36 @@ export function useGame() {
             name: input.name,
             players: input.players,
             questionIndex: input.questionIndex,
+            showSelections: input.showSelections,
           }),
         },
       );
       const result = (await response.json()) as { code?: string };
       if (!response.ok)
         throw new Error(messages[result.code ?? ''] ?? '参加に失敗しました。');
+      currentSnapshot.current = null;
+      pendingCommand.current = null;
+      setPending(false);
+      setSnapshot(null);
+      setPanel(null);
       setRoom({ id: input.room });
+      saveGameSession({ id: input.room }, null);
     } catch (error) {
       setError(error instanceof Error ? error.message : '接続に失敗しました。');
       setConnection('idle');
     }
+  }
+
+  function leave() {
+    setRoom(null);
+    setSnapshot(null);
+    setPanel(null);
+    currentSnapshot.current = null;
+    pendingCommand.current = null;
+    setPending(false);
+    setConnection('idle');
+    setError('');
+    saveGameSession(null, null);
   }
 
   function reconnect() {
@@ -145,6 +186,7 @@ export function useGame() {
     join,
     send,
     reconnect,
+    leave,
   };
 }
 
