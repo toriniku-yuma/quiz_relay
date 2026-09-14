@@ -48,7 +48,7 @@ export function parseJoin(value: unknown) {
     value.name.length > 24 ||
     !Number.isInteger(value.questionIndex) ||
     Number(value.questionIndex) < 0 ||
-    Number(value.questionIndex) >= 12 ||
+    Number(value.questionIndex) >= 100 ||
     !Number.isInteger(value.players) ||
     Number(value.players) < 2 ||
     Number(value.players) > 4

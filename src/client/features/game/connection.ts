@@ -1,3 +1,5 @@
+import { settings } from '../../../shared/settings';
+
 export type ConnectionStatus = 'idle' | 'connecting' | 'open' | 'closed' | 'stopped';
 
 export function connectGameSocket(
@@ -48,13 +50,13 @@ export function connectGameSocket(
     if (retryWindow === undefined) {
       retryWindow = setTimeout(() => {
         stop(
-          '30秒間接続を復旧できなかったため、自動再接続を停止しました。通信状態を確認し、再接続してください。',
+          `${settings.connection.retryWindowMs / 1000}秒間接続を復旧できなかったため、自動再接続を停止しました。通信状態を確認し、再接続してください。`,
         );
-      }, 30000);
+      }, settings.connection.retryWindowMs);
     }
 
     callbacks.status('closed');
-    retry = setTimeout(connect, 1500);
+    retry = setTimeout(connect, settings.connection.retryIntervalMs);
   }
 
   function connect() {
@@ -62,7 +64,7 @@ export function connectGameSocket(
     callbacks.status('connecting');
     const ws = new WebSocket(url);
     socket = ws;
-    timeout = setTimeout(() => disconnected(ws), 10000);
+    timeout = setTimeout(() => disconnected(ws), settings.connection.connectTimeoutMs);
 
     ws.onopen = () => {
       if (disposed || socket !== ws) return;
@@ -70,7 +72,7 @@ export function connectGameSocket(
       ws.send(callbacks.sync());
       sync = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(callbacks.sync());
-      }, 5000);
+      }, settings.connection.heartbeatIntervalMs);
     };
 
     ws.onmessage = ({ data }) => {
@@ -78,7 +80,10 @@ export function connectGameSocket(
       if (callbacks.message(String(data))) {
         // ACKではなく、有効な状態の受信をもって接続復旧とする。
         clearTimeout(timeout);
-        timeout = setTimeout(() => disconnected(ws), 15000);
+        timeout = setTimeout(
+          () => disconnected(ws),
+          settings.connection.receiveTimeoutMs,
+        );
         clearTimeout(retryWindow);
         retryWindow = undefined;
         callbacks.status('open');

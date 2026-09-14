@@ -30,7 +30,14 @@ export const joinGame: Handler<{ Bindings: Env }> = async (c) => {
     getCookie(c, cookie),
   );
   if (!result.ok)
-    return c.json({ code: result.code }, result.code === 'CONNECTION_LIMIT' ? 429 : 409);
+    return c.json(
+      { code: result.code },
+      result.code === 'GAME_DATABASE_UNAVAILABLE'
+        ? 503
+        : result.code === 'CONNECTION_LIMIT'
+          ? 429
+          : 409,
+    );
 
   setCookie(c, cookie, result.token, {
     httpOnly: true,

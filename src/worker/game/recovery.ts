@@ -1,4 +1,5 @@
 import type { RoomEvent, Snapshot } from '../../shared/game';
+import { settings } from '../../shared/settings';
 
 export function appendEvent(
   events: RoomEvent[],
@@ -13,7 +14,9 @@ export function appendEvent(
     ),
   ) as Partial<Snapshot>;
   events.push({ roomSeq: current.roomSeq, at: now, changes });
-  return events.filter(({ at }) => at >= now - 60000).slice(-512);
+  return events
+    .filter(({ at }) => at >= now - settings.game.eventRetentionMs)
+    .slice(-settings.game.maxEvents);
 }
 
 export function replayEvents(
@@ -24,7 +27,8 @@ export function replayEvents(
 ) {
   if (!Number.isSafeInteger(lastSeq) || lastSeq < 0 || lastSeq > roomSeq) return null;
   const replay = events.filter(
-    (event) => event.roomSeq > lastSeq && event.at >= now - 60000,
+    (event) =>
+      event.roomSeq > lastSeq && event.at >= now - settings.game.eventRetentionMs,
   );
   if (
     replay.length !== roomSeq - lastSeq ||

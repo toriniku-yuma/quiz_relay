@@ -75,7 +75,38 @@ it('reuses matching config and disposes the old client on URL or key changes', a
 
 it('preserves auth query and hash during the root redirect', () => {
   expect(rootRedirect(new URL('https://app.example/?code=test#state=value'))).toBe(
-    '/debug/?code=test#state=value',
+    '/game/?code=test#state=value',
   );
   expect(rootRedirect(new URL('https://app.example/debug/'))).toBeNull();
+});
+
+it('keeps the debug auth callback target only for a recognized callback and destination', () => {
+  expect(rootRedirect(new URL('https://app.example/?code=pkce'), '/debug/')).toBe(
+    '/debug/?code=pkce',
+  );
+  expect(rootRedirect(new URL('https://app.example/'), '/debug/')).toBe('/game/');
+  expect(
+    rootRedirect(new URL('https://app.example/?code=pkce'), 'https://evil.test'),
+  ).toBe('/game/?code=pkce');
+});
+
+it('keeps formal recovery separate by authenticated subject and preserves legacy storage', async () => {
+  const { readGameSession, saveGameSession } = await import(
+    '../src/client/features/game/recovery'
+  );
+  const values = new Map<string, string>();
+  vi.stubGlobal('sessionStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  });
+  const room = { id: crypto.randomUUID() };
+  saveGameSession({ id: 'room-15' }, null);
+  saveGameSession(room, null, 'formal', 'user-a');
+  expect(readGameSession('formal', 'user-a')?.room).toEqual(room);
+  expect(readGameSession('formal', 'user-b')).toBeNull();
+  saveGameSession(null, null, 'formal', 'user-a');
+  expect(readGameSession('formal', 'user-a')).toBeNull();
+  expect(readGameSession()?.room.id).toBe('room-15');
+  vi.unstubAllGlobals();
 });

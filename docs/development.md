@@ -6,6 +6,10 @@
 
 ユーザーの回答は未確定事項と該当仕様に反映する。重要な設計変更はADRに理由と影響を残す。実装に伴って仕様・契約・検証結果を同じ変更で更新し、提案や未実施を実績として記載しない。
 
+## コミットメッセージ（2026-09-14）
+
+ユーザー指定により、今後のコミットメッセージは件名・本文とも日本語で記述する。技術名・識別子は必要に応じて原表記を使う。変更内容と目的を簡潔に説明する。
+
 ## 実装の境界
 
 MVPの3段階を順に進める。公開連合、ActivityPub、世界共通レーティング、Docker配布は初期実装に加えない。既存機能と標準・プラットフォーム機能を優先し、必要になる前の抽象化や依存追加を避ける。
@@ -61,7 +65,7 @@ Tailwind 4.3の採用テーマ・任意値・状態修飾子についてテス�
 | src/worker/probes/ | 検証APIの認可、検証用DO、DBプローブ |
 | src/worker/federation/ | 署名・正規化・送信先検査 |
 | src/worker/env.ts | Worker bindingの型 |
-| supabase/migrations/ | SQL migration |
+| src/worker/db/・drizzle/ | Drizzleスキーマ・生成/カスタムmigration |
 | tests/・scripts/ | Workers内のテスト、回帰確認、実HTTP検証 |
 
 今後、1A〜1Bのゲームはclient/features/game/とworker/game/、1Cのマッチングはそれぞれmatchmaking/へ追加する。検証用probes/に正式機能を蓄積しない。各機能が大きくなったら、その機能内でroutes・state・validation等へ責務分割する。client/worker直下に機能ファイルを増やす運用にはしない。
@@ -84,7 +88,7 @@ Tailwind 4.3の採用テーマ・任意値・状態修飾子についてテス�
 
 ### Biomeの対象と設定
 
-biome.jsonで対象をsrc/・tests/・scripts/とルートのTS/JSON/JSONC・index.htmlに限定し、Gitの除外設定も参照する。秘密・生成物・Markdown・YAML・SQLは対象外。Tailwind v4の構文を有効化。HTML整形は実験的対応を明示的に有効化し、現在のindex.htmlで確認した。
+biome.jsonで対象をsrc/・tests/・scripts/・config/とルートのTS/JSON/JSONC・index.htmlに限定し、Gitの除外設定も参照する。秘密・生成物・Markdown・YAML・SQLは対象外。Tailwind v4の構文を有効化。HTML整形は実験的対応を明示的に有効化し、現在のindex.htmlで確認した。
 
 推奨Lintはrules.preset=recommendedを明示し、警告もcheckで失敗扱いにする。安全な自動修正はpnpm exec biome check --write .で行う。unsafeの一括適用はせず内容を確認する。エディターのフォーマッターもBiomeを選び、同じファイルにPrettierを重ねて実行しない。tscによる型検査と1 TSX 1コンポーネントの設計確認は継続する。
 
@@ -143,3 +147,16 @@ HTTP APIのパスはsrc/shared/api-paths.tsのAPI_PATHSに集約する。画面�
 API_PATHSは/apiから始まる完全なパスを公開する。クライアントのfetch、Workerのルート登録、CLI検証は同じ定義を参照し、呼び出し側で/apiを追加しない。検証APIの接頭辞はPROBE_PREFIXから構成し、認可ミドルウェアの適用範囲にも使う。検証サブルートは完全パスを持つため入口で/にマウントする。
 
 API追加・変更時は共通定義と登録・呼び出しを同時に更新する。既存URL契約と認可範囲を独立に検査するテストではパスのリテラルを残してよい。共通定義の誤変更によってテストも同時に追従してしまうことを避ける。
+
+
+## 1Cの起動・検証（2026-09-14）
+
+正式画面は/game/、旧開発参加は/local-game/、技術検証は/debug/。起動は従来どおりpnpm dev。正式参加は.dev.varsのGAME_DATABASE_URLとSupabase公開Auth設定を使う。人数・ルール・問題セットはconfig/matchmaking*.jsonから設定反映CLIでDBへ反映する。既存版は上書きせず、新規参加の有効版を切り替える。接続・待機等はconfig/runtime.jsonへ集約する。[設定手順](configuration.md)を参照。
+
+通常のpnpm run checkと、明示実行のWorker実DB試験は[1C手順](phase-1c.md)を参照。pnpm installでPostgres.jsの接続終了パッチも適用される。秘密を含む.dev.vars/.env.supabase-admin/.wranglerは表示・コミットしない。新しいGAME_HYPERDRIVEのクラウド設定・配置はまだ実施していない。
+
+問題本文・正解の初期投入データはsupabase/seeds/mock-hiragana.json、テスト用参照はtests/fixtures/questions.tsに置く。srcからこれらを参照せず、新規試合の問題はDBから受け渡す。旧保存データをDB移行の整理で削除しない。
+
+## DrizzleのDB方針（2026-09-14）
+
+DB操作はDrizzleの型付きAPI、migrationはDrizzle Kitに統一する。src/worker/db/schema.tsを正とし、手書きSQLは対応外の権限・トリガー等のカスタムmigrationと必要なsql式に限定する。文字列連結・独自エスケープ・Management APIへの通常SQL送信は行わない。接続はreader/writer/migrationで権限分離する。CLIのTSも型検査対象。現在の手順は[DB管理](database.md)。重複していた旧migration・2人版SQL seed・SQL権限試験は削除済み。

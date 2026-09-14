@@ -1,0 +1,677 @@
+{
+  "id": "8aa9b908-039a-4722-a08d-f571b513a0d2",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "quiz_game.competitions": {
+      "name": "competitions",
+      "schema": "quiz_game",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "competition_id": {
+          "name": "competition_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "players_per_match": {
+          "name": "players_per_match",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ruleset_id": {
+          "name": "ruleset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ruleset_version": {
+          "name": "ruleset_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "set_id": {
+          "name": "set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "set_version": {
+          "name": "set_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "competitions_owner_ruleset_id_ruleset_version_fkey": {
+          "name": "competitions_owner_ruleset_id_ruleset_version_fkey",
+          "tableFrom": "competitions",
+          "tableTo": "ruleset_versions",
+          "schemaTo": "quiz_game",
+          "columnsFrom": [
+            "owner",
+            "ruleset_id",
+            "ruleset_version"
+          ],
+          "columnsTo": [
+            "owner",
+            "ruleset_id",
+            "version"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "competitions_owner_set_id_set_version_fkey": {
+          "name": "competitions_owner_set_id_set_version_fkey",
+          "tableFrom": "competitions",
+          "tableTo": "question_sets",
+          "schemaTo": "quiz_game",
+          "columnsFrom": [
+            "owner",
+            "set_id",
+            "set_version"
+          ],
+          "columnsTo": [
+            "owner",
+            "set_id",
+            "version"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "competitions_pkey": {
+          "name": "competitions_pkey",
+          "columns": [
+            "owner",
+            "competition_id",
+            "version"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "reader": {
+          "name": "reader",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "quiz_game_reader"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "competitions_competition_id_check": {
+          "name": "competitions_competition_id_check",
+          "value": "competition_id ~ '^[a-zA-Z0-9_-]{1,64}$'::text"
+        },
+        "competitions_players_per_match_check": {
+          "name": "competitions_players_per_match_check",
+          "value": "(players_per_match >= 2) AND (players_per_match <= 4)"
+        },
+        "competitions_version_check": {
+          "name": "competitions_version_check",
+          "value": "version > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "quiz_game.matchmaking_settings": {
+      "name": "matchmaking_settings",
+      "schema": "quiz_game",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "profile": {
+          "name": "profile",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "competition_id": {
+          "name": "competition_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "competition_version": {
+          "name": "competition_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "matchmaking_settings_owner_competition_id_competition_vers_fkey": {
+          "name": "matchmaking_settings_owner_competition_id_competition_vers_fkey",
+          "tableFrom": "matchmaking_settings",
+          "tableTo": "competitions",
+          "schemaTo": "quiz_game",
+          "columnsFrom": [
+            "owner",
+            "competition_id",
+            "competition_version"
+          ],
+          "columnsTo": [
+            "owner",
+            "competition_id",
+            "version"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "matchmaking_settings_pkey": {
+          "name": "matchmaking_settings_pkey",
+          "columns": [
+            "owner",
+            "profile"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "reader": {
+          "name": "reader",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "quiz_game_reader"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "matchmaking_settings_profile_check": {
+          "name": "matchmaking_settings_profile_check",
+          "value": "profile ~ '^[a-zA-Z0-9_-]{1,64}$'::text"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "quiz_probe.runs": {
+      "name": "runs",
+      "schema": "quiz_probe",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "probe_access": {
+          "name": "probe_access",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "quiz_probe"
+          ],
+          "using": "true",
+          "withCheck": "true"
+        }
+      },
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "quiz_game.question_availability": {
+      "name": "question_availability",
+      "schema": "quiz_game",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_id": {
+          "name": "question_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "retired_at": {
+          "name": "retired_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "question_availability_pkey": {
+          "name": "question_availability_pkey",
+          "columns": [
+            "owner",
+            "question_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "reader": {
+          "name": "reader",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "quiz_game_reader"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "question_availability_owner_check": {
+          "name": "question_availability_owner_check",
+          "value": "(length(owner) >= 1) AND (length(owner) <= 256)"
+        },
+        "question_availability_question_id_check": {
+          "name": "question_availability_question_id_check",
+          "value": "question_id ~ '^[a-zA-Z0-9_-]{1,64}$'::text"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "quiz_game.question_set_items": {
+      "name": "question_set_items",
+      "schema": "quiz_game",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "set_id": {
+          "name": "set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "set_version": {
+          "name": "set_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_id": {
+          "name": "question_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_version": {
+          "name": "question_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "question_set_items_owner_question_id_question_version_fkey": {
+          "name": "question_set_items_owner_question_id_question_version_fkey",
+          "tableFrom": "question_set_items",
+          "tableTo": "question_versions",
+          "schemaTo": "quiz_game",
+          "columnsFrom": [
+            "owner",
+            "question_id",
+            "question_version"
+          ],
+          "columnsTo": [
+            "owner",
+            "question_id",
+            "version"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "question_set_items_owner_set_id_set_version_fkey": {
+          "name": "question_set_items_owner_set_id_set_version_fkey",
+          "tableFrom": "question_set_items",
+          "tableTo": "question_sets",
+          "schemaTo": "quiz_game",
+          "columnsFrom": [
+            "owner",
+            "set_id",
+            "set_version"
+          ],
+          "columnsTo": [
+            "owner",
+            "set_id",
+            "version"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "question_set_items_pkey": {
+          "name": "question_set_items_pkey",
+          "columns": [
+            "owner",
+            "set_id",
+            "set_version",
+            "ordinal"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "question_set_items_owner_set_id_set_version_question_id_key": {
+          "name": "question_set_items_owner_set_id_set_version_question_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "owner",
+            "set_id",
+            "set_version",
+            "question_id"
+          ]
+        }
+      },
+      "policies": {
+        "reader": {
+          "name": "reader",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "quiz_game_reader"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "question_set_items_ordinal_check": {
+          "name": "question_set_items_ordinal_check",
+          "value": "(ordinal >= 1) AND (ordinal <= 100)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "quiz_game.question_sets": {
+      "name": "question_sets",
+      "schema": "quiz_game",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "set_id": {
+          "name": "set_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "manifest_hash": {
+          "name": "manifest_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "question_sets_pkey": {
+          "name": "question_sets_pkey",
+          "columns": [
+            "owner",
+            "set_id",
+            "version"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "reader": {
+          "name": "reader",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "quiz_game_reader"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "question_sets_manifest_hash_check": {
+          "name": "question_sets_manifest_hash_check",
+          "value": "manifest_hash ~ '^[0-9a-f]{64}$'::text"
+        },
+        "question_sets_owner_check": {
+          "name": "question_sets_owner_check",
+          "value": "(length(owner) >= 1) AND (length(owner) <= 256)"
+        },
+        "question_sets_set_id_check": {
+          "name": "question_sets_set_id_check",
+          "value": "set_id ~ '^[a-zA-Z0-9_-]{1,64}$'::text"
+        },
+        "question_sets_version_check": {
+          "name": "question_sets_version_check",
+          "value": "version > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "quiz_game.question_versions": {
+      "name": "question_versions",
+      "schema": "quiz_game",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "question_id": {
+          "name": "question_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "question_versions_pkey": {
+          "name": "question_versions_pkey",
+          "columns": [
+            "owner",
+            "question_id",
+            "version"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "reader": {
+          "name": "reader",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "quiz_game_reader"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "question_versions_check": {
+          "name": "question_versions_check",
+          "value": "(jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 16384) AND ((payload ->> 'id'::text) = question_id) AND (((payload ->> 'version'::text))::integer = version) AND (payload ? 'id'::text) AND (payload ? 'version'::text)"
+        },
+        "question_versions_owner_check": {
+          "name": "question_versions_owner_check",
+          "value": "(length(owner) >= 1) AND (length(owner) <= 256)"
+        },
+        "question_versions_question_id_check": {
+          "name": "question_versions_question_id_check",
+          "value": "question_id ~ '^[a-zA-Z0-9_-]{1,64}$'::text"
+        },
+        "question_versions_version_check": {
+          "name": "question_versions_version_check",
+          "value": "version = 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "quiz_game.ruleset_versions": {
+      "name": "ruleset_versions",
+      "schema": "quiz_game",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ruleset_id": {
+          "name": "ruleset_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rules_hash": {
+          "name": "rules_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "config": {
+          "name": "config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "ruleset_versions_pkey": {
+          "name": "ruleset_versions_pkey",
+          "columns": [
+            "owner",
+            "ruleset_id",
+            "version"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {
+        "reader": {
+          "name": "reader",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "quiz_game_reader"
+          ],
+          "using": "true"
+        }
+      },
+      "checkConstraints": {
+        "ruleset_versions_config_check": {
+          "name": "ruleset_versions_config_check",
+          "value": "(jsonb_typeof(config) = 'object'::text) AND (octet_length((config)::text) <= 4096)"
+        },
+        "ruleset_versions_owner_check": {
+          "name": "ruleset_versions_owner_check",
+          "value": "(length(owner) >= 1) AND (length(owner) <= 256)"
+        },
+        "ruleset_versions_rules_hash_check": {
+          "name": "ruleset_versions_rules_hash_check",
+          "value": "rules_hash ~ '^[0-9a-f]{64}$'::text"
+        },
+        "ruleset_versions_ruleset_id_check": {
+          "name": "ruleset_versions_ruleset_id_check",
+          "value": "ruleset_id ~ '^[a-zA-Z0-9_-]{1,64}$'::text"
+        },
+        "ruleset_versions_version_check": {
+          "name": "ruleset_versions_version_check",
+          "value": "version > 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "quiz_game": "quiz_game",
+    "quiz_probe": "quiz_probe"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

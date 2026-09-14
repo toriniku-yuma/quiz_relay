@@ -12,17 +12,26 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm test && node scripts/check-vite-config.mjs && pnpm run build",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm test && node scripts/check-vite-config.mjs && node scripts/check-game-catalog-seed.mjs && pnpm run build",
     "deploy": "pnpm run build && wrangler deploy",
     "probe": "node --env-file=.dev.vars scripts/probe.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "biome check --error-on-warnings ."
+    "lint": "biome check --error-on-warnings .",
+    "config:apply": "node --env-file-if-exists=.dev.vars --env-file-if-exists=.env.supabase-admin scripts/apply-game-config.ts",
+    "config:apply:local": "pnpm run config:apply config/matchmaking.local.json local --apply",
+    "config:apply:default": "pnpm run config:apply config/matchmaking.json default --apply",
+    "db:generate": "drizzle-kit generate",
+    "db:generate:custom": "drizzle-kit generate --custom",
+    "db:migrate": "node --env-file-if-exists=.dev.vars --env-file-if-exists=.env.supabase-admin scripts/migrate-database.ts",
+    "db:seed": "node --env-file-if-exists=.dev.vars --env-file-if-exists=.env.supabase-admin scripts/game-catalog-seed.ts",
+    "db:check": "node --env-file=.dev.vars --env-file=.env.supabase-admin scripts/check-game-database.mjs && node --env-file=.dev.vars scripts/check-game-reader.mjs && node --env-file=.dev.vars --env-file=.env.supabase-admin scripts/check-game-permissions.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.116.0",
     "canonicalize": "4.0.0",
     "clsx": "2.1.1",
+    "drizzle-orm": "0.45.2",
     "hono": "4.13.7",
     "jose": "6.2.12",
     "postgres": "3.4.9",
@@ -40,6 +49,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.1",
+    "drizzle-kit": "0.31.10",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.2.2",
@@ -50,6 +60,9 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "workerd"
-    ]
+    ],
+    "patchedDependencies": {
+      "postgres@3.4.9": "patches/postgres@3.4.9.patch"
+    }
   }
 }

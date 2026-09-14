@@ -99,15 +99,16 @@ export default function GameBoard({ game }: { game: Game }) {
             <p className="mt-2">
               {
                 {
+                  target_reached: '規定の正解数に到達',
                   seven_correct: '7問先取で終了しました。',
                   exhausted: '全問終了時の正解数で判定しました。',
                   connections:
-                    '30秒以内に接続している参加者が2人以上に戻らなかったため終了しました。',
+                    '復帰期限までに接続している参加者が2人以上に戻らなかったため終了しました。',
                   disqualifications: '失格していない参加者が1人以下になりました。',
                 }[state.result.reason]
               }
             </p>
-            <p className="mt-2 text-sm">DB未保存・ランキング対象外（ローカル検証）</p>
+            <p className="mt-2 text-sm">DB未保存・ランキング対象外（1Dで対応予定）</p>
           </div>
         )}
       </Panel>

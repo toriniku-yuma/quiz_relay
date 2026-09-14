@@ -1,0 +1,21 @@
+{
+  "owner": "https://quiz-relay-probe.quiz-relay.workers.dev",
+  "competitionId": "demo",
+  "rulesetId": "standard",
+  "questionSet": {
+    "id": "mock-hiragana",
+    "version": 1
+  },
+  "playersPerMatch": 2,
+  "rules": {
+    "choiceCount": 4,
+    "revealIntervalMs": 100,
+    "characterAnswerTimeMs": 3000,
+    "judgedDisplayMs": 2000,
+    "fullRevealWaitMs": 10000,
+    "correctAnswersToWin": 7,
+    "mistakesToDisqualify": 3,
+    "reconnectGraceMs": 30000,
+    "showSelections": true
+  }
+}

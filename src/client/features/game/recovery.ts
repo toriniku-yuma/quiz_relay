@@ -22,13 +22,26 @@ export function applyGameUpdate(
     : null;
 }
 
-export function readGameSession(): {
+export function readGameSession(
+  mode: 'local' | 'formal' = 'local',
+  subject = '',
+): {
   room: { id: string };
   snapshot: Snapshot | null;
 } | null {
   try {
-    const value = JSON.parse(sessionStorage.getItem('quiz-relay-1b-hiragana') ?? 'null');
-    if (!value || !/^room-([1-9]|1[0-6])$/.test(value.room?.id)) return null;
+    const value = JSON.parse(
+      sessionStorage.getItem(
+        mode === 'local' ? 'quiz-relay-1b-hiragana' : `quiz-relay-1c:${subject}`,
+      ) ?? 'null',
+    );
+    if (
+      !value ||
+      !(mode === 'local' ? /^room-([1-9]|1[0-6])$/ : /^[0-9a-f-]{36}$/).test(
+        value.room?.id,
+      )
+    )
+      return null;
     return {
       room: value.room,
       snapshot:
@@ -43,14 +56,22 @@ export function readGameSession(): {
   }
 }
 
-export function saveGameSession(room: { id: string } | null, snapshot: Snapshot | null) {
+export function saveGameSession(
+  room: { id: string } | null,
+  snapshot: Snapshot | null,
+  mode: 'local' | 'formal' = 'local',
+  subject = '',
+) {
   try {
     if (room)
       sessionStorage.setItem(
-        'quiz-relay-1b-hiragana',
+        mode === 'local' ? 'quiz-relay-1b-hiragana' : `quiz-relay-1c:${subject}`,
         JSON.stringify({ room, snapshot }),
       );
-    else sessionStorage.removeItem('quiz-relay-1b-hiragana');
+    else
+      sessionStorage.removeItem(
+        mode === 'local' ? 'quiz-relay-1b-hiragana' : `quiz-relay-1c:${subject}`,
+      );
   } catch {
     /* ストレージを使えない場合も現在の接続は継続する。 */
   }

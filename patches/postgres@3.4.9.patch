@@ -1,0 +1,14 @@
+diff --git a/cf/polyfills.js b/cf/polyfills.js
+index 53c5203dd5b057d741d14d708ba83b27751b527c..e2b6a16039e05a327b6bae68805b8a0f9ba68eb3 100644
+--- a/cf/polyfills.js
++++ b/cf/polyfills.js
+@@ -211,7 +211,8 @@ function Socket() {
+   }
+ 
+   function error(err) {
+-    tcp.emit('error', err)
++    // postgres#1196: close removes listeners before a pending read rejects.
++    if (tcp.listenerCount('error')) tcp.emit('error', err)
+     tcp.emit('close')
+   }
+ }

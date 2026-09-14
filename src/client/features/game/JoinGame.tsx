@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import matchmaking from '../../../../config/matchmaking.json';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
@@ -7,14 +8,14 @@ import type { Game } from './useGame';
 export default function JoinGame({ game }: { game: Game }) {
   const [name, setName] = useState('');
   const [room, setRoom] = useState('1');
-  const [players, setPlayers] = useState('2');
+  const [players, setPlayers] = useState(String(matchmaking.playersPerMatch));
   const [question, setQuestion] = useState('1');
   const [showSelections, setShowSelections] = useState(true);
 
   return (
     <Panel title="試合に参加する">
       <p className="mt-3 text-sm text-muted">
-        別のブラウザーでも同じルーム番号・人数・問題番号・回答表示設定を指定してください。全員が接続すると出題します。同じブラウザーの別タブは同じ参加者になります。
+        問題はDBから取得します。別のブラウザーでも同じルーム番号・人数・問題番号・回答表示設定を指定してください。全員が接続すると出題します。同じブラウザーの別タブは同じ参加者になります。
       </p>
 
       <form
@@ -61,10 +62,10 @@ export default function JoinGame({ game }: { game: Game }) {
           />
           <TextField
             id="question-number"
-            label="最初の問題番号（1〜12）"
+            label="最初の問題番号（DBセット内）"
             type="number"
             min={1}
-            max={12}
+            max={100}
             required
             value={question}
             onChange={(event) => setQuestion(event.target.value)}

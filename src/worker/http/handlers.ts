@@ -8,4 +8,12 @@ export const notFound: NotFoundHandler<{ Bindings: Env }> = (c) =>
   c.json({ code: 'NOT_FOUND' }, 404);
 
 export const handleError: ErrorHandler<{ Bindings: Env }> = (_error, c) =>
-  c.json({ code: 'PROBE_FAILED', correlationId: crypto.randomUUID() }, 500);
+  c.json(
+    {
+      code: c.req.path.startsWith('/api/matchmaking/')
+        ? 'MATCH_UNAVAILABLE'
+        : 'PROBE_FAILED',
+      correlationId: crypto.randomUUID(),
+    },
+    500,
+  );

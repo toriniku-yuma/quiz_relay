@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import type { Command, GameMessage, Panel, Snapshot } from '../../../shared/game';
+import { settings } from '../../../shared/settings';
 import { type ConnectionStatus, connectGameSocket } from './connection';
 
 import { applyGameUpdate, readGameSession, saveGameSession } from './recovery';
 
 const messages: Record<string, string> = {
+  GAME_DATABASE_UNAVAILABLE:
+    '問題をDBから読み込めませんでした。しばらく待って再試行してください。',
   LOCAL_GAME_DISABLED: 'ローカル開発環境でのみ利用できます。',
   ORIGIN_REJECTED: '接続元が許可されていません。',
   INVALID_ROOM: 'ルーム番号は1〜16で指定してください。',
@@ -17,14 +20,13 @@ const messages: Record<string, string> = {
   RECONNECT_WAIT: '切断した参加者の復帰を待っています。',
   BUZZ_REJECTED: '今回は早押しを受け付けられませんでした。',
   PANEL_REJECTED: '解答権またはパネルの期限が変わりました。',
-  CONNECTION_LIMIT:
-    '同じ参加者の接続は3タブまでです。他のタブを閉じてから参加してください。',
+  CONNECTION_LIMIT: `同じ参加者の接続は${settings.game.maxConnectionsPerActor}タブまでです。他のタブを閉じてから参加してください。`,
   COMMAND_LIMIT: 'この試合であなたが送信できる入力の上限に達しました。',
   STALE_COMMAND: '出題が変わったため入力を受け付けませんでした。',
 };
 
-export function useGame() {
-  const [saved] = useState(readGameSession);
+export function useGame(mode: 'local' | 'formal' = 'local', subject = '') {
+  const [saved] = useState(() => readGameSession(mode, subject));
   const [snapshot, setSnapshot] = useState<Snapshot | null>(saved?.snapshot ?? null);
   const currentSnapshot = useRef<Snapshot | null>(saved?.snapshot ?? null);
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -41,7 +43,10 @@ export function useGame() {
   useEffect(() => {
     if (!room) return;
 
-    const url = new URL(API_PATHS.gameSocket, location.origin);
+    const url = new URL(
+      mode === 'local' ? API_PATHS.gameSocket : API_PATHS.matchSocket,
+      location.origin,
+    );
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('room', room.id);
 
@@ -70,7 +75,7 @@ export function useGame() {
             return false;
           }
           currentSnapshot.current = next;
-          saveGameSession(room, next);
+          saveGameSession(room, next, mode, subject);
           offset.current = message.serverTime - Date.now();
           setSnapshot(next);
           setPanel(message.panel);
@@ -96,7 +101,7 @@ export function useGame() {
       clearInterval(ticker);
       socket.current = null;
     };
-  }, [room]);
+  }, [room, mode, subject]);
 
   async function join(input: {
     room: string;
@@ -130,14 +135,28 @@ export function useGame() {
       setSnapshot(null);
       setPanel(null);
       setRoom({ id: input.room });
-      saveGameSession({ id: input.room }, null);
+      saveGameSession({ id: input.room }, null, mode, subject);
     } catch (error) {
       setError(error instanceof Error ? error.message : '接続に失敗しました。');
       setConnection('idle');
     }
   }
 
-  function leave() {
+  const attach = useCallback(
+    (id: string) => {
+      setError('');
+      currentSnapshot.current = null;
+      pendingCommand.current = null;
+      setPending(false);
+      setSnapshot(null);
+      setPanel(null);
+      setRoom({ id });
+      saveGameSession({ id }, null, mode, subject);
+    },
+    [mode, subject],
+  );
+
+  const leave = useCallback(() => {
     setRoom(null);
     setSnapshot(null);
     setPanel(null);
@@ -146,8 +165,8 @@ export function useGame() {
     setPending(false);
     setConnection('idle');
     setError('');
-    saveGameSession(null, null);
-  }
+    saveGameSession(null, null, mode, subject);
+  }, [mode, subject]);
 
   function reconnect() {
     setError('');
@@ -177,6 +196,8 @@ export function useGame() {
 
   return {
     snapshot,
+    roomId: room?.id ?? null,
+    attach,
     panel,
     actorId,
     connection,

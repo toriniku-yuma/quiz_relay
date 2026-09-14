@@ -4,7 +4,7 @@ import {
   runInDurableObject,
 } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { applyGameUpdate } from '../src/client/features/game/recovery';
 import type { Command, GameMessage } from '../src/shared/game';
 import type { Env } from '../src/worker/env';
@@ -19,9 +19,10 @@ import {
   snapshot,
   updateConnections,
 } from '../src/worker/game/state';
+import { questions } from './fixtures/questions';
 
 function playing(count = 3) {
-  const state = createState(0, count);
+  const state = createState(questions, 0, count);
   state.players = Array.from({ length: count }, (_, i) => ({
     id: `actor-${i}`,
     name: `Player ${i}`,
@@ -138,7 +139,7 @@ it('M02/M05: disconnection before the final answer wins the terminal race, WAITI
   expect(state.phase).toBe('INVALID');
   expect(state.players[0].correct).toBe(6);
 
-  const waiting = createState(0, 2);
+  const waiting = createState(questions, 0, 2);
   updateConnections(waiting, new Set(), 100);
   expect(waiting.phase).toBe('WAITING');
 });
@@ -179,7 +180,7 @@ it('G20: invalidation precedes exhaustion, seventh correct answer precedes exhau
   final.players[0].correct = 6;
   adjudicate(final, 'actor-0', input(final), 100);
   while (final.panel) adjudicate(final, 'actor-0', choose(final), 101);
-  expect(final.result?.reason).toBe('seven_correct');
+  expect(final.result?.reason).toBe('target_reached');
 });
 
 it('G06/G08: delta application equals snapshot, gaps and stale history require a snapshot', () => {
@@ -548,3 +549,7 @@ it('DO: reconnect within grace restores the same answer panel after eviction', a
     for (const socket of sockets) socket.close();
   }
 });
+
+vi.mock('../src/worker/catalog/database', () => ({
+  loadMatchDefinition: async () => ({ questions }),
+}));

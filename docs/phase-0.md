@@ -43,7 +43,7 @@ pnpm run dev
 
 ## DB検証の準備と実施
 
-1. 専用の開発用DBへ `supabase/migrations/202609080001_probe.sql` をmigration管理者で一度適用する。検証専用schema/tableと最小権限の `quiz_probe` ロールを作る。ゲーム本体のschemaはまだ作らない。
+1. 現在の新規DB準備は[DB管理](database.md)のDrizzle手順を使う。0A当時のprobe用SQLはDrizzleへ統合済みで、旧ファイルは削除した。現行migrationはprobeとゲームの両スキーマを作成する。
 2. 管理者のpsqlセッションで `\password quiz_probe` を使い、ロールのパスワードを対話入力する。パスワードをSQLファイルやコマンド引数へ書かない。psql未導入の場合は環境に合わせた手順を別途用意する。
 3. SupabaseのConnect画面のTransaction pooler接続先を使い、ユーザー部分を `quiz_probe.<project-ref>` として `.dev.vars` のDATABASE_URLへ保存する。実際のhost・portを画面で確認する。
 4. Workerを再起動して「DBのcommit・rollback」または `pnpm run probe` を実行する。検証用UUID行でTX内の読取、commit後の存在、rollback後の不存在を確認し、finallyで対象行を削除する。
@@ -192,3 +192,9 @@ Google認証にはSupabase Redirect URLsの https://quiz-relay-probe.quiz-relay.
 ## 2026-09-11：ベースデザインを適用
 
 採用したColor Huntの赤白配色をTailwindの共通定義（src/client/styles/global.cssの@theme）へ反映。背景・通常キー #F5EDED、面・主操作上の文字 #FFFFFF、主操作 #D72323、本文・補助文字・ボタンの段差 #3E3636、強調 #000000、境界線 #8A8A8Aを使う。共通Buttonは段差付きに統一。比較専用の配色データ・部品・CSSと/design/ページ・リンクを削除した。上記の見本ページ案内は過去の記録であり、現行では使わない。確認はローカルで行い、Workersへの反映は別途デプロイ条件を満たす場合のみ実施する。
+
+## 2026-09-14：1C配置後のクラウド設定
+
+現在の検証専用WorkerはPROBES_ENABLED=trueを維持するユーザー指示を適用する。以前の「終了後falseへ戻す」はこのWorkerには適用しない。配置はpnpm run build後にpnpm exec wrangler deploy --var PROBES_ENABLED:true。通常のpnpm deployはfalse既定のため、この検証Workerには上記を使う。
+
+本番ビルドには従来のHYPERDRIVEに加え、ゲームreader用GAME_HYPERDRIVE（4e4a5dbafb8540a1aa13241013dc90c6）を含む。DBの管理者・writer接続はローカルCLI専用のまま。設定・実測・最新Versionは[1C手順](phase-1c.md)参照。

@@ -6,21 +6,17 @@ import type {
   RoomEvent,
   Snapshot,
 } from '../../shared/game';
-import { choicesFor, graphemes, type Question, questions } from './questions';
+import { settings } from '../../shared/settings';
+import type { MatchDefinition } from '../catalog/definition';
+import { choicesFor, graphemes, type Question } from './questions';
 import { appendEvent } from './recovery';
+import { type Rules, rules } from './rules';
 
-export const rules = {
-  revealIntervalMs: 100,
-  characterAnswerTimeMs: 3000,
-  judgedDisplayMs: 2000,
-  fullRevealWaitMs: 10000,
-  correctAnswersToWin: 7,
-  mistakesToDisqualify: 3,
-  reconnectGraceMs: 30000,
-} as const;
+export { rules } from './rules';
 
 export type State = {
-  rules: typeof rules & { showSelections: boolean };
+  rules: Rules;
+  definition?: Omit<MatchDefinition, 'rules' | 'questions'>;
   response: Snapshot['response'];
   reconnect: Snapshot['reconnect'];
   events: RoomEvent[];
@@ -44,32 +40,50 @@ export type State = {
 };
 
 export function createState(
+  source: Question[],
   questionIndex: number,
   playersRequired: number,
   showSelections = true,
+  definition?: MatchDefinition,
 ): State {
-  const question = questions[questionIndex];
+  const fixedRules = definition?.rules ?? { ...rules, showSelections };
+  const question = source[questionIndex];
   if (
     !question ||
     !Number.isInteger(playersRequired) ||
     playersRequired < 2 ||
-    playersRequired > 4
+    playersRequired > 4 ||
+    (definition &&
+      (questionIndex !== 0 || playersRequired !== definition.playersPerMatch))
   )
     throw new Error('INVALID_SETUP');
 
-  for (const item of questions) {
-    for (const letter of graphemes(item.answer)) choicesFor(letter);
+  for (const item of source) {
+    for (const letter of graphemes(item.answer))
+      choicesFor(letter, fixedRules.choiceCount, item.distractors);
   }
 
   return {
-    rules: { ...rules, showSelections },
+    rules: structuredClone(fixedRules),
+    ...(definition
+      ? {
+          definition: {
+            competition: structuredClone(definition.competition),
+            ruleset: structuredClone(definition.ruleset),
+            questionSet: structuredClone(definition.questionSet),
+            rulesHash: definition.rulesHash,
+            manifestHash: definition.manifestHash,
+            playersPerMatch: definition.playersPerMatch,
+          },
+        }
+      : {}),
     response: null,
     reconnect: null,
     matchId: crypto.randomUUID(),
-    question,
+    question: structuredClone(question),
     questions: structuredClone([
-      ...questions.slice(questionIndex),
-      ...questions.slice(0, questionIndex),
+      ...source.slice(questionIndex),
+      ...source.slice(0, questionIndex),
     ]),
     questionIndex: 0,
     events: [],
@@ -83,7 +97,7 @@ export function createState(
     deadline: null,
     holder: null,
     panel: null,
-    waitRemaining: rules.fullRevealWaitMs,
+    waitRemaining: fixedRules.fullRevealWaitMs,
     judgment: null,
     commands: {},
   };
@@ -116,7 +130,11 @@ function activatePanel(state: State, now: number, position: number, attemptId: s
     attemptId,
     panelId: crypto.randomUUID(),
     position,
-    choices: choicesFor(graphemes(state.question.answer)[position]),
+    choices: choicesFor(
+      graphemes(state.question.answer)[position],
+      state.rules.choiceCount ?? 4,
+      state.question.distractors,
+    ),
     deadline: now + state.rules.characterAnswerTimeMs,
   };
   state.deadline = state.panel.deadline;
@@ -147,7 +165,7 @@ function judge(
     player &&
     player.correct >= state.rules.correctAnswersToWin
   )
-    finish(state, 'seven_correct', player.id, now);
+    finish(state, 'target_reached', player.id, now);
 }
 
 export function advance(state: State, now: number) {
@@ -236,7 +254,7 @@ export function adjudicate(
   // ponytail: ローカル12問は参加者ごとに256件まで保持。問題数拡張時は保存方式と上限を再評価する。
   if (
     Object.keys(state.commands).filter((key) => key.startsWith(`${actorId}:`)).length >=
-    256
+    settings.game.maxCommandsPerActor
   )
     return {
       commandId: command.commandId,

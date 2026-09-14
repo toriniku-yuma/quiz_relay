@@ -25,7 +25,12 @@ export type Panel = {
 export type Result = {
   id: string;
   winnerId: string | null;
-  reason: 'seven_correct' | 'exhausted' | 'connections' | 'disqualifications';
+  reason:
+    | 'target_reached'
+    | 'seven_correct'
+    | 'exhausted'
+    | 'connections'
+    | 'disqualifications';
   finishedAt: number;
 };
 export type Snapshot = {

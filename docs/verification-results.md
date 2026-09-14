@@ -375,3 +375,155 @@ cn.tsでextendTailwindMergeのshadowテーマへbutton・button-pressedを登録
 - pnpm run check：Biome・型検査・7ファイル95テスト・Vite設定検査・ビルド成功。接続テストを5件から7件へ更新した。
 - 偽時計と模擬WebSocketで、状態受信後の無応答、監視更新、ACKでは更新しないこと、closeイベントなしの再接続、古い接続からの遅延イベント無視を検証。18秒間に12回失敗した後の復旧、状態未受信なら猶予をリセットしないこと、30秒で進行中の試行と全タイマーを停止することも確認。
 - 今回の修正は自動テストで確認。ブラウザーの実ネットワーク遮断・クラウド試験は未実施。依存追加・デプロイ・コミットなし。
+## 2026-09-13：1Cの第1区切り・DB固定版の基盤
+
+引継ぎ開始時のHEADはf157236、Git作業ツリーはclean。引継ぎ要約の未コミット状態ではなく、実際のGitと最新文書を確認して着手した。
+
+- quiz_gameの固定ルール・問題・セット・大会・停止状態を扱うmigration、読取専用quiz_game_reader、RLS/grantsと不変版triggerを追加。**実DBへの適用・権限検証は未実施**。
+- 既存の独自モック12問を出典・許諾・ダミー候補とともにDBへ登録するseed SQL生成スクリプトを追加。node scripts/game-catalog-seed.tsに既存検証Workerのoriginと仮値2人を渡し、Git管理外の.wrangler/qa/game-catalog-seed.sql生成を確認。DBへの投入ではない。
+- 専用GAME_DATABASE_URL/GAME_HYPERDRIVEで固定版を読むサーバー処理と、hash・候補数・文字・版・停止状態の検証を追加。検証用DATABASE_URLへの流用や、DB障害時のコード内モックへのフォールバックは行わない。
+- 裁定へ渡す固定定義を複製し、設定した候補数・時間と非公開候補を使用。G14の一部として6択・5秒の解答、旧試合の4択・3秒維持、設定/問題/版参照の非遡及、不足候補・重複・不正値・hash改変拒否を検証。
+- SQL接続をモックした読込テストで、正常な定義の取得、欠落・停止・hash不一致・接続失敗の拒否と接続解放を確認。**SQL構文、制約、RLSを実DBで検証したものではない**。実DB用のsupabase/tests/game_catalog.sqlとscripts/check-game-catalog.tsを追加。
+- pnpm run check成功：Biome・型検査・8ファイル100テスト・Vite設定確認・ビルド。既存1Bの試合裁定・切断復帰・公開境界テストも回帰した。
+- ローカルにpsqlは見つからず、Docker CLIはあるがdaemon未起動。新しいサービス起動・依存追加・既存DB権限変更・秘密変更・デプロイ・コミットなし。
+
+開始人数の初期値/範囲とDB管理者接続の利用方法はユーザー回答待ち。正式メール/Googleログイン導線、参加認可、自動マッチング、開始直前のDB再確認への接続は未実装であり、現在の/game/は引き続き1Bの開発用経路・コード内モックを使う。1Cを完了とはしない。[1C手順](phase-1c.md)に実装順序・適用手順・残件を記載した。
+
+## 2026-09-13：開始人数4人とコンフィグ指定
+
+ユーザー回答により初期人数を4人に確定し、Supabase操作の一任を受けた。
+
+- config/matchmaking.jsonへplayersPerMatch=4を追加。初期seed生成と開発用の仮参加UIの初期値を共通化した。検証用・サーバー固有の値はseed生成時に別JSONを指定できる。現行範囲は2〜4人。稼働中の人数は大会のDB固定版を正とし、JSON変更を既存待機列・試合へ遡及させない。
+- 旧2人用SQLを保持したまま、.wrangler/qa/game-catalog-seed-4.sqlを生成。実DBには未適用。
+- pnpm run check成功：Biome・型検査・8ファイル100テスト・Vite設定確認・人数コンフィグのCLI検証・ビルド。CLI検証では初期4人、別設定2/3人、不正値1/5/文字列/nullの拒否、既存SQL上書き拒否を確認。今回の仮UI初期値は型検査・ビルドまでで、ブラウザー操作は未実施。
+- ブラウザー操作ツールは初回とreset後ともrunner pipe-in接続タイムアウトで起動できず。Supabase CLI・管理者接続・環境変数のPATを利用できなかった。Git管理外の.env.supabase-adminへ空のSUPABASE_ACCESS_TOKEN欄を用意し、本人による登録を依頼。秘密値は出力していない。
+- 既存DB・Auth設定、Worker配置、旧DO保存データに変更なし。正式認証・マッチングへの統合は未実装。人数の未確定事項は解消したが、実DB検証は管理用接続の登録待ち。
+
+## 2026-09-13：1CカタログをSupabaseへ適用・専用reader検証
+
+ユーザーが管理PATのローカル登録を完了。Supabase操作の一任に基づきManagement APIのSQL実行で作業した。ブラウザー操作は使用していない。
+
+- 事前照会でquiz_probeあり、quiz_game/quiz_game_readerなしを確認。supabase/migrations/202609130001_game_catalog.sqlと4人用seedを適用。既存スキーマを変更せず、6テーブル・不変版trigger・RLS・reader用SELECT policyを追加。
+- demo版1・開始4人・独自問題12問を実DBで確認。Nodeのscripts/check-game-catalog.tsでreaderからSupavisorへTLS接続し、アプリケーションのloadMatchDefinitionで全問題とルールを読込・hash検証した。rulesHashは95979f74691dd73cfa9645f4572a572c809c93bad72bc0812673e0db30cb5209、manifestHashは1d6811bf21c02f97ca3021375abbcad2c33895ffbe8f328957f5f86032cca4af。
+- 新規quiz_game_readerに暗号学的乱数の資格情報を設定。SQLへ平文パスワードを含めずSCRAM verifierを使用。既存DATABASE_URL/ロールのパスワードを保ち、.dev.varsへGAME_DATABASE_URLを追加。検証完了後、今回作成したreader用の一時資格情報ファイルは削除。
+- 初回SQLテストはManagement APIのpostgresから新規readerへSET ROLEできず42501。テストを管理者のSQL確認とreaderの実接続へ分離して再実施した。権限を追加してテストを通す対応は行っていない。
+- supabase/tests/game_catalog.sql成功：anon/authenticatedの実行権限で問題本文・解答を含むpayloadの読取拒否、全テーブルのRLS・grants、ルール版の更新/削除/重複拒否。テスト一時行はrollback後0件。
+- scripts/check-game-reader.mjs成功：実セッションcurrent_user=quiz_game_reader、問題SELECT成功、INSERT/UPDATE/DELETEは42501、quiz_probe.runsの読取も42501。書込検証はWHERE falseで既存データへ影響させない。
+- pnpm run check成功：Biome・型検査・8ファイル100テスト・Vite設定検査・コンフィグCLI検証・ビルド。
+
+実DBは既存のSupabase開発プロジェクト。今回確認したアプリケーション読込経路はNode→Supavisorで、Worker経路やクラウドGAME_HYPERDRIVEからのゲームDB読込ではない。Workersデプロイ、正式ログイン・自動マッチング統合、ゲームHibernationは未実施。完全な空Supabaseプロジェクトでの再構築も未実施。直接SQLでの適用のためSupabase CLIのmigration履歴は未登録。現行/game/は引き続き1Bの開発用経路とコード内モックを使う。1C全体の完了とはしない。[1C手順](phase-1c.md)を更新。
+
+
+## 2026-09-14：1C正式参加・マッチング・実DB統合
+
+1BのHEAD f157236を基点とする未コミット作業ツリー。正式/game/と開発/local-game/を分離し、既存の1B保存データは保持。デプロイ・コミットは未実施。
+
+| 対象 | 実施結果 | 限界 |
+| --- | --- | --- |
+| A04 / 認可 | 公開設定、サーバーgetUser、未認証・匿名・未確認email・偽造actor拒否、HttpOnly cookie、ログアウト後の旧cookie拒否と同一actor復帰を自動検証 | 有効ユーザーのSupabase応答はモック。本人OAuth/メールE2Eは未確認 |
+| M01/M03 | 2/3/4人の接続完了で一度だけ開始。同一actor複数タブ、定員、開始後新規拒否、取消競合、同時10参加の4/4/2割当、異なる版の待機分離 | ローカルDO、性能負荷試験ではない |
+| 予約・復帰 | 未接続60秒・待機10分の期限、永続化後RPC応答消失、同じ予約での復帰、stale取消拒否、actorごとの復帰ストレージ分離 | クラウドHibernation未実施 |
+| G14 / 開始前DB検証 | 一時DB障害でWAITING維持・問題非公開、出題停止で部屋閉鎖、既存固定版維持 | 障害入力はモック |
+| D05 / 実DB・Worker統合 | 専用readerで実Supavisorの4人/12問定義を読込。隔離した実ローカルDOへ4人接続し、最後の接続でDB再検証後REVEALINGになることを確認 | 本人ログインは介さないSELECTのみの明示試験 |
+| ログイン前UI | Edge 153 headless、1100px/390px幅で正式ログイン、ルートredirect、email/Google操作導線、横あふれなし。モバイル画像を目視確認。実HTTPで公開設定200、未認証401、Supabaseでの実無効JWT401 | 本人認証ダイアログ操作・ログイン後対戦E2Eは未実施 |
+
+実DB試験は最初にCA未読込で接続失敗。Node起動時に.dev.varsを読み込み、既存CAを維持して解消。次にPostgres.js 3.4.9の接続終了競合による未処理例外を2件検出し、上流issue #1196と照合した。pnpmの最小パッチ後、tests/catalog.live.tsは1テスト成功・未処理例外0。TLS検証無効化や全体の例外抑制は行っていない。
+
+ブラウザー成果物はGit管理外の.wrangler/qa/1c-login.pngと1c-login-mobile.png。本人認証には通常ログインを使用する。管理キー取得によるテストユーザー準備は自動承認レビューで拒否され、取得・作成は行っていない。
+
+1Cの実装はそろったが、本人によるメール/Googleログインから複数アカウント対戦までの受入は残る。クラウドGAME_HYPERDRIVE・配置・ゲームHibernation、1Dの結果/outbox保存・順位は未実施。今回の変更にクラウドのPROBES_ENABLEDや配置Versionの変更はない。
+
+最終全体チェック（2026-09-14）：pnpm run check成功。Biome・型検査・9ファイル117テスト・Vite設定/seed CLI検証・本番ビルドが成功。git diff --checkで差分エラーなし。実DB試験1件は通常の117件とは別枠。
+
+2026-09-14：demo版2（検証用2人）を追加。実DBのSELECTで版1=4人・版2=2人の共存を確認。tests/catalog.live.tsを両版へ拡張し、ローカルWorker→実DBで4人/2人の自動開始をそれぞれ確認、2テスト成功。ローカルのみ版2へ切替、既存試合・クラウド配置は変更なし。
+
+
+## 2026-09-14：ユーザー確認と1Cレビュー修正
+
+ユーザーから「アカウントと自動マッチング確認しました」との報告を受領。認証方式別結果や対戦完走までの確認とは解釈しない。
+
+- DB応答を16秒遅らせたローカルDO試験で、heartbeat送信中もWAITINGのままになる問題を修正前に再現。DB読込を直列化区間の外へ移した後はREVEALINGへ遷移して成功。
+- DB返答待ちの間に、接続要求者の取消、相手の取消、待機期限切れ、別接続による開始を起こし、返答後も古い状態を上書きしないことを確認。開始済みの試合を遅延DBエラーで閉じない。
+- NO_ACTIVE_MATCH時に古い参加情報を解放。一時障害とunmount後の遅延応答で解放しないことをhook試験で確認。
+- Edge 153 headlessで実React画面を検証。Auth・復帰応答・WebSocketを模擬し、古いREVEALING snapshot＋参加なし応答からマッチング画面へ戻り、sessionStorageも消えることを確認。一時障害では古い情報を保持。実認証E2Eではない。再現スクリプトはGit管理外の.wrangler/qa/1c-expired-room-browser.mjs。
+- 2人のローカル設定、4人の初期設定とDB固定版は保持。クラウド配置・コミットは行っていない。
+
+修正後の最終確認：pnpm run check成功（Biome・型検査・10ファイル125テスト・Vite設定/seed CLI検証・ビルド）。別枠の実DB試験も2件成功し、2人版・4人版とも開始前再検証から自動開始を確認。
+
+
+## 2026-09-14：ハードコード問題の撤去
+
+ユーザー依頼により、アプリ内の12問定義を撤去。初期投入用JSONとテストfixtureへ分離し、裁定関数から暗黙の問題セットを削除。旧開発参加の新規部屋もDBから読むよう変更。既存DB・保存済みDOは変更しない。
+
+追加の回帰検証は、DBにしかないID/本文の受渡し、既存部屋のDB非依存復帰、DB障害時に空の部屋を作らないこと、空問題セット拒否。正式対戦の開始・取消・復帰も全体チェックで確認する。
+
+撤去後の最終確認：pnpm run check成功（10ファイル127テスト、型検査、Biome、seed CLI、Vite設定確認、ビルド）。実DB試験3件で正式2人/4人開始と旧検証のDB読込を確認。初期投入JSONのmanifest hashは既存DBの記録と一致し、12問のID・本文がWorker/clientビルドに含まれないことを確認。DB書込・デプロイ・コミットなし。
+
+## 2026-09-14：JSON設定とDB有効版切替
+
+- `pnpm run check` 成功：Biome、型検査、11ファイル134テスト、seed CLI・Vite設定確認、ビルド。設定JSONの初期4人/ローカル2人、不正な人数・欠落・誤記・型、変更ルールでの勝利と旧試合への非遡及を確認。
+- 実Supabaseへ設定参照migrationを直接SQLで適用し、CLIでdefault（demo版1、4人）とlocal（版2、2人）を登録。既存ルール・大会版を再利用、問題の更新なし。Supabase CLIのmigration履歴へは未登録。
+- Git管理外の検証スクリプトでCLIの生成SQLを使い、3人・5問先取・2回失格・20秒猶予へ一時変更。同一TX内の2回適用でも新規ルール・大会は各1版だけで、参照先と値が一致。rollback後、元の件数と検証プロファイル不在を確認。
+- readerの実TLS接続・SELECT成功、INSERT/UPDATE/DELETEとprobe読取拒否、追加した設定参照テーブルへのUPDATE拒否を確認。
+- 明示実DB試験3件成功：固定版1の4人、版2の2人でローカルWorkerの開始、旧検証経路の有効プロファイルからの問題取得。本人認証E2Eとは別の試験。
+- クラウド設定・配置・PROBES_ENABLEDを変更していない。管理画面未実装、コミットなし。現在のローカルは引き続き2人。
+- 設定JSONをBiome対象へ追加後、97ファイルのLint成功。追加文書のリンクとgit diff --checkを確認。開発サーバーを新しいlocalプロファイル設定で再起動し、/game/のHTTP 200とアプリ入口を確認した。本人ログインの再実施とは区別する。
+
+## 2026-09-14：Drizzle ORM / Kitへの移行
+
+- Drizzle ORM 0.45.2 / Kit 0.31.10を固定。ゲームの1クエリ読込、設定反映、初期seed、DBプローブをDrizzleへ変更。自前SQL文字列生成・エスケープ・設定CLIのManagement API送信を撤去。
+- 実DBの8テーブルをKit pullで取得し、列・PK/FK・CHECK・ポリシーを照合。取り込みのRLS明示フラグを補い、旧権限試験と不変トリガー5件・関数内容を確認。初期2migrationを再実行せずDrizzle履歴へ登録し、専用writer/RLSの3migrationを実適用した。
+- セッション接続でKit introspection成功。トランザクションプールでは途中で完了しなかったため対象プロセスだけ停止した。既存のSupabase管理パスワードを使用し、読取・probe資格情報は変更していない。writer資格情報はGit管理外に新規保存。
+- `pnpm run check` 成功：11ファイル134テスト、型検査、Biome、seedプレビュー/既存hash一致、Vite設定、Worker/clientビルド。後から追加したCLI TSも型検査を通過。
+- ローカルWorker＋実DB試験3件成功：既存4人/2人の固定版開始、旧開発経路の有効設定読込。実AuthのE2Eとは別。
+- `pnpm db:check` 成功：専用writerで新規ルール・大会版を作成し、同設定の再適用で版が増えないことをTX内で確認してrollback。別接続の同時反映は同じ既存版を再利用し、一時プロファイルを削除。readerの書込/他スキーマ読取拒否、writerの過去版・問題変更拒否、管理者の不変版更新拒否を確認。
+- `config:apply:local` / `config:apply:default` を実行し、demo版2/2人と版1/4人を再利用。問題・既存試合の変更なし。
+- 全migrationを隔離したスキーマ・ロール名に置き換え、実DBのTXで全DDL statementを実行しrollback。スキーマ・ロールが残らないことを確認。標準migratorを外側TXへ入れる方式はPostgres.jsのネスト制約で失敗したため、このDDL検証はstatement単位で行った。実DBへの通常適用は標準Drizzle migratorを使用し、再適用が無変更、Kit generateが差分なしを確認。
+- クラウド配置・コミットなし。旧SQLは履歴照合資料として保持し、通常運用は[DB管理](database.md)のDrizzleコマンドを使う。
+- 最終確認：103ファイルのLint、追加文書リンク、git diff --check、Drizzleの実DBプローブcommit/rollback/後片付け、全5件のmigration履歴hash一致、ビルドへの問題ID・本文非同梱を確認。開発サーバーを再起動し/game/のHTTP 200を確認した。
+
+2026-09-14追記：前項で照合資料として残した旧supabase/migrations、supabase/seeds/demo-two-player.sql、supabase/tests/game_catalog.sqlを削除。権限試験の全7テーブルRLS/grants、anon/authenticatedの実読取拒否、試験用ルール版のUPDATE/DELETE/重複拒否をDrizzleのscripts/check-game-permissions.mjsへ移し、実DBで成功・TX rollbackを確認した。pnpm db:checkへ追加。2人設定は既存JSON＋config:apply:local、migrationはdrizzle/へ統一。既存DBデータとDrizzle適用履歴は変更していない。過去のファイル名が出る実施記録は当時の記録として保持する。
+
+## 2026-09-14：再レビュー2件の修正検証
+
+- 標準JSONから検証項目一覧を作る処理を撤去。必須項目・型・上限下限を固定契約にし、標準JSONにも適用。各必須9項目の削除と未知キー追加をモジュール読込時に拒否する10件の回帰テストを追加。
+- MatchmakerのDB読込を直列化区間外へ移動。応答保留中の別actorの復帰・取消・Alarm、後発同一actor参加による二重予約拒否、後発参加取消後の古いDB返答による再参加拒否を確認。
+- DB障害を捕捉し503 / GAME_DATABASE_UNAVAILABLEと再試行案内を返す。cookie未発行・既存予約保持・回数加算1回を確認。初回試験で検出した未処理RPC例外も解消。
+- pnpm run check成功：12ファイル149テスト、105ファイルのBiome、型検査、seedプレビュー・Vite設定確認、ビルド。git diff --check成功。
+- 今回はローカルDOとDBモックで競合を検証。実DB・migration・設定値の変更、クラウド配置、コミットなし。先の実DB試験・migration履歴確認とは区別する。
+
+## 2026-09-14：追加手動確認・既存クラウド基盤の再検証
+
+ユーザーがアカウント・自動マッチングに加え、案内したその他の手動動作も確認したと報告。ログイン方式別の個別ログや動画を取得したものではなく、ユーザー報告として記録する。クラウド・Hibernation検証の実施依頼を受領した。
+
+- ローカル：pnpm run check成功。Biome 105ファイル、型検査、12ファイル149テスト、Vite設定・seed preview・ビルド。
+- 既存クラウド：scripts/probe.mjsによりhealth、DO保存、Alarm、Workers署名のNode検証、probe用HyperdriveのDB commit/rollbackがPASS。
+- 既存Probe DOのHibernation：2026-09-14 14:00 JST、30秒無通信の前後で同一WebSocketが開いたまま、count・connectedAt attachmentが一致、instanceIdが変化。DO再生成と保存状態・attachment復元を確認。再配置や強制再起動は行っていない。Git管理外の.wrangler/qa/cloud-probe-hibernation.mjsと.wrangler/qa/cloud-probe-hibernation-result.jsonに実行用コード・非秘密の結果を保存。
+- この結果は既存Probeの実測であり、GameRoomのパネル・得点・猶予復元や1Cクラウド完了の証拠にはしない。
+
+ゲーム用Hyperdriveの作成・reader資格情報登録は、自動承認レビューが具体的な機密情報の外部登録とリソース追加の明示承認不足として実行前に拒否。資格情報送信・新規リソース作成・Worker配置は未実施。既存PROBES_ENABLED=trueを維持。GAME_HYPERDRIVE、最新1C配置、ゲーム本体のクラウド復帰検証は承認後の残件。
+
+Hibernationの判断は[Cloudflare公式のWebSocket説明](https://developers.cloudflare.com/durable-objects/best-practices/websockets/)に沿い、接続維持だけでなくインスタンスの再生成とattachment保持を照合した。
+
+## 2026-09-14：1Cクラウド配置・Hibernation・対戦完走
+
+ユーザーがHyperdriveへの専用reader資格情報登録と追加を承認。作成時の接続確認が成功。quiz-relay-game-db IDは4e4a5dbafb8540a1aa13241013dc90c6。Supavisor session 5432、既存CAによるverify-full、キャッシュ無効、接続上限5。既存probe用Hyperdrive、ローカルDB設定、過去版・旧DOは維持。有料プラン変更なし。
+
+pnpm run check：Biome 105ファイル、型検査、12ファイル149テスト、Vite設定、seed preview、ビルドが成功。vite.config.tsへGAME_HYPERDRIVEを追加したビルドをPROBES_ENABLED=trueで配置。quiz-relay-probe Version b35b5779-c36a-4c92-8f66-cb15801c67fa、標準default=4人。ローカルlocal=2人は不変。
+
+| 対象 | 実測結果 |
+| --- | --- |
+| 公開配置 | /game/、/api/health、/api/auth/configは200。未認証のPOST matchmaking join/configは401、開発game joinは404 |
+| 既存probe | health、保存、Alarm、Workers署名、DB commit/rollbackがすべてPASS。PROBES_ENABLED=trueの維持を確認 |
+| 同じソースの隔離DO・待機中 | 11秒無通信後、同じWebSocketはOPENのまま、同じmatchId、観測用メモリinstance IDは変化。Hibernation後の接続維持を確認 |
+| 同じソースの隔離DO・一時停止 | 全員切断して停止後、11秒の休止を挟んでinstance ID変化。パネル全体とreconnect期限・残時間は一致 |
+| 隔離DO・再接続 | 期限内に2人へ戻り停止解除。同一panelId・候補と保存済みbuzzのACKを復元。Matchmakerの同じroom/tokenへ復帰 |
+| 隔離DO・猶予満了 | 再度全員切断後、保存した30秒の期限を越えてAlarmでINVALID。instance ID変化を確認。後から接続しても同じresultを維持 |
+| 隔離DO・参加制御 | 二重参加ALREADY_JOINED、開始後の新規reserveはROOM_CLOSED、待機取消後resumeはNO_ACTIVE_MATCH |
+| 通常配置の実DO・RPC | quiz-relay-probeの隔離Matchmaker名経由で4人が同部屋へ入り、全員接続後に自動開始。DBの7問を正解してtarget_reached勝利。終了後再接続のresult一致、次の新規部屋と取消も成功 |
+
+通常配置DOの試験は一時Workerの同一アカウントDO binding経由。ユーザーの通常待機列とは別の名前で、認証済みactor相当の検証IDをRPCへ渡した。実Auth・cookieのクラウドE2Eとして扱わない。クラウドの本人メール/Google操作は今回再実行していない。ユーザーの追加手動受入報告と合わせて1Cの予定範囲を完了とし、結果DB保存等の1Dへは着手していない。
+
+一時Worker quiz-relay-game-qaは観測用GameRoomサブクラス（メモリinstance IDと保存状態の読取りのみ）を使用し、元の裁定・時間設定を変更していない。既存トークンの流用は自動承認レビューで拒否されたため実行せず、新規専用ランダムトークン方式で保護。未認証の一時APIは404を確認。試験後にWorkerを削除し、ローカル専用トークンも削除した。既存検証トークンは維持。
+
+再現用の一時コード・非秘密の結果はGit管理外の.wrangler/qa/cloud-game-{worker.ts,test.mjs,result.json}、cloud-deployed-game-{test.mjs,result.json}、cloud-public-check.mjs。再実行には一時Workerと新規専用トークンを用意し、確認後に削除する。試験は短時間・少人数であり、負荷・長時間耐久試験ではない。

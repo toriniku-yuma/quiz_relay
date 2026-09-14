@@ -48,12 +48,27 @@ export function getAuth() {
   return auth;
 }
 
-export async function setupAuth(token: string) {
+export async function setupAuth(token?: string) {
   if (!canAuthenticate()) throw new Error('HTTPS_REQUIRED');
 
   getAuth();
-  const config = await probeRequest(token, API_PATHS.authConfig);
-  if (typeof config.url !== 'string' || typeof config.publishableKey !== 'string') {
+  const config = token
+    ? await probeRequest(token, API_PATHS.authConfig)
+    : await fetch(API_PATHS.publicAuthConfig, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(10000),
+      }).then(async (response) => {
+        if (!response.ok) throw new Error('AUTH_NOT_CONFIGURED');
+        return response.json();
+      });
+  if (
+    !config ||
+    typeof config !== 'object' ||
+    !('url' in config) ||
+    !('publishableKey' in config) ||
+    typeof config.url !== 'string' ||
+    typeof config.publishableKey !== 'string'
+  ) {
     throw new Error('AUTH_NOT_CONFIGURED');
   }
 
@@ -103,8 +118,9 @@ export async function checkIdentity() {
   return { authenticated: true, message: 'ログイン・本人確認に成功しました。' };
 }
 
-export async function sendLoginEmail(token: string, email: string) {
+export async function sendLoginEmail(token: string | undefined, email: string) {
   const client = await setupAuth(token);
+  localStorage.setItem('quiz-relay-auth-return', token ? '/debug/' : '/game/');
 
   // Keep the registered root callback; the entry redirect preserves code/hash.
   const { error } = await client.auth.signInWithOtp({
@@ -120,8 +136,9 @@ export async function sendLoginEmail(token: string, email: string) {
   };
 }
 
-export async function signInWithGoogle(token: string) {
+export async function signInWithGoogle(token?: string) {
   const client = await setupAuth(token);
+  localStorage.setItem('quiz-relay-auth-return', token ? '/debug/' : '/game/');
   const { error } = await client.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: `${location.origin}/` },

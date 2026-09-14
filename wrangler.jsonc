@@ -13,13 +13,19 @@
   "durable_objects": {
     "bindings": [
       { "name": "PROBE", "class_name": "Probe" },
-      { "name": "GAME_ROOM", "class_name": "GameRoom" }
+      { "name": "GAME_ROOM", "class_name": "GameRoom" },
+      { "name": "MATCHMAKER", "class_name": "Matchmaker" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Probe"] },
-    { "tag": "v2", "new_sqlite_classes": ["GameRoom"] }
+    { "tag": "v2", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v3", "new_sqlite_classes": ["Matchmaker"] }
   ],
-  "vars": { "PROBES_ENABLED": "false" },
+  "vars": {
+    "PROBES_ENABLED": "false",
+    "GAME_OWNER": "https://quiz-relay-probe.quiz-relay.workers.dev",
+    "GAME_CONFIG_PROFILE": "default"
+  },
   "observability": { "enabled": false }
 }

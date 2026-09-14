@@ -19,7 +19,7 @@ export default function GamePage() {
     <main className="mx-auto max-w-4xl px-4 pt-6 pb-10 sm:px-8 sm:pt-10 sm:pb-16">
       <PageHeader
         title="早押しクイズ"
-        description="7問先取・3回お手つきで失格。ローカル専用の試合確認画面です。"
+        description="ローカル専用の試合確認画面です。問題はDB、検証用ルールは設定ファイルを使います。"
       />
       <p className="text-sm" role="status">
         {connections[game.connection]}

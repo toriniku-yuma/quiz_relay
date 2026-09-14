@@ -1,0 +1,28 @@
+{
+  "connection": {
+    "heartbeatIntervalMs": 5000,
+    "heartbeatTimeoutMs": 15000,
+    "connectTimeoutMs": 10000,
+    "receiveTimeoutMs": 15000,
+    "retryIntervalMs": 1500,
+    "retryWindowMs": 30000
+  },
+  "lobby": {
+    "waitingLifetimeMs": 600000,
+    "reservationLifetimeMs": 60000,
+    "sessionLifetimeMs": 43200000,
+    "cleanupIntervalMs": 60000,
+    "maxRooms": 64,
+    "rateWindowMs": 60000,
+    "requestsPerWindow": 20,
+    "maxRateActors": 1024
+  },
+  "game": {
+    "maxConnectionsPerActor": 3,
+    "commandRateWindowMs": 1000,
+    "commandsPerWindow": 20,
+    "maxCommandsPerActor": 256,
+    "eventRetentionMs": 60000,
+    "maxEvents": 512
+  }
+}

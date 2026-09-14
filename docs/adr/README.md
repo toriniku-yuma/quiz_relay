@@ -17,3 +17,7 @@
 [0006-phase-zero-foundation.md](0006-phase-zero-foundation.md)：0A・0Bのローカル検証基盤、署名プロファイル、実環境で残る検証。
 
 [0007-source-structure-and-debug-pages.md](0007-source-structure-and-debug-pages.md)：責務別のフォルダー、1 TSX 1コンポーネント、整形、デバッグと比較ページの分離。
+
+[0008-game-configuration.md](0008-game-configuration.md)：JSONによる人数・ルール設定、DBの不変版と有効プロファイル、将来の管理画面への接続方針。
+
+[0009-drizzle-database.md](0009-drizzle-database.md)：型付きDB操作、Drizzle migration、専用writerと既存DBのベースライン引継ぎ。

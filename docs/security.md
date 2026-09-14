@@ -41,3 +41,14 @@ PostgresバックアップだけではDOに残る未保存結果を回復でき�
 任意の独自ドメインを許可する変更では、内部IP解決・DNS変更・リダイレクトと秘密非転送を実経路で検証するまで有効化しない。単にこのホスト制限を削除して拡張しない。S01全体は未完了。
 
 [公開fetchの公式仕様](https://developers.cloudflare.com/workers/runtime-apis/fetch/)と[Workersのルーティング](https://developers.cloudflare.com/workers/reference/how-workers-works/)を参照。
+
+
+## 1Cの実装境界（2026-09-14）
+
+正式参加はSupabase getUserでBearerをサーバー検証し、匿名・メール未確認ユーザーを拒否する。クライアントからactorId・人数・定義版を受け取らない。公開Auth設定はURLとpublishableKeyのみ。問題/正解は専用readerでDBから読み、公開snapshot・差分・参加APIへ未表示内容を含めない。
+
+参加APIは同一Origin、本人確認、本文上限を要求。WebSocketは同一Originと部屋専用HttpOnly cookieを要求し、DO内のactor対応表で認可。cookieは最大12時間、ログアウトで失効する。Auth管理側からの失効の即時伝播は未実装。正式UIのタブ復帰情報はsubjectごとに分離する。
+
+開発参加APIのDEV/LOCAL_GAME_ENABLED制限は維持する。管理PATとreader接続情報をフロントエンドや応答へ渡さない。サービス管理キーを用いたテストユーザー作成は行っていない。詳細と未確認範囲は[1C手順](phase-1c.md)。
+
+2026-09-14：Drizzle移行。アプリのreaderを維持し、設定CLIだけのquiz_game_configとmigration管理接続を分離した。SQL値はDrizzleがパラメーター化し、自前エスケープを撤去。管理接続は.env.supabase-adminに置き、Worker bindingへ渡さない。スキーマのRLS・権限・不変トリガーは維持し、管理者による過去版更新も拒否する。[DB管理](database.md)参照。

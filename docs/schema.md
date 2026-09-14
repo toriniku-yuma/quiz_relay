@@ -1,6 +1,6 @@
 # データ設計（論理スキーマ案）
 
-ゲーム本体のSQL migrationは未作成。0Aでは独立した検証用schemaのmigrationだけを用意した（[実行手順](phase-0.md)）。以下を実装時に制約・index・権限まで落とし込み、空DBと既存DBの両方で検証する。
+2026-09-13：1Cの固定版カタログ用migrationを追加し、既存Supabaseへ新規quiz_gameスキーマとして適用済み。物理スキーマと検証待ちの項目は[1C手順](phase-1c.md)を参照。問題の非公開データはquestion_versions.payloadにまとめ、question_answersは現時点で独立テーブルにしていない。結果・配送・順位は未実装。以下は全体の論理設計であり、全テーブル実装済みを意味しない。既存Supabaseへの新規スキーマ追加・権限・不変版・専用reader接続を検証済み。完全な空プロジェクトからの再構築は未実施。
 
 ## 公開境界
 
@@ -36,7 +36,7 @@
 
 ## 調整値の保存
 
-ruleset_versions.configにchoiceCount、characterAnswerTimeMs、correctAnswersToWin、mistakesToDisqualify、revealIntervalMs、judgedDisplayMs、fullRevealWaitMsを保存し、rules_hashの対象にする。competitions.conditionsにplayersPerMatchと「接続中actorが1人以下、または失格していない参加者が1人以下なら猶予なく無効」の成立条件を含める。matchesから参照する版は開始前に固定する。
+ruleset_versions.configにchoiceCount、characterAnswerTimeMs、correctAnswersToWin、mistakesToDisqualify、revealIntervalMs、judgedDisplayMs、fullRevealWaitMsを保存し、rules_hashの対象にする。competitions.conditionsにplayersPerMatchと「接続中actorが1人以下なら30秒の復帰猶予後に無効、失格していない参加者が1人以下なら即無効」の成立条件を含める。matchesから参照する版は開始前に固定する。
 
 初期定数の変更でDBの既存版を上書きしない。新しい値は新ルール版・大会定義へ適用する。開始前に固定choiceCount分の一意な候補を全問題で作れることを検証し、ダミー不足や重複候補を黙って減らして配信しない。
 
@@ -64,3 +64,13 @@ characterAnswerTimeMsの初期値は3000ms。終了理由には接続人数不�
 5. 新世代の投影を作り、同一TXで参照世代を切り替える。途中計算をUIへ出さない。
 
 入力の基準revisionを固定し、計算中に届いたイベントは次の再計算へ確実に回す。小規模MVPは対象大会を再計算する単純な方式を提案する。順位をイベント到着順に直接加減算することを唯一の正にしない。
+
+## 2026-09-14：稼働中設定の参照
+
+`quiz_game.matchmaking_settings` は `(owner, profile)` を主キー、`(owner, competition_id, competition_version)` を不変の大会版への外部キーとする。有効参照だけを切り替え、過去版は更新しない。RLSと権限をカタログ同様に設定し、quiz_game_readerはSELECTのみ、anon/authenticated/PUBLICはアクセス不可。migrationは202609140001_matchmaking_settings.sql。
+
+設定反映は開催元単位のtransaction advisory lockで直列化し、ルールhash・大会条件が同じ版は再利用する。ルール版・大会版の追加と有効参照のupsertは同一TX。待機・進行中のDOは自身が保存した版を保持する。管理UIは1D。操作は[設定手順](configuration.md)。
+
+## 2026-09-14：Drizzleをスキーマ管理の正へ変更
+
+src/worker/db/schema.tsで既存8テーブルの列・制約・FK・RLSを定義。生成/カスタムmigrationはdrizzle/、適用履歴はdrizzle.__drizzle_migrationsへ統一。初期2件は実DBと照合して適用済み登録し、既存表を再作成していない。追加ロールquiz_game_configはカタログSELECT、ルール・大会・有効設定INSERT、有効設定UPDATEのみ。その他の書込・DDLは拒否。不変トリガーは維持。[DB管理](database.md)参照。

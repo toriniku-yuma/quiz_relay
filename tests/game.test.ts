@@ -1,9 +1,9 @@
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Command, GameMessage } from '../src/shared/game';
 import type { Env } from '../src/worker/env';
-import { choicesFor, graphemes, questions } from '../src/worker/game/questions';
+import { choicesFor, graphemes } from '../src/worker/game/questions';
 import {
   adjudicate,
   advance,
@@ -14,11 +14,12 @@ import {
 } from '../src/worker/game/state';
 import { parseCommand, parseJoin } from '../src/worker/game/validation';
 import app from '../src/worker/index';
+import { questions } from './fixtures/questions';
 
 const runtime = env as unknown as Env;
 
 function playing() {
-  const state = createState(0, 2);
+  const state = createState(questions, 0, 2);
   state.players = ['alice', 'bob'].map((id) => ({
     id,
     name: id,
@@ -477,4 +478,45 @@ it('rejects a fourth connection during join and allows it again after a tab clos
   } finally {
     for (const socket of sockets) socket.close();
   }
+});
+
+vi.mock('../src/worker/catalog/database', () => ({
+  loadMatchDefinition: vi.fn(async () => ({ questions })),
+}));
+
+it('local game loads DB questions once and resumes saved rooms without a DB fallback', async () => {
+  const { loadMatchDefinition } = await import('../src/worker/catalog/database');
+  const load = vi.mocked(loadMatchDefinition);
+  const fixture = await load(runtime, {
+    owner: 'https://example.test',
+    id: 'test',
+    version: 1,
+  });
+  load.mockClear();
+  const dbQuestion = {
+    ...questions[0],
+    id: 'database-only',
+    text: 'DBから読み込んだ検証用の問題です。',
+  };
+  load.mockResolvedValueOnce({ ...fixture, questions: [dbQuestion] });
+  const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
+  const input = { name: 'A', questionIndex: 0, players: 2 };
+  const joined = await room.join(input, undefined);
+  if (!joined.ok) throw new Error(joined.code);
+  expect(load).toHaveBeenCalledOnce();
+  const stored = await runInDurableObject(room, async (_instance, ctx) =>
+    ctx.storage.get<{ state: State }>('room'),
+  );
+  expect(stored?.state.question.id).toBe('database-only');
+  load.mockRejectedValueOnce(new Error('DB_OFFLINE'));
+  expect((await room.join(input, joined.token)).ok).toBe(true);
+  expect(load).toHaveBeenCalledOnce();
+  const empty = runtime.GAME_ROOM.getByName(crypto.randomUUID());
+  expect(await empty.join(input, undefined)).toEqual({
+    ok: false,
+    code: 'GAME_DATABASE_UNAVAILABLE',
+  });
+  expect(
+    await runInDurableObject(empty, async (_instance, ctx) => ctx.storage.get('room')),
+  ).toBeUndefined();
 });

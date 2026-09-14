@@ -17,3 +17,7 @@ DEV_TLS_KEY=
 DATABASE_CA_CERT=
 # Local Miniflare trusts this CA at startup; download from Supabase Database Settings.
 # NODE_EXTRA_CA_CERTS=.wrangler/supabase-ca.crt
+
+# Dedicated game reader and active settings profile. Version numbers are managed in DB.
+GAME_DATABASE_URL=
+GAME_CONFIG_PROFILE=local
