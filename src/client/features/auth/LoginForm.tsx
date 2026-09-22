@@ -24,6 +24,7 @@ export default function LoginForm({ auth }: { auth: Auth }) {
         <TextField
           id="login-email"
           label="メールアドレス"
+          placeholder="例：name@example.com"
           type="email"
           autoComplete="email"
           value={email}

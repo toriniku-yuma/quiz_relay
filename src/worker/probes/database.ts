@@ -3,7 +3,7 @@ import { connectDatabase } from '../db/connection.ts';
 import { probeRuns } from '../db/schema.ts';
 
 export async function probeDatabase(url: string, ca?: string, viaHyperdrive = false) {
-  const { db, close } = connectDatabase(url, ca, viaHyperdrive);
+  const { db, close, tls } = connectDatabase(url, ca, viaHyperdrive);
   const id = crypto.randomUUID();
   const rolledBackId = crypto.randomUUID();
   const rollback = new Error('probe rollback');
@@ -38,7 +38,7 @@ export async function probeDatabase(url: string, ca?: string, viaHyperdrive = fa
       committed: true,
       rolledBack: true,
       preparedStatements: false,
-      tls: viaHyperdrive ? 'hyperdrive-managed' : 'verify-full',
+      tls,
     };
   } finally {
     try {

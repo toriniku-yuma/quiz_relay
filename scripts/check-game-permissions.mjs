@@ -38,11 +38,15 @@ try {
       .innerJoin(namespaces, eq(namespaces.id, tables.namespace))
       .where(eq(namespaces.name, 'quiz_game'));
     const actualTables = rows.filter((row) => row.kind === 'r');
-    assert.equal(actualTables.length, 7);
+    assert.equal(actualTables.length, 11);
     for (const row of actualTables) {
       assert.equal(row.rls, true);
       assert.equal(row.schemaUsage, role === 'quiz_game_reader');
-      assert.equal(row.canRead, role === 'quiz_game_reader');
+      assert.equal(
+        row.canRead,
+        role === 'quiz_game_reader' &&
+          !['result_outbox', 'catalog_operators'].includes(row.name),
+      );
       assert.equal(row.canWrite, false);
     }
   }

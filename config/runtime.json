@@ -24,5 +24,8 @@
     "maxCommandsPerActor": 256,
     "eventRetentionMs": 60000,
     "maxEvents": 512
+  },
+  "results": {
+    "retryIntervalMs": 30000
   }
 }

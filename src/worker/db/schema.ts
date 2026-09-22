@@ -2,8 +2,11 @@
 
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
+  boolean,
   check,
   foreignKey,
+  index,
   integer,
   jsonb,
   pgPolicy,
@@ -14,11 +17,52 @@ import {
   unique,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { InstancePermission } from '../../shared/organization';
 import type { FixedQuestion } from '../catalog/definition.ts';
 import type { Rules } from '../game/rules.ts';
+import type { ResultRecord } from '../results/record';
 
 export const quizGame = pgSchema('quiz_game');
 export const quizProbe = pgSchema('quiz_probe');
+
+export const catalogOperators = quizGame
+  .table(
+    'catalog_operators',
+    {
+      roleName: text('role_name').primaryKey(),
+      owner: text().notNull(),
+    },
+    (table) => [
+      pgPolicy('catalog_identity', {
+        for: 'select',
+        to: ['quiz_game_catalog'],
+        using: sql`${table.roleName} = current_user`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+function catalogPolicies(owner: AnyPgColumn, mutable = false) {
+  const access = sql`${owner} IN (SELECT owner FROM quiz_game.catalog_operators WHERE role_name = current_user)`;
+  return [
+    pgPolicy('catalog_read', { for: 'select', to: ['quiz_game_catalog'], using: access }),
+    pgPolicy('catalog_insert', {
+      for: 'insert',
+      to: ['quiz_game_catalog'],
+      withCheck: access,
+    }),
+    ...(mutable
+      ? [
+          pgPolicy('catalog_update', {
+            for: 'update',
+            to: ['quiz_game_catalog'],
+            using: access,
+            withCheck: access,
+          }),
+        ]
+      : []),
+  ];
+}
 
 export const probeRuns = quizProbe
   .table(
@@ -50,6 +94,7 @@ export const questionAvailability = quizGame
       retiredAt: timestamp('retired_at', { withTimezone: true, mode: 'string' }),
     },
     (table) => [
+      ...catalogPolicies(table.owner, true),
       primaryKey({
         columns: [table.owner, table.questionId],
         name: 'question_availability_pkey',
@@ -87,6 +132,7 @@ export const questionSets = quizGame
       manifestHash: text('manifest_hash').notNull(),
     },
     (table) => [
+      ...catalogPolicies(table.owner),
       primaryKey({
         columns: [table.owner, table.setId, table.version],
         name: 'question_sets_pkey',
@@ -126,6 +172,7 @@ export const questionVersions = quizGame
       payload: jsonb().$type<FixedQuestion>().notNull(),
     },
     (table) => [
+      ...catalogPolicies(table.owner),
       primaryKey({
         columns: [table.owner, table.questionId, table.version],
         name: 'question_versions_pkey',
@@ -168,6 +215,7 @@ export const matchmakingSettings = quizGame
       competitionVersion: integer('competition_version').notNull(),
     },
     (table) => [
+      ...catalogPolicies(table.owner, true),
       foreignKey({
         columns: [table.owner, table.competitionId, table.competitionVersion],
         foreignColumns: [
@@ -222,6 +270,7 @@ export const rulesetVersions = quizGame
       config: jsonb().$type<Rules>().notNull(),
     },
     (table) => [
+      ...catalogPolicies(table.owner),
       primaryKey({
         columns: [table.owner, table.rulesetId, table.version],
         name: 'ruleset_versions_pkey',
@@ -275,6 +324,7 @@ export const questionSetItems = quizGame
       questionVersion: integer('question_version').notNull(),
     },
     (table) => [
+      ...catalogPolicies(table.owner),
       foreignKey({
         columns: [table.owner, table.questionId, table.questionVersion],
         foreignColumns: [
@@ -329,6 +379,7 @@ export const competitions = quizGame
       setVersion: integer('set_version').notNull(),
     },
     (table) => [
+      ...catalogPolicies(table.owner),
       foreignKey({
         columns: [table.owner, table.rulesetId, table.rulesetVersion],
         foreignColumns: [
@@ -372,6 +423,221 @@ export const competitions = quizGame
         sql`(players_per_match >= 2) AND (players_per_match <= 4)`,
       ),
       check('competitions_version_check', sql`version > 0`),
+    ],
+  )
+  .enableRLS();
+
+export const matchResults = quizGame
+  .table(
+    'match_results',
+    {
+      resultId: uuid('result_id').primaryKey(),
+      owner: text().notNull(),
+      matchId: uuid('match_id').notNull(),
+      finishedAt: timestamp('finished_at', {
+        withTimezone: true,
+        mode: 'string',
+      }).notNull(),
+      payloadHash: text('payload_hash').notNull(),
+      payload: jsonb().$type<ResultRecord>().notNull(),
+    },
+    (table) => [
+      unique().on(table.owner, table.matchId),
+      index().on(table.owner, table.finishedAt),
+      check('match_results_hash', sql`${table.payloadHash} ~ '^[0-9a-f]{64}$'`),
+      pgPolicy('reader', { for: 'select', to: ['quiz_game_reader'], using: sql`true` }),
+      pgPolicy('result_read', {
+        for: 'select',
+        to: ['quiz_game_results'],
+        using: sql`true`,
+      }),
+      pgPolicy('result_insert', {
+        for: 'insert',
+        to: ['quiz_game_results'],
+        withCheck: sql`true`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+export const resultPlayers = quizGame
+  .table(
+    'result_players',
+    {
+      resultId: uuid('result_id')
+        .notNull()
+        .references(() => matchResults.resultId),
+      actorId: text('actor_id').notNull(),
+      name: text().notNull(),
+      ratingDelta: integer('rating_delta').notNull(),
+    },
+    (table) => [
+      primaryKey({ columns: [table.resultId, table.actorId] }),
+      index().on(table.actorId),
+      check('result_players_delta', sql`${table.ratingDelta} IN (-20, 0, 20)`),
+      pgPolicy('reader', { for: 'select', to: ['quiz_game_reader'], using: sql`true` }),
+      pgPolicy('result_read', {
+        for: 'select',
+        to: ['quiz_game_results'],
+        using: sql`true`,
+      }),
+      pgPolicy('result_insert', {
+        for: 'insert',
+        to: ['quiz_game_results'],
+        withCheck: sql`true`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+// 外部宛先・署名・配送状態は2Cで追加。1Dではローカル原本を同一TXで保持する。
+export const resultOutbox = quizGame
+  .table(
+    'result_outbox',
+    {
+      resultId: uuid('result_id')
+        .primaryKey()
+        .references(() => matchResults.resultId),
+      payloadHash: text('payload_hash').notNull(),
+      payload: jsonb().$type<ResultRecord>().notNull(),
+    },
+    () => [
+      pgPolicy('result_read', {
+        for: 'select',
+        to: ['quiz_game_results'],
+        using: sql`true`,
+      }),
+      pgPolicy('result_insert', {
+        for: 'insert',
+        to: ['quiz_game_results'],
+        withCheck: sql`true`,
+      }),
+    ],
+  )
+  .enableRLS();
+
+const organizationAccess = () =>
+  pgPolicy('organization_service', {
+    for: 'all',
+    to: ['quiz_organization'],
+    using: sql`true`,
+    withCheck: sql`true`,
+  });
+export const organizations = quizGame
+  .table(
+    'organizations',
+    {
+      id: uuid().primaryKey(),
+      singleton: boolean().notNull().default(true).unique(),
+      name: text().notNull(),
+      identityNamespace: text('identity_namespace').notNull().unique(),
+    },
+    (t) => [
+      check('one_organization', sql`${t.singleton} = true`),
+      check(
+        'organization_name_length',
+        sql`char_length(btrim(${t.name})) BETWEEN 1 AND 80`,
+      ),
+      check(
+        'organization_namespace_length',
+        sql`char_length(btrim(${t.identityNamespace})) BETWEEN 1 AND 256`,
+      ),
+      organizationAccess(),
+    ],
+  )
+  .enableRLS();
+export const organizationAccounts = quizGame
+  .table(
+    'organization_accounts',
+    {
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      subject: text().notNull(),
+      actorId: text('actor_id').primaryKey(),
+      administrator: boolean().notNull().default(false),
+    },
+    (t) => [
+      unique().on(t.organizationId, t.subject),
+      check(
+        'account_subject_length',
+        sql`char_length(btrim(${t.subject})) BETWEEN 1 AND 256`,
+      ),
+      check('account_actor_hash', sql`${t.actorId} ~ '^[0-9a-f]{64}$'`),
+      organizationAccess(),
+    ],
+  )
+  .enableRLS();
+export const instances = quizGame
+  .table(
+    'instances',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      owner: text().notNull().unique(),
+      name: text().notNull(),
+      state: text().$type<'preparing' | 'published'>().notNull().default('preparing'),
+    },
+    (t) => [
+      check('instance_name_length', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 80`),
+      check(
+        'instance_owner_length',
+        sql`char_length(btrim(${t.owner})) BETWEEN 1 AND 256`,
+      ),
+      index().on(t.organizationId),
+      check('instance_state', sql`${t.state} IN ('preparing', 'published')`),
+      organizationAccess(),
+    ],
+  )
+  .enableRLS();
+export const instanceGrants = quizGame
+  .table(
+    'instance_grants',
+    {
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      permission: text().$type<InstancePermission>().notNull(),
+    },
+    (t) => [
+      primaryKey({ columns: [t.instanceId, t.actorId, t.permission] }),
+      index().on(t.actorId),
+      check(
+        'instance_permission',
+        sql`${t.permission} IN ('questions', 'authors', 'users')`,
+      ),
+      organizationAccess(),
+    ],
+  )
+  .enableRLS();
+
+// Separate from account/instance FKs so future retirement cannot erase an audit trail.
+export const organizationEvents = quizGame
+  .table(
+    'organization_events',
+    {
+      id: uuid().primaryKey(),
+      actorId: text('actor_id').notNull(),
+      instanceId: uuid('instance_id'),
+      action: text().$type<'setup' | 'add' | 'publish' | 'rename' | 'grants'>().notNull(),
+      occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'string' })
+        .defaultNow()
+        .notNull(),
+      details: jsonb().$type<Record<string, unknown>>().notNull(),
+    },
+    (t) => [
+      check('organization_event_actor_hash', sql`${t.actorId} ~ '^[0-9a-f]{64}$'`),
+      check(
+        'organization_event_action',
+        sql`${t.action} IN ('setup', 'add', 'publish', 'rename', 'grants')`,
+      ),
+      index().on(t.occurredAt),
+      organizationAccess(),
     ],
   )
   .enableRLS();

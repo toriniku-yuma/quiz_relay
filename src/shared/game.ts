@@ -32,6 +32,8 @@ export type Result = {
     | 'connections'
     | 'disqualifications';
   finishedAt: number;
+  storage?: 'pending' | 'confirmed' | 'conflict';
+  ratingChanges?: { actorId: string; delta: number }[];
 };
 export type Snapshot = {
   matchId: string;

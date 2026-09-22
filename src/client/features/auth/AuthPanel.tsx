@@ -28,6 +28,7 @@ export default function AuthPanel({ debug }: { debug: DebugController }) {
         <TextField
           id="email"
           label="メールアドレス"
+          placeholder="例：name@example.com"
           type="email"
           autoComplete="email"
           value={debug.email}

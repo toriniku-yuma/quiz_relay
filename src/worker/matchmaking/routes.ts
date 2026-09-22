@@ -7,9 +7,11 @@ import {
   publicAuthConfig,
   sameOrigin,
 } from '../auth/handlers';
+import { instanceContext } from '../organization/handlers';
 import {
   cancelMatch,
   enterMatch,
+  logoutActor,
   matchConfig,
   matchSocket,
   oversizedMatch,
@@ -18,12 +20,15 @@ import {
 const matchmaking = new Hono<AuthEnv>();
 matchmaking.get(API_PATHS.publicAuthConfig, publicAuthConfig);
 matchmaking.use(`${MATCH_PREFIX}/*`, sameOrigin);
-matchmaking.get(API_PATHS.matchSocket, matchSocket);
-matchmaking.use(`${MATCH_PREFIX}/*`, authenticate);
 matchmaking.use(
   `${MATCH_PREFIX}/*`,
   bodyLimit({ maxSize: 1024, onError: oversizedMatch }),
 );
+matchmaking.get(API_PATHS.matchSocket, matchSocket);
+matchmaking.use(`${MATCH_PREFIX}/*`, authenticate);
+matchmaking.post(API_PATHS.logout, logoutActor);
+matchmaking.use(`${MATCH_PREFIX}/*`, instanceContext);
+
 matchmaking.post(API_PATHS.matchConfig, matchConfig);
 matchmaking.post(API_PATHS.matchJoin, enterMatch);
 matchmaking.post(API_PATHS.matchResume, enterMatch);

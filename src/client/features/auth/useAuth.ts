@@ -36,8 +36,10 @@ export function useAuth() {
       .finally(() => {
         if (active) {
           setReady(true);
-          if (hasAuthCallback(new URL(location.href)))
+          if (hasAuthCallback(new URL(location.href))) {
             history.replaceState(null, '', GAME_PATH);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
         }
       });
     return () => {

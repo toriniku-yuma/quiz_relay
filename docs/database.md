@@ -1,5 +1,7 @@
 # DrizzleによるDB管理
 
+2026-09-15追加要望：オーガナイゼーションで管理者・ユーザーを共有し、その中に複数のインスタンスを設ける構成を検討する。モデレーター・作問・レート・マッチング・部屋はインスタンス単位。従来のインスタンスごとにDB・Auth・管理者を独立配置する前提は見直し対象。1回のセルフホスト構築で1オーガナイゼーションを用意し、配下インスタンスを管理画面から追加する方針は承認済み。問題等の連携はインスタンスごとに設定し、組織単位の一括許可は行わない。同組織内の参加は共通ユーザーとして扱い、インスタンス間の外部参加とは扱わない。別組織への参加は参加元・先のインスタンス間設定で判断する。対象を選んだ一括設定操作は用意する方向。基盤構成・連携契約の詳細、既存データの移行は未確定。[ADR 0011](adr/0011-organization-and-instances.md)と仕様書の最新要望を優先する。実装・DB操作は停止中。
+
 2026-09-14。Drizzle ORM 0.45.2 / Drizzle Kit 0.31.10を固定し、既存Postgres.js接続を利用する。ゲーム読込・設定反映・初期投入・DBプローブはDrizzleの型付きAPIを使う。SQLの文字列連結、自前エスケープ、通常処理からのSupabase Management APIへのSQL送信を撤去した。
 
 ## 日常のコマンド
@@ -60,3 +62,20 @@
 - [DrizzleのPostgreSQL接続](https://orm.drizzle.team/docs/connect-supabase)
 - [DrizzleのRLS](https://orm.drizzle.team/docs/rls)
 - [カスタムmigration](https://orm.drizzle.team/docs/kit-custom-migrations)
+
+## 2026-09-14：結果保存の追加
+
+0005_result_writer、0006_match_results、0007_result_permissionsを隔離スキーマTXで検証後、Drizzleで適用。結果・参加者差分・outboxの3表を追加。quiz_game_resultsはこの3表のSELECT/INSERTだけ。readerは結果と参加者表のSELECTだけを追加し、outboxは読めない。anon/authenticatedへ公開しない。3表は不変トリガーで管理接続からのUPDATE/DELETEも拒否する。
+
+ローカル専用RESULT_DATABASE_URLを.dev.varsに設定済み。新規ランダムパスワードを使い、管理資格情報をWorkerへ渡していない。Cloudflareへの新規writer資格情報登録・RESULT_HYPERDRIVE追加は未実施。既存reader Hyperdriveへ書込権限を追加しない。
+
+`pnpm db:check:results:ddl` は隔離DDLをrollbackする。`pnpm db:check:results` は実commitと別接続同時再試行を検証し、毎回一意の `https://qa-<UUID>.invalid` ownerで3件の原本を保存する（不変保護を維持し、検証後も残す）。通常GAME_OWNERの履歴・ランキングへは表示しない。中断・失敗時も保存済み原本を削除しない。既存の問題・設定や通常試合を書き換えない。
+
+## 2026-09-14：1D第二段の最小管理
+
+専用CLIによる問題登録・改訂・停止、問題セット版作成、ルール/人数/使用セットの反映・一覧を実装した。quiz_game_catalogをcatalog_operatorsの開催元へ限定し、RLSと操作認可を適用する。新しい管理資格情報は.env.supabase-adminだけに保存し、Workerへは渡さない。設定writer・結果writer・reader・migration管理者は維持する。過去版は更新せず、改訂元の停止と新規IDの追加を同一TXで行う。手順・範囲は[最小管理](catalog-management.md)。
+
+
+## 2026-09-16：第1段階の実装再開
+
+組織共通の本人識別、専用DBロール、初回設定、インスタンス管理、対象ID付きAPI、組織共通予約とインスタンス別対戦・結果を追加した。[実装記録](organization-foundation-progress.md)の現行契約・有効化設定・移行と復旧の未実施事項を参照。追加migrationは0011〜0013、既存DBへの適用・クラウド配置は未実施。準備中テストと第1段階全体の受入は未完了。

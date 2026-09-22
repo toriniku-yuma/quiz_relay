@@ -36,6 +36,90 @@
       "when": 1789357394273,
       "tag": "0004_explicit_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789363982719,
+      "tag": "0005_result_writer",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789364050627,
+      "tag": "0006_match_results",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789364067578,
+      "tag": "0007_result_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789374361921,
+      "tag": "0008_catalog_writer",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789374388809,
+      "tag": "0009_catalog_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789374390064,
+      "tag": "0010_catalog_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789533413498,
+      "tag": "0011_organization_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789533439929,
+      "tag": "0012_organization_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789533453925,
+      "tag": "0013_organization_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789538078735,
+      "tag": "0014_organization_review_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789567648375,
+      "tag": "0015_organization_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789567649675,
+      "tag": "0016_organization_audit_permissions",
+      "breakpoints": true
     }
   ]
 }

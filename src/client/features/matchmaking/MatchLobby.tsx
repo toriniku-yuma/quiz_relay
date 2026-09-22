@@ -1,20 +1,44 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { MatchStatus } from '../../app/context';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
 import type { Auth } from '../auth/useAuth';
 import GameBoard from '../game/GameBoard';
+import ResultsPanel from '../results/ResultsPanel';
 import { useMatchmaking } from './useMatchmaking';
 
-export default function MatchLobby({ auth }: { auth: Auth }) {
-  const match = useMatchmaking(auth.user?.id ?? '');
+export default function MatchLobby({
+  auth,
+  instanceId = '',
+  onStatus,
+}: {
+  auth: Auth;
+  instanceId?: string;
+  onStatus?: (status: MatchStatus) => void;
+}) {
+  const match = useMatchmaking(auth.user?.id ?? '', instanceId);
   const [name, setName] = useState('');
   const [logoutError, setLogoutError] = useState('');
   const game = match.game;
   const finished =
     game.snapshot?.phase === 'FINISHED' || game.snapshot?.phase === 'INVALID';
+  const roomId = game.roomId ?? null;
+  const retained = match.busy || (!!roomId && !finished);
+  useEffect(() => {
+    onStatus?.({ instanceId, roomId, retained, finished });
+  }, [onStatus, instanceId, roomId, retained, finished]);
+
   return (
     <>
+      {match.activeInstance && (
+        <a
+          className="my-3 block underline"
+          href={`/game/?instance=${encodeURIComponent(match.activeInstance)}`}
+        >
+          参加中のインスタンスへ戻る
+        </a>
+      )}
       {(match.error || game.error || logoutError) && (
         <p role="alert" className="my-4 border border-accent p-3">
           {match.error || game.error || logoutError}
@@ -30,7 +54,7 @@ export default function MatchLobby({ auth }: { auth: Auth }) {
             <Button onClick={game.reconnect}>再接続</Button>
           )}
           {!game.snapshot || game.snapshot.phase === 'WAITING' ? (
-            <Button className="mt-5" onClick={match.cancel} disabled={match.busy}>
+            <Button className="mt-5 mr-3" onClick={match.cancel} disabled={match.busy}>
               待機を取り消す
             </Button>
           ) : null}
@@ -41,9 +65,9 @@ export default function MatchLobby({ auth }: { auth: Auth }) {
           )}
         </>
       ) : (
-        <Panel title="自動マッチング">
+        <Panel title="ランクマッチング">
           <p className="mt-3">
-            同じ大会の参加者を探します。
+            同じインスタンスの参加者を探します。
             {match.players ? `${match.players}人` : '設定人数'}
             の接続がそろうと、自動で出題します。開始前は取り消せます。
           </p>
@@ -62,6 +86,7 @@ export default function MatchLobby({ auth }: { auth: Auth }) {
             <TextField
               id="match-name"
               label="表示名"
+              placeholder="例：クイズ太郎"
               autoComplete="nickname"
               maxLength={24}
               required
@@ -79,16 +104,18 @@ export default function MatchLobby({ auth }: { auth: Auth }) {
           </form>
         </Panel>
       )}
-      <p className="mt-6 text-sm text-muted">
-        結果のDB保存・ランキングは1Dで対応予定です。
-      </p>
+      {(!game.roomId || finished) && (
+        <ResultsPanel
+          instanceId={instanceId}
+          refreshKey={`${auth.user?.id}:${game.snapshot?.result?.id ?? ''}:${game.snapshot?.result?.storage ?? ''}`}
+        />
+      )}
       <Button
         className="mt-5"
         disabled={match.busy || auth.busy}
         onClick={async () => {
           setLogoutError('');
           try {
-            await match.logout();
             await auth.logout();
           } catch {
             setLogoutError(

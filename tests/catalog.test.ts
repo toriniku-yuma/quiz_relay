@@ -237,6 +237,25 @@ it('DB loader rejects absent/retired data and closes connections on every failur
   });
   expect(next.competition.version).toBe(2);
   expect(next.playersPerMatch).toBe(2);
+  database.query.mockResolvedValueOnce(
+    rows.map((row) => ({
+      ...row,
+      availability: { ...row.availability, retiredAt: '2026-09-16' },
+    })),
+  );
+  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
+    'NO_RANKED_QUESTIONS',
+  );
+  database.query.mockResolvedValueOnce(
+    rows.map((row, index) => ({
+      ...row,
+      availability: { ...row.availability, retiredAt: index === 0 ? '2026-09-16' : null },
+    })),
+  );
+  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
+    'QUESTION_UNAVAILABLE',
+  );
+  expect(database.end).toHaveBeenCalledTimes(9);
 });
 
 it('requires an explicit non-empty question set to create a match', () => {

@@ -11,6 +11,7 @@ export default function ConnectionPanel({ debug }: { debug: DebugController }) {
         <TextField
           id="token"
           label="検証トークン（この画面のメモリ内だけで使用）"
+          placeholder="設定済みの検証トークンを入力"
           type="password"
           autoComplete="off"
           value={debug.token}

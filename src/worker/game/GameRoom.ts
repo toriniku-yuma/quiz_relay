@@ -9,6 +9,8 @@ import {
   sessionLifetime,
   waitingLifetime,
 } from '../matchmaking/config';
+import type { InstanceScope } from '../matchmaking/Matchmaker';
+import { ResultConflict, saveResult } from '../results/database';
 import { replayEvents } from './recovery';
 import {
   adjudicate,
@@ -22,6 +24,9 @@ import {
 import { parseCommand, parseSync } from './validation';
 
 type Room = {
+  scope?: InstanceScope;
+  generations?: Record<string, string>;
+  resultRetryAt?: number;
   state: State;
   sessions: Record<string, string>;
   localSetup?: { questionIndex: number };
@@ -48,13 +53,26 @@ export class GameRoom extends DurableObject<Env> {
     name: string,
     token: string,
     definition?: MatchDefinition,
+    scope?: InstanceScope,
+    generation?: string,
   ) {
     return this.ctx.blockConcurrencyWhile(async () => {
+      if (
+        (generation && (await this.ctx.storage.get(`closed:${generation}`))) ||
+        (await this.ctx.storage.get(`revoked:${token}`))
+      )
+        return { ok: false as const, code: 'STALE_RESERVATION' };
       let room = await this.ctx.storage.get<Room>('room');
+      if (room && (room.scope?.id !== scope?.id || room.scope?.owner !== scope?.owner))
+        return { ok: false as const, code: 'INSTANCE_MISMATCH' };
+      if (scope && definition && definition.competition.owner !== scope.owner)
+        return { ok: false as const, code: 'INSTANCE_MISMATCH' };
       const now = Date.now();
       if (!room) {
         if (!definition) return { ok: false as const, code: 'ROOM_CLOSED' };
         room = {
+          scope,
+          generations: {},
           state: createState(
             definition.questions,
             0,
@@ -72,6 +90,14 @@ export class GameRoom extends DurableObject<Env> {
         };
       }
       if (!room.lobby) return { ok: false as const, code: 'ROOM_CLOSED' };
+      room.generations ??= {};
+      if (
+        generation &&
+        room.generations[actorId] &&
+        room.generations[actorId] !== generation
+      )
+        return { ok: false as const, code: 'STALE_RESERVATION' };
+      if (generation) room.generations[actorId] = generation;
       this.sweep(room, now);
       await this.save(room);
       if (room.lobby.closed || now >= room.lobby.sessionExpires)
@@ -121,23 +147,73 @@ export class GameRoom extends DurableObject<Env> {
     });
   }
 
-  async cancelReservation(actorId: string, revoke = false) {
+  async stopWaiting(instanceId: string) {
     return this.ctx.blockConcurrencyWhile(async () => {
       const room = await this.ctx.storage.get<Room>('room');
-      if (!room?.lobby) return true;
+      if (!room?.lobby || room.scope?.id !== instanceId || room.state.phase !== 'WAITING')
+        return false;
+      room.lobby.closed = true;
+      await this.save(room);
+      for (const socket of this.liveSockets())
+        this.closeSocket(socket, 1008, 'NO_RANKED_QUESTIONS');
+      return true;
+    });
+  }
+
+  async cancelReservation(
+    actorId: string,
+    revoke = false,
+    generation?: string,
+    token?: string,
+  ) {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const room = await this.ctx.storage.get<Room>('room');
+      if (
+        room?.generations?.[actorId] &&
+        generation &&
+        room.generations[actorId] !== generation
+      )
+        return false;
+      if (revoke && token) {
+        if (await this.ctx.storage.get(`revoked:${token}`)) return true;
+        await this.ctx.storage.put(`revoked:${token}`, true);
+      }
+      if (!room?.lobby) {
+        if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
+        return true;
+      }
       this.sweep(room, Date.now());
-      if (!revoke && room.state.phase !== 'WAITING' && !room.lobby.closed) {
+      if (
+        !revoke &&
+        (room.state.phase === 'FINISHED' ||
+          room.state.phase === 'INVALID' ||
+          room.lobby.closed)
+      ) {
+        if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
+        await this.save(room);
+        return true;
+      }
+      if (
+        !revoke &&
+        room.state.phase !== 'WAITING' &&
+        room.state.players.some((p) => p.id === actorId)
+      ) {
         await this.save(room);
         return false;
       }
+      if (!revoke && generation) await this.ctx.storage.put(`closed:${generation}`, true);
       for (const socket of this.liveSockets())
         if (this.attachment(socket).actorId === actorId)
           this.closeSocket(socket, 1008, 'SESSION_REVOKED');
       for (const [token, actor] of Object.entries(room.sessions))
-        if (actor === actorId) delete room.sessions[token];
+        if (actor === actorId) {
+          if (revoke) await this.ctx.storage.put(`revoked:${token}`, true);
+          delete room.sessions[token];
+        }
       if (room.state.phase === 'WAITING') {
         room.state.players = room.state.players.filter((player) => player.id !== actorId);
         delete room.lobby.reservations[actorId];
+        if (room.generations) delete room.generations[actorId];
       }
       this.sweep(room, Date.now());
       changed(room.state, Date.now());
@@ -243,6 +319,8 @@ export class GameRoom extends DurableObject<Env> {
             ? room.sessions[session]
             : undefined;
         if (!room || !actorId) return new Response(null, { status: 401 });
+        if ((request.headers.get('X-Game-Instance') ?? '') !== (room.scope?.id ?? ''))
+          return new Response(null, { status: 403 });
 
         let now = Date.now();
         this.sweep(room, now);
@@ -278,6 +356,7 @@ export class GameRoom extends DurableObject<Env> {
           if (code) {
             if (
               [
+                'NO_RANKED_QUESTIONS',
                 'QUESTION_UNAVAILABLE',
                 'DEFINITION_NOT_FOUND',
                 'DEFINITION_HASH_MISMATCH',
@@ -290,7 +369,11 @@ export class GameRoom extends DurableObject<Env> {
             ) {
               room.lobby.closed = true;
               for (const socket of this.liveSockets())
-                this.closeSocket(socket, 1008, 'SETUP_UNAVAILABLE');
+                this.closeSocket(
+                  socket,
+                  1008,
+                  code === 'NO_RANKED_QUESTIONS' ? code : 'SETUP_UNAVAILABLE',
+                );
             }
             await this.save(room);
             return new Response(null, { status: 503 });
@@ -322,6 +405,7 @@ export class GameRoom extends DurableObject<Env> {
           room.state.players.filter(({ connected }) => connected).length ===
             room.state.playersRequired
         ) {
+          room.state.startedAt = now;
           room.state.phase = 'REVEALING';
           room.state.deadline = now + room.state.rules.revealIntervalMs;
           changed(room.state, now);
@@ -404,12 +488,48 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async alarm() {
-    await this.ctx.blockConcurrencyWhile(async () => {
+    let resultOwner = this.env.GAME_OWNER;
+    const pending = await this.ctx.blockConcurrencyWhile(async () => {
       const room = await this.ctx.storage.get<Room>('room');
       if (!room) return;
 
       this.sweep(room, Date.now());
       advance(room.state, Date.now());
+      await this.save(room);
+      this.broadcast(room);
+      if (
+        room.state.result?.storage !== 'pending' ||
+        !room.state.completed ||
+        (room.resultRetryAt ?? 0) > Date.now()
+      )
+        return;
+      room.resultRetryAt = Date.now() + settings.results.retryIntervalMs;
+      await this.save(room);
+      resultOwner = room.scope?.owner ?? this.env.GAME_OWNER;
+      return room.state.completed;
+    });
+    if (!pending) return;
+
+    // DB待機中も再接続・同期を処理する。DOと再試行Alarmは先に保存済み。
+    let status: 'confirmed' | 'conflict';
+    try {
+      await saveResult({ ...this.env, GAME_OWNER: resultOwner }, pending);
+      status = 'confirmed';
+    } catch (error) {
+      if (!(error instanceof ResultConflict)) return;
+      status = 'conflict';
+    }
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const room = await this.ctx.storage.get<Room>('room');
+      if (
+        !room ||
+        room.state.result?.id !== pending.result.id ||
+        room.state.result.storage !== 'pending'
+      )
+        return;
+      room.state.result.storage = status;
+      delete room.resultRetryAt;
+      changed(room.state, Date.now());
       await this.save(room);
       this.broadcast(room);
     });
@@ -495,6 +615,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async save(room: Room) {
+    if (room.state.result?.storage === 'pending' && room.resultRetryAt === undefined)
+      room.resultRetryAt = Date.now();
     await this.ctx.storage.transaction(async (tx) => {
       await tx.put('room', room);
       const deadlines = this.liveSockets().map(
@@ -509,6 +631,8 @@ export class GameRoom extends DurableObject<Env> {
           );
         }
       }
+      if (room.state.result?.storage === 'pending' && room.resultRetryAt !== undefined)
+        deadlines.push(room.resultRetryAt);
       if (room.state.reconnect) deadlines.push(room.state.reconnect.deadline);
       else if (room.state.deadline !== null) deadlines.push(room.state.deadline);
       if (deadlines.length) await tx.setAlarm(Math.min(...deadlines));

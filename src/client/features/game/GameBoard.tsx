@@ -108,7 +108,27 @@ export default function GameBoard({ game }: { game: Game }) {
                 }[state.result.reason]
               }
             </p>
-            <p className="mt-2 text-sm">DB未保存・ランキング対象外（1Dで対応予定）</p>
+            <p className="mt-2 text-sm" role="status">
+              {state.result.storage === 'confirmed'
+                ? '確定・レート反映済み'
+                : state.result.storage === 'pending'
+                  ? '保存中・レート未反映（自動で再試行します）'
+                  : state.result.storage === 'conflict'
+                    ? '保存内容の競合・管理者による確認が必要です'
+                    : 'DB未保存・ランキング対象外'}
+            </p>
+            {state.result.ratingChanges && (
+              <ul className="mt-2 text-sm">
+                {state.result.ratingChanges.map(({ actorId, delta }) => (
+                  <li key={actorId}>
+                    {state.players.find((entry) => entry.id === actorId)?.name}：レート{' '}
+                    {delta > 0 ? '+' : ''}
+                    {delta}
+                    {state.result?.storage !== 'confirmed' && '（保存待ち）'}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </Panel>

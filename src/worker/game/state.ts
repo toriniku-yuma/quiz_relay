@@ -8,6 +8,8 @@ import type {
 } from '../../shared/game';
 import { settings } from '../../shared/settings';
 import type { MatchDefinition } from '../catalog/definition';
+import type { MatchKind } from '../results/rating';
+import { makeResultRecord, type ResultRecord } from '../results/record';
 import { choicesFor, graphemes, type Question } from './questions';
 import { appendEvent } from './recovery';
 import { type Rules, rules } from './rules';
@@ -15,6 +17,9 @@ import { type Rules, rules } from './rules';
 export { rules } from './rules';
 
 export type State = {
+  matchKind?: MatchKind;
+  startedAt?: number;
+  completed?: ResultRecord;
   rules: Rules;
   definition?: Omit<MatchDefinition, 'rules' | 'questions'>;
   response: Snapshot['response'];
@@ -64,6 +69,7 @@ export function createState(
   }
 
   return {
+    matchKind: definition ? 'ranked' : 'development',
     rules: structuredClone(fixedRules),
     ...(definition
       ? {
@@ -331,6 +337,14 @@ function finish(
   state.phase =
     reason === 'connections' || reason === 'disqualifications' ? 'INVALID' : 'FINISHED';
   state.result = { id: crypto.randomUUID(), reason, winnerId, finishedAt: now };
+  state.completed = makeResultRecord(state, state.result);
+  if (state.completed) {
+    state.result.storage = 'pending';
+    state.result.ratingChanges = state.completed.players.map((player) => ({
+      actorId: player.id,
+      delta: player.ratingDelta,
+    }));
+  }
   state.holder = null;
   state.panel = null;
   state.deadline = null;
@@ -358,7 +372,7 @@ export function changed(state: State, now: number) {
 }
 
 export function updateConnections(state: State, connected: Set<string>, now: number) {
-  let updated = checkInvalid(state, now);
+  let updated = false;
   for (const player of state.players) {
     const present = connected.has(player.id);
     if (player.connected !== present) {
@@ -366,6 +380,7 @@ export function updateConnections(state: State, connected: Set<string>, now: num
       updated = true;
     }
   }
+  updated = checkInvalid(state, now) || updated;
   if (isActive(state)) {
     if (connected.size <= 1 && !state.reconnect) {
       state.reconnect = {

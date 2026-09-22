@@ -1,4 +1,6 @@
 # Copy to .dev.vars. Generate a private random token; never commit it.
+# Windows local DB: pnpm db:local:setup configures role URLs without changing Supabase Auth.
+# See docs/local-postgres.md. Cloud/admin credentials stay outside Worker bindings.
 PROBES_ENABLED=true
 PROBE_TOKEN=
 # Supavisor transaction pooler / dedicated quiz_probe login / TLS required
@@ -21,3 +23,12 @@ DATABASE_CA_CERT=
 # Dedicated game reader and active settings profile. Version numbers are managed in DB.
 GAME_DATABASE_URL=
 GAME_CONFIG_PROFILE=local
+
+# Result writer only: quiz_game_results, never migration/admin credentials.
+RESULT_DATABASE_URL=
+
+# Organization foundation: enable only after migrations and cutover verification.
+ORGANIZATION_ENABLED=false
+# Dedicated quiz_organization connection; never reuse migration/catalog credentials.
+ORGANIZATION_DATABASE_URL=
+INITIAL_ADMIN_SUBJECT=

@@ -25,7 +25,11 @@ const messages: Record<string, string> = {
   STALE_COMMAND: '出題が変わったため入力を受け付けませんでした。',
 };
 
-export function useGame(mode: 'local' | 'formal' = 'local', subject = '') {
+export function useGame(
+  mode: 'local' | 'formal' = 'local',
+  subject = '',
+  instanceId = '',
+) {
   const [saved] = useState(() => readGameSession(mode, subject));
   const [snapshot, setSnapshot] = useState<Snapshot | null>(saved?.snapshot ?? null);
   const currentSnapshot = useRef<Snapshot | null>(saved?.snapshot ?? null);
@@ -49,6 +53,7 @@ export function useGame(mode: 'local' | 'formal' = 'local', subject = '') {
     );
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('room', room.id);
+    if (instanceId) url.searchParams.set('instance', instanceId);
 
     const disconnect = connectGameSocket(url, {
       status: setConnection,
@@ -59,6 +64,15 @@ export function useGame(mode: 'local' | 'formal' = 'local', subject = '') {
           matchId: currentSnapshot.current?.matchId ?? null,
         }),
       error: setError,
+      released: () => {
+        setRoom(null);
+        setSnapshot(null);
+        setPanel(null);
+        currentSnapshot.current = null;
+        pendingCommand.current = null;
+        setPending(false);
+        saveGameSession(null, null, mode, subject);
+      },
       opened: (ws) => {
         socket.current = ws;
         if (pendingCommand.current) ws.send(JSON.stringify(pendingCommand.current));
@@ -101,7 +115,7 @@ export function useGame(mode: 'local' | 'formal' = 'local', subject = '') {
       clearInterval(ticker);
       socket.current = null;
     };
-  }, [room, mode, subject]);
+  }, [room, mode, subject, instanceId]);
 
   async function join(input: {
     room: string;

@@ -4,7 +4,16 @@ export const PROBE_PREFIX = '/api/probes';
 
 export const API_PATHS = {
   health: '/api/health',
+  organizationOverview: '/api/organization/overview',
+  organizationSetup: '/api/organization/setup',
+  organizationAdd: '/api/organization/instances/add',
+  organizationRename: '/api/organization/instances/rename',
+  organizationPermissions: '/api/organization/permissions',
+  organizationGrants: '/api/organization/instances/grants',
+  organizationPublish: '/api/organization/instances/publish',
+  results: '/api/results/overview',
   publicAuthConfig: '/api/auth/config',
+  logout: '/api/matchmaking/logout-all',
   matchConfig: `${MATCH_PREFIX}/config`,
   matchJoin: `${MATCH_PREFIX}/join`,
   matchResume: `${MATCH_PREFIX}/resume`,
@@ -23,3 +32,7 @@ export const API_PATHS = {
 } as const;
 
 export type ApiPath = (typeof API_PATHS)[keyof typeof API_PATHS];
+
+export function instanceApiPath(path: string, instanceId = '') {
+  return instanceId ? `${path}?instance=${encodeURIComponent(instanceId)}` : path;
+}

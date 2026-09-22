@@ -149,7 +149,24 @@ export async function signInWithGoogle(token?: string) {
 }
 
 export async function signOut() {
-  const response = await getAuth()?.auth.signOut();
+  const client = getAuth();
+  if (client) {
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+    if (data.session) {
+      const revoked = await fetch(API_PATHS.logout, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!revoked.ok) throw new Error('GAME_LOGOUT_FAILED');
+    }
+  }
+  const response = await client?.auth.signOut();
   if (response?.error) throw response.error;
 
   return { signedOut: true };

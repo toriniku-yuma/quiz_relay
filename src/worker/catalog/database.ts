@@ -79,7 +79,15 @@ export async function loadMatchDefinition(env: Env, reference?: VersionRef) {
         ),
       )
       .orderBy(asc(i.ordinal));
-    if (!rows.length) throw new Error('DEFINITION_NOT_FOUND');
+    if (!rows.length)
+      throw new Error(ref ? 'DEFINITION_NOT_FOUND' : 'RANKED_NOT_CONFIGURED');
+    if (
+      rows.every(
+        (row) =>
+          !row.question || (!!row.availability && row.availability.retiredAt !== null),
+      )
+    )
+      throw new Error('NO_RANKED_QUESTIONS');
     if (
       rows.some(
         (row) =>

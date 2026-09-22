@@ -33,6 +33,7 @@ export default function JoinGame({ game }: { game: Game }) {
         <TextField
           id="player-name"
           label="表示名"
+          placeholder="例：クイズ太郎"
           value={name}
           onChange={(event) => setName(event.target.value)}
           required
@@ -43,6 +44,7 @@ export default function JoinGame({ game }: { game: Game }) {
           <TextField
             id="room-number"
             label="ルーム番号（1〜16）"
+            placeholder="例：1"
             type="number"
             min={1}
             max={16}
@@ -53,6 +55,7 @@ export default function JoinGame({ game }: { game: Game }) {
           <TextField
             id="player-count"
             label="人数（2〜4人）"
+            placeholder="例：4"
             type="number"
             min={2}
             max={4}
@@ -63,6 +66,7 @@ export default function JoinGame({ game }: { game: Game }) {
           <TextField
             id="question-number"
             label="最初の問題番号（DBセット内）"
+            placeholder="例：1"
             type="number"
             min={1}
             max={100}

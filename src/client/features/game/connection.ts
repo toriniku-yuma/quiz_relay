@@ -10,6 +10,7 @@ export function connectGameSocket(
     message: (data: string) => boolean;
     status: (status: ConnectionStatus) => void;
     error: (message: string) => void;
+    released?: () => void;
   },
 ) {
   let disposed = false;
@@ -35,7 +36,7 @@ export function connectGameSocket(
     callbacks.error(message);
   }
 
-  function disconnected(ws: WebSocket, code = 1006) {
+  function disconnected(ws: WebSocket, code = 1006, reason = '') {
     if (disposed || socket !== ws) return;
     // closeイベントが届かない通信断でも、古い接続を切り離して再試行する。
     socket = undefined;
@@ -44,7 +45,15 @@ export function connectGameSocket(
     ws.close();
 
     if (code === 1008) {
-      stop('接続が拒否されました。他のタブを閉じ、再接続してください。');
+      if (
+        ['NO_RANKED_QUESTIONS', 'SETUP_UNAVAILABLE', 'WAITING_EXPIRED'].includes(reason)
+      )
+        callbacks.released?.();
+      stop(
+        reason === 'NO_RANKED_QUESTIONS'
+          ? '出題できる問題がないため待機を解除しました。問題が復旧したら、改めてマッチングしてください。'
+          : '接続が拒否されました。他のタブを閉じ、再接続してください。',
+      );
       return;
     }
     if (retryWindow === undefined) {
@@ -90,7 +99,7 @@ export function connectGameSocket(
       }
     };
 
-    ws.onclose = ({ code }) => disconnected(ws, code);
+    ws.onclose = ({ code, reason }) => disconnected(ws, code, reason);
     ws.onerror = () => disconnected(ws);
   }
 

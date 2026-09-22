@@ -3,7 +3,16 @@ import type { Handler, MiddlewareHandler } from 'hono';
 import { contentHash } from '../catalog/hash';
 import type { Env } from '../env';
 
-export type AuthEnv = { Bindings: Env; Variables: { actorId: string } };
+export type AuthEnv = {
+  Bindings: Env;
+  Variables: {
+    actorId: string;
+    subject: string;
+    instanceOwner: string;
+    instanceId: string;
+    organizationId: string;
+  };
+};
 
 export const publicAuthConfig: Handler<AuthEnv> = (c) => {
   c.header('Cache-Control', 'no-store');
@@ -33,6 +42,12 @@ export const authenticate: MiddlewareHandler<AuthEnv> = async (c, next) => {
     return c.json({ code: 'AUTH_REQUIRED' }, 401);
   if (!c.env.SUPABASE_URL || !c.env.SUPABASE_PUBLISHABLE_KEY)
     return c.json({ code: 'AUTH_NOT_CONFIGURED' }, 503);
+  if (
+    c.env.API_LIMITER &&
+    !(await c.env.API_LIMITER.limit({ key: `bearer:${await contentHash(bearer)}` }))
+      .success
+  )
+    return c.json({ code: 'RATE_LIMIT' }, 429);
 
   const auth = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_PUBLISHABLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -44,6 +59,12 @@ export const authenticate: MiddlewareHandler<AuthEnv> = async (c, next) => {
   const { data, error } = await auth.auth.getUser(bearer.slice(7));
   if (error || !data.user || data.user.is_anonymous || !data.user.email_confirmed_at)
     return c.json({ code: 'AUTH_REQUIRED' }, 401);
+  if (
+    c.env.API_LIMITER &&
+    !(await c.env.API_LIMITER.limit({ key: `subject:${data.user.id}` })).success
+  )
+    return c.json({ code: 'RATE_LIMIT' }, 429);
+  c.set('subject', data.user.id);
   c.set('actorId', await contentHash({ home: c.env.GAME_OWNER, subject: data.user.id }));
   await next();
 };

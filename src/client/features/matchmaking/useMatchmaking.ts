@@ -3,8 +3,12 @@ import { API_PATHS } from '../../../shared/api-paths';
 import { useGame } from '../game/useGame';
 import { MatchError, matchRequest, resumeMatch } from './api';
 
-export function useMatchmaking(subject: string) {
-  const game = useGame('formal', subject);
+export function useMatchmaking(subject: string, instanceId = '') {
+  const game = useGame(
+    'formal',
+    instanceId ? `${subject}:${instanceId}` : subject,
+    instanceId,
+  );
   const { attach, leave } = game;
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(true);
@@ -14,25 +18,31 @@ export function useMatchmaking(subject: string) {
     mistakesToDisqualify: number;
   } | null>(null);
   const [error, setError] = useState('');
+  const [activeInstance, setActiveInstance] = useState('');
   useEffect(() => {
     let active = true;
-    void matchRequest(API_PATHS.matchConfig)
+    void matchRequest(API_PATHS.matchConfig, {}, instanceId)
       .then((config) => {
         if (active && config.playersPerMatch) setPlayers(config.playersPerMatch);
         if (active && config.rules) setRules(config.rules);
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (active)
-          setError('大会設定を読み込めませんでした。しばらく待って再試行してください。');
+          setError(
+            error instanceof Error ? error.message : '出題設定を読み込めませんでした。',
+          );
       });
-    void resumeMatch()
+    void resumeMatch(instanceId)
       .then((result) => {
         if (active && result.room) attach(result.room);
       })
       .catch((error) => {
         if (!active) return;
         if (error instanceof MatchError && error.code === 'NO_ACTIVE_MATCH') leave();
-        else setError(error.message);
+        else {
+          setError(error.message);
+          if (error instanceof MatchError) setActiveInstance(error.instanceId ?? '');
+        }
       })
       .finally(() => {
         if (active) setRestoring(false);
@@ -40,7 +50,7 @@ export function useMatchmaking(subject: string) {
     return () => {
       active = false;
     };
-  }, [attach, leave]);
+  }, [attach, leave, instanceId]);
   async function run(task: () => Promise<void>) {
     setBusy(true);
     setError('');
@@ -48,6 +58,7 @@ export function useMatchmaking(subject: string) {
       await task();
     } catch (error) {
       setError(error instanceof Error ? error.message : '通信に失敗しました。');
+      if (error instanceof MatchError) setActiveInstance(error.instanceId ?? '');
     } finally {
       setBusy(false);
     }
@@ -58,24 +69,22 @@ export function useMatchmaking(subject: string) {
     players,
     rules,
     error,
+    activeInstance,
     join: (name: string) =>
       run(async () => {
-        const result = await matchRequest(API_PATHS.matchJoin, { name });
+        const result = await matchRequest(API_PATHS.matchJoin, { name }, instanceId);
         if (result.room) game.attach(result.room);
       }),
     resume: () =>
       run(async () => {
-        const result = await resumeMatch();
+        const result = await resumeMatch(instanceId);
         if (result.room) game.attach(result.room);
       }),
     cancel: () =>
       run(async () => {
-        if (game.roomId) await matchRequest(API_PATHS.matchCancel, { room: game.roomId });
+        if (game.roomId)
+          await matchRequest(API_PATHS.matchCancel, { room: game.roomId }, instanceId);
         game.leave();
       }),
-    logout: async () => {
-      if (game.roomId) await matchRequest(API_PATHS.matchLogout, { room: game.roomId });
-      game.leave();
-    },
   };
 }

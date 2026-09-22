@@ -27,5 +27,12 @@
     "GAME_OWNER": "https://quiz-relay-probe.quiz-relay.workers.dev",
     "GAME_CONFIG_PROFILE": "default"
   },
+  "ratelimits": [
+    {
+      "name": "API_LIMITER",
+      "namespace_id": "716329410",
+      "simple": { "limit": 120, "period": 60 }
+    }
+  ],
   "observability": { "enabled": false }
 }

@@ -1,10 +1,7 @@
-import NotFoundPage from '../pages/NotFoundPage';
-import { routes } from './routes';
+import { useAuth } from '../features/auth/useAuth';
+import Application from './Application';
 
 export default function App() {
-  const path = `${location.pathname.replace(/\/$/, '')}/`;
-  const route = routes.find((candidate) => candidate.path === path);
-  const Page = route && 'component' in route ? route.component : NotFoundPage;
-
-  return <Page />;
+  const auth = useAuth();
+  return <Application key={auth.user?.id ?? 'guest'} auth={auth} />;
 }

@@ -1,25 +1,35 @@
+import { useApp } from '../app/context';
 import PageHeader from '../components/PageHeader';
 import LoginForm from '../features/auth/LoginForm';
-import { useAuth } from '../features/auth/useAuth';
-import MatchLobby from '../features/matchmaking/MatchLobby';
+import OrganizationGateway from '../features/organization/OrganizationGateway';
 
 export default function MatchPage() {
-  const auth = useAuth();
+  const { auth, organization, url } = useApp();
+  const selected = organization.data?.instances.find(
+    (instance) => instance.id === url.searchParams.get('instance'),
+  );
+  const view = url.searchParams.get('view');
+  const title =
+    view === 'organization'
+      ? '組織設定・アカウント一覧'
+      : view === 'settings'
+        ? 'インスタンス設定'
+        : view === 'history'
+          ? '対戦履歴・ランキング'
+          : selected
+            ? '対戦する'
+            : 'インスタンス一覧';
+
   return (
     <main className="mx-auto max-w-4xl px-4 pt-6 pb-10 sm:px-8 sm:pt-10 sm:pb-16">
       <PageHeader
-        title="早押しクイズ"
-        description="ログインして対戦に参加しましょう。人数とルールは大会の設定を使います。"
+        title={auth.user ? title : '早押しクイズ'}
+        description={selected?.name ?? 'インスタンスを選んで、対戦に参加しましょう。'}
       />
-      {auth.message && (
-        <p role="status" className="my-4 border border-line p-3">
-          {auth.message}
-        </p>
-      )}
       {!auth.ready ? (
         <p role="status">ログイン状態を確認しています。</p>
       ) : auth.user ? (
-        <MatchLobby key={auth.user.id} auth={auth} />
+        <OrganizationGateway />
       ) : (
         <LoginForm auth={auth} />
       )}
