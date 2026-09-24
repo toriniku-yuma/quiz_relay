@@ -1,4 +1,5 @@
 import {
+  canAccessInstance,
   type InstancePermission,
   normalizeOrganizationName,
 } from '../../shared/organization.ts';
@@ -28,7 +29,7 @@ export function canViewInstance(
   administrator: boolean,
   permissions: readonly InstancePermission[],
 ) {
-  return state === 'published' || administrator || permissions.length > 0;
+  return canAccessInstance({ state, permissions }, administrator);
 }
 export function validName(value: unknown): string {
   const name = normalizeOrganizationName(value);

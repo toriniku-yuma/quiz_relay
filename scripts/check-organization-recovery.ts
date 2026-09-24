@@ -10,8 +10,10 @@ import * as schema from '../src/worker/db/schema.ts';
 import type { Env } from '../src/worker/env';
 import { rules } from '../src/worker/game/rules.ts';
 import {
+  allowedInstanceActors,
   organizationIdentity,
   overview,
+  resolveInstance,
   setInstanceGrants,
   setupOrganization,
 } from '../src/worker/organization/database.ts';
@@ -161,8 +163,52 @@ async function main() {
       'PASS: dedicated LOGIN permissions, competing bootstrap and grant updates',
     );
 
+    phase = 'participation-access';
+    const [storedInstance] = await db.select().from(schema.instances);
+    const administrator = (await organizationIdentity(one, 'installer')).account.actorId;
+    const ordinary = (await organizationIdentity(one, 'ordinary')).account.actorId;
+    const scope = { id: instance.id, owner: storedInstance.owner };
+    const accessUrl = new URL(serviceUrl);
+    accessUrl.searchParams.set('sslmode', 'disable');
+    const accessEnv = { ...runtime, ORGANIZATION_DATABASE_URL: accessUrl.href } as Env;
+    assert.deepEqual(
+      (
+        await allowedInstanceActors(accessEnv, scope, [actor, administrator, ordinary])
+      ).sort(),
+      [actor, administrator].sort(),
+    );
+    assert.deepEqual(
+      await allowedInstanceActors(accessEnv, { ...scope, owner: 'wrong' }, [actor]),
+      [],
+    );
+    const previous = (await one.select().from(schema.instanceGrants)).map(
+      (row) => row.permission,
+    );
+    await setInstanceGrants(one, 'installer', {
+      id: instance.id,
+      actorId: actor,
+      expected: previous.sort().join(','),
+      permissions: [],
+    });
+    assert.deepEqual(await allowedInstanceActors(accessEnv, scope, [actor]), []);
+    // Existing sessions can still identify their own instance; ordinary reads remain forbidden.
+    await assert.rejects(resolveInstance(one, 'player', instance.id));
+    assert.equal(
+      (await resolveInstance(one, 'player', instance.id, true)).account.actorId,
+      actor,
+    );
+    await setInstanceGrants(one, 'installer', {
+      id: instance.id,
+      actorId: actor,
+      expected: '',
+      permissions: previous,
+    });
+    console.log(
+      'PASS: preparing participation, scoped identity, grant removal and existing-session context',
+    );
+
     phase = 'backup-restore';
-    const owner = runtime.GAME_OWNER;
+    const owner = (await db.select().from(schema.instances))[0].owner;
     const record: ResultRecord = {
       version: 1,
       owner,

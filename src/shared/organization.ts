@@ -17,6 +17,16 @@ export type OrganizationOverview = {
   accounts?: { actorId: string; administrator: boolean }[];
 };
 
+export function canAccessInstance(
+  instance: { state: string; permissions: readonly InstancePermission[] } | undefined,
+  administrator = false,
+) {
+  return (
+    !!instance &&
+    (instance.state === 'published' || administrator || instance.permissions.length > 0)
+  );
+}
+
 export const permissionRevision = (permissions: readonly InstancePermission[]) =>
   [...permissions].sort().join(',');
 

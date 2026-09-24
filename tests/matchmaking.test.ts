@@ -20,6 +20,10 @@ vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.lo
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({ auth: { getUser: mocks.user } }),
 }));
+vi.mock('../src/worker/organization/database', () => ({
+  allowedInstanceActors: async (_env: unknown, _scope: unknown, actors: string[]) =>
+    actors,
+}));
 const runtime: Env = { ...(env as unknown as Env), ORGANIZATION_ENABLED: 'false' };
 const owner = 'https://game.test';
 let definition: MatchDefinition;

@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   overview: vi.fn(),
   read: vi.fn(),
   close: vi.fn(),
+  enter: vi.fn(),
+  load: vi.fn(),
 }));
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({ auth: { getUser: mocks.user } }),
@@ -24,6 +26,7 @@ vi.mock('../src/worker/organization/database', () => ({
   renameInstance: vi.fn(),
   accountPermissions: vi.fn(),
 }));
+vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
 vi.mock('../src/worker/results/read', () => ({ readResults: mocks.read }));
 vi.mock('../src/worker/db/connection', () => ({
   connectDatabase: () => ({ db: {}, close: async () => {} }),
@@ -58,7 +61,15 @@ beforeEach(() => {
     organization: { id: 'org' },
     account: { actorId: 'old-actor', administrator: false },
     instance: { id: instanceId, owner: 'urn:uuid:host', state: 'published' },
+    permissions: [],
   });
+  mocks.enter.mockResolvedValue({
+    ok: true,
+    room: crypto.randomUUID(),
+    token: 'test-token',
+    expires: Date.now() + 60000,
+  });
+  mocks.load.mockResolvedValue({ competition: {}, playersPerMatch: 2, rules: {} });
   mocks.read.mockResolvedValue({ ranking: [], history: [] });
   mocks.overview.mockResolvedValue({ enabled: true, instances: [] });
 });
@@ -98,21 +109,66 @@ it('本人履歴はサーバーで解決したownerと旧actorのみを参照', 
     JSON.stringify({ owner: 'other', actorId: 'other' }),
   );
   expect(response.status).toBe(200);
-  expect(mocks.resolve).toHaveBeenCalledWith({}, 'verified', instanceId);
+  expect(mocks.resolve).toHaveBeenCalledWith({}, 'verified', instanceId, false);
   expect(mocks.read).toHaveBeenCalledWith({}, 'urn:uuid:host', 'old-actor');
 });
-it('準備中への通常対戦・履歴API直接アクセスは運営者でも拒否', async () => {
+it.each([
+  { administrator: true, permissions: [] },
+  { administrator: false, permissions: ['questions'] },
+  { administrator: false, permissions: ['authors'] },
+  { administrator: false, permissions: ['users'] },
+])(
+  '準備中の対象運営者は通常の設定・参加・履歴を利用できる: %j',
+  async ({ administrator, permissions }) => {
+    mocks.resolve.mockResolvedValue({
+      organization: { id: 'org' },
+      account: { actorId: 'operator', administrator },
+      instance: { id: instanceId, owner: 'private', state: 'preparing' },
+      permissions,
+    });
+    const isolated = {
+      ...runtime,
+      MATCHMAKER: { getByName: () => ({ enter: mocks.enter }) },
+    } as unknown as Env;
+    const response = await app.request(
+      `https://game.test/api/matchmaking/join?instance=${instanceId}`,
+      {
+        method: 'POST',
+        headers: { Origin: 'https://game.test', Authorization: 'Bearer token' },
+        body: JSON.stringify({ name: '運営者' }),
+      },
+      isolated,
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.enter).toHaveBeenCalledWith('operator', '運営者', undefined, false, {
+      id: instanceId,
+      owner: 'private',
+    });
+    expect((await request(`/api/matchmaking/config?instance=${instanceId}`)).status).toBe(
+      200,
+    );
+    expect((await request(`/api/results/overview?instance=${instanceId}`)).status).toBe(
+      200,
+    );
+    expect(mocks.read).toHaveBeenCalledWith({}, 'private', 'operator');
+  },
+);
+it('対象権限のない一般ユーザーは準備中のAPIを利用できない', async () => {
   mocks.resolve.mockResolvedValue({
     organization: { id: 'org' },
-    account: { actorId: 'admin', administrator: true },
+    account: { actorId: 'member', administrator: false },
     instance: { id: instanceId, owner: 'private', state: 'preparing' },
+    permissions: [],
   });
-  for (const path of ['/api/results/overview', '/api/matchmaking/join']) {
-    const response = await request(`${path}?instance=${instanceId}`);
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ code: 'INSTANCE_PREPARING' });
+  for (const path of [
+    '/api/results/overview',
+    '/api/matchmaking/join',
+    '/api/matchmaking/config',
+  ]) {
+    expect((await request(`${path}?instance=${instanceId}`)).status).toBe(409);
   }
   expect(mocks.read).not.toHaveBeenCalled();
+  expect(mocks.load).not.toHaveBeenCalled();
 });
 it('組織DB障害時に旧owner経路へフォールバックせず、秘密を返さない', async () => {
   mocks.resolve.mockRejectedValue(new Error('private connection string'));

@@ -193,10 +193,53 @@ async function main() {
             instanceName: 'Original',
           }),
         );
-        await setupOrganization(tx, runtime, 'installer', {
-          name: 'Org',
-          instanceName: 'Original',
+        const newSetupRollback = new Error('ROLLBACK_NEW_SETUP');
+        await assert.rejects(
+          tx.transaction(async (fresh) => {
+            await setupOrganization(fresh, runtime, 'installer', {
+              name: 'New',
+              instanceName: 'New',
+            });
+            const identity = await organizationIdentity(fresh, 'installer');
+            assert.equal(
+              identity.organization.identityNamespace,
+              `urn:uuid:${identity.organization.id}`,
+            );
+            assert.equal(
+              identity.account.actorId,
+              await actorForSubject(identity.organization.identityNamespace, 'installer'),
+            );
+            assert.notEqual(
+              identity.account.actorId,
+              await actorForSubject(owner, 'installer'),
+            );
+            const [created] = await fresh.select().from(schema.instances);
+            assert.equal(created.owner, `urn:uuid:${created.id}`);
+            await assert.rejects(
+              setupOrganization(fresh, runtime, 'installer', {
+                name: 'Again',
+                instanceName: 'Again',
+              }),
+            );
+            throw newSetupRollback;
+          }),
+          (error) => error === newSetupRollback,
+        );
+        // Rehearse migration separately from new-installation setup: preserve the legacy identity.
+        const organizationId = crypto.randomUUID();
+        const installer = await actorForSubject(owner, 'installer');
+        await tx
+          .insert(schema.organizations)
+          .values({ id: organizationId, name: 'Org', identityNamespace: owner });
+        await tx.insert(schema.organizationAccounts).values({
+          organizationId,
+          subject: 'installer',
+          actorId: installer,
+          administrator: true,
         });
+        await tx
+          .insert(schema.instances)
+          .values({ id: crypto.randomUUID(), organizationId, owner, name: 'Original' });
         await assert.rejects(
           setupOrganization(tx, runtime, 'installer', {
             name: 'Again',

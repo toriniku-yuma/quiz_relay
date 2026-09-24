@@ -10,6 +10,7 @@ import {
   waitingLifetime,
 } from '../matchmaking/config';
 import type { InstanceScope } from '../matchmaking/Matchmaker';
+import { allowedInstanceActors } from '../organization/database';
 import { ResultConflict, saveResult } from '../results/database';
 import { replayEvents } from './recovery';
 import {
@@ -90,6 +91,12 @@ export class GameRoom extends DurableObject<Env> {
         };
       }
       if (!room.lobby) return { ok: false as const, code: 'ROOM_CLOSED' };
+      if (
+        room.scope &&
+        room.state.phase === 'WAITING' &&
+        !(await allowedInstanceActors(this.env, room.scope, [actorId])).includes(actorId)
+      )
+        return { ok: false as const, code: 'INSTANCE_NOT_FOUND' };
       room.generations ??= {};
       if (
         generation &&
@@ -134,6 +141,7 @@ export class GameRoom extends DurableObject<Env> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const room = await this.ctx.storage.get<Room>('room');
       if (!room?.lobby) return null;
+      await this.checkWaitingAccess(room);
       this.sweep(room, Date.now());
       advance(room.state, Date.now());
       await this.save(room);
@@ -221,6 +229,35 @@ export class GameRoom extends DurableObject<Env> {
       this.broadcast(room);
       return true;
     });
+  }
+
+  private async checkWaitingAccess(room: Room) {
+    if (!room.scope || !room.lobby || room.state.phase !== 'WAITING') return;
+    const allowed = new Set(
+      await allowedInstanceActors(
+        this.env,
+        room.scope,
+        room.state.players.map((player) => player.id),
+      ),
+    );
+    const denied = room.state.players.filter((player) => !allowed.has(player.id));
+    if (!denied.length) return;
+    for (const player of denied) {
+      const generation = room.generations?.[player.id];
+      if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
+      for (const [token, actor] of Object.entries(room.sessions)) {
+        if (actor === player.id) delete room.sessions[token];
+      }
+      delete room.lobby.reservations[player.id];
+      if (room.generations) delete room.generations[player.id];
+      for (const socket of this.liveSockets())
+        if (this.attachment(socket).actorId === player.id)
+          this.closeSocket(socket, 1008, 'INSTANCE_ACCESS_REVOKED');
+    }
+    room.state.players = room.state.players.filter((player) => allowed.has(player.id));
+    changed(room.state, Date.now());
+    await this.save(room);
+    this.broadcast(room);
   }
 
   async join(
@@ -380,6 +417,8 @@ export class GameRoom extends DurableObject<Env> {
           }
         }
 
+        await this.checkWaitingAccess(room);
+        if (!room.sessions[session]) return new Response(null, { status: 403 });
         if (
           this.liveSockets().filter(
             (socket) => this.attachment(socket).actorId === actorId,

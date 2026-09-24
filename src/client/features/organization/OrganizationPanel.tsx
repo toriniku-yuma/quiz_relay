@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
+import { canAccessInstance } from '../../../shared/organization';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
@@ -96,14 +97,15 @@ export default function OrganizationPanel({
                     <p className="my-2">
                       {instance.state === 'published' ? '公開中' : '準備中'}
                     </p>
-                    {instance.state === 'published' ? (
+                    {canAccessInstance(instance, data.account?.administrator) && (
                       <a
                         className="underline"
                         href={`/game/?instance=${encodeURIComponent(instance.id)}`}
                       >
                         対戦する
                       </a>
-                    ) : (
+                    )}
+                    {instance.state === 'preparing' && (
                       <>
                         <p className="my-2">
                           公開前に問題の登録・停止状態・出題設定を確認してください。問題と戦績は他のインスタンスから自動コピーされません。

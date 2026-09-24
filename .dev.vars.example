@@ -1,6 +1,6 @@
 # Copy to .dev.vars. Generate a private random token; never commit it.
 # Windows local DB: pnpm db:local:setup configures role URLs without changing Supabase Auth.
-# See docs/local-postgres.md. Cloud/admin credentials stay outside Worker bindings.
+# See docs/guides/local-postgres.md. Cloud/admin credentials stay outside Worker bindings.
 PROBES_ENABLED=true
 PROBE_TOKEN=
 # Supavisor transaction pooler / dedicated quiz_probe login / TLS required

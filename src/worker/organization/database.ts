@@ -1,11 +1,10 @@
-import { and, asc, eq, exists, gt, or, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, gt, inArray, or, sql } from 'drizzle-orm';
 import {
   type InstancePermission,
   instancePermissions,
   type OrganizationOverview,
   permissionRevision,
 } from '../../shared/organization.ts';
-import { validateRef } from '../catalog/definition.ts';
 import { connectDatabase } from '../db/connection.ts';
 import {
   organizationAccounts as accounts,
@@ -176,23 +175,18 @@ export async function setupOrganization(
   requireInstaller(subject, env.INITIAL_ADMIN_SUBJECT);
   const name = validName(input.name);
   const instanceName = validName(input.instanceName);
-  try {
-    validateRef({ owner: env.GAME_OWNER, id: 'identity', version: 1 });
-  } catch {
-    throw new OrganizationError('IDENTITY_NOT_CONFIGURED', 503);
-  }
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(716329410)`);
     const [existing] = await tx.select().from(organizations);
     if (existing) throw new OrganizationError('ALREADY_CONFIGURED', 409);
     const id = crypto.randomUUID();
-    await tx
-      .insert(organizations)
-      .values({ id, name, identityNamespace: env.GAME_OWNER });
+    const identityNamespace = `urn:uuid:${id}`;
+    const actorId = await actorForSubject(identityNamespace, subject);
+    await tx.insert(organizations).values({ id, name, identityNamespace });
     await tx.insert(accounts).values({
       organizationId: id,
       subject,
-      actorId: await actorForSubject(env.GAME_OWNER, subject),
+      actorId,
       administrator: true,
     });
     // First-time setup is for a new installation. Existing deployments use the rehearsed migration procedure.
@@ -200,10 +194,10 @@ export async function setupOrganization(
     await tx.insert(instances).values({
       id: instanceId,
       organizationId: id,
-      owner: env.GAME_OWNER,
+      owner: `urn:uuid:${instanceId}`,
       name: instanceName,
     });
-    await audit(tx, await actorForSubject(env.GAME_OWNER, subject), 'setup', instanceId, {
+    await audit(tx, actorId, 'setup', instanceId, {
       name,
       instanceName,
     });
@@ -259,7 +253,12 @@ export async function publishInstance(
   });
 }
 
-export async function resolveInstance(db: Database, subject: string, id: string) {
+export async function resolveInstance(
+  db: Database,
+  subject: string,
+  id: string,
+  existingParticipation = false,
+) {
   validId(id);
   const identity = await organizationIdentity(db, subject);
   const [instance] = await db
@@ -278,7 +277,10 @@ export async function resolveInstance(db: Database, subject: string, id: string)
       .from(grants)
       .where(and(eq(grants.instanceId, id), eq(grants.actorId, identity.account.actorId)))
   ).map((row) => row.permission);
-  if (!canViewInstance(instance.state, identity.account.administrator, permissions))
+  if (
+    !existingParticipation &&
+    !canViewInstance(instance.state, identity.account.administrator, permissions)
+  )
     throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
   return { ...identity, instance, permissions };
 }
@@ -404,4 +406,45 @@ export async function accountPermissions(
     accounts: [{ actorId: target.actorId, administrator: target.administrator }],
     grants: permissions,
   };
+}
+
+// Called with server-owned room scope and participant IDs, never browser-supplied actor IDs.
+export async function allowedInstanceActors(
+  env: Env,
+  scope: { id: string; owner: string },
+  actors: string[],
+): Promise<string[]> {
+  if (!actors.length) return [];
+  const { db, close } = organizationDatabase(env);
+  try {
+    const rows = await db
+      .select({ actorId: accounts.actorId })
+      .from(accounts)
+      .innerJoin(instances, eq(instances.organizationId, accounts.organizationId))
+      .where(
+        and(
+          eq(instances.id, scope.id),
+          eq(instances.owner, scope.owner),
+          inArray(accounts.actorId, actors),
+          or(
+            eq(instances.state, 'published'),
+            eq(accounts.administrator, true),
+            exists(
+              db
+                .select()
+                .from(grants)
+                .where(
+                  and(
+                    eq(grants.instanceId, instances.id),
+                    eq(grants.actorId, accounts.actorId),
+                  ),
+                ),
+            ),
+          ),
+        ),
+      );
+    return rows.map((row) => row.actorId);
+  } finally {
+    await close();
+  }
 }

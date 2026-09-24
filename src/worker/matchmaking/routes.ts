@@ -7,7 +7,7 @@ import {
   publicAuthConfig,
   sameOrigin,
 } from '../auth/handlers';
-import { instanceContext } from '../organization/handlers';
+import { existingInstanceContext, instanceContext } from '../organization/handlers';
 import {
   cancelMatch,
   enterMatch,
@@ -27,11 +27,11 @@ matchmaking.use(
 matchmaking.get(API_PATHS.matchSocket, matchSocket);
 matchmaking.use(`${MATCH_PREFIX}/*`, authenticate);
 matchmaking.post(API_PATHS.logout, logoutActor);
+matchmaking.post(API_PATHS.matchResume, existingInstanceContext, enterMatch);
+matchmaking.post(API_PATHS.matchCancel, existingInstanceContext, cancelMatch);
+matchmaking.post(API_PATHS.matchLogout, existingInstanceContext, cancelMatch);
 matchmaking.use(`${MATCH_PREFIX}/*`, instanceContext);
 
 matchmaking.post(API_PATHS.matchConfig, matchConfig);
 matchmaking.post(API_PATHS.matchJoin, enterMatch);
-matchmaking.post(API_PATHS.matchResume, enterMatch);
-matchmaking.post(API_PATHS.matchCancel, cancelMatch);
-matchmaking.post(API_PATHS.matchLogout, cancelMatch);
 export default matchmaking;

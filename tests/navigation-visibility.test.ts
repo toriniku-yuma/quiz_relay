@@ -3,7 +3,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { expect, it, vi } from 'vitest';
 import Navigation from '../src/client/app/AppNavigation';
 
-const state = vi.hoisted(() => ({ administrator: false }));
+const state = vi.hoisted(() => ({
+  administrator: false,
+  permissions: [] as ('questions' | 'authors' | 'users')[],
+}));
 vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
     auth: { user: { user_metadata: {}, email: 'test@example.test' }, busy: false },
@@ -12,10 +15,17 @@ vi.mock('../src/client/app/context', () => ({
         enabled: true,
         account: { administrator: state.administrator, actorId: 'test' },
         organization: { name: '組織' },
-        instances: [],
+        instances: [
+          {
+            id: 'prepared',
+            name: '準備中の対象',
+            state: 'preparing',
+            permissions: state.permissions,
+          },
+        ],
       },
     },
-    url: new URL('https://quiz.example/game/'),
+    url: new URL('https://quiz.example/game/?instance=prepared'),
   }),
 }));
 
@@ -31,4 +41,19 @@ it('一般ユーザーには組織管理・開発ツールを表示せず、管�
   expect(admin).toContain('開発ツール');
   expect(admin).toContain('組織管理');
   expect(admin).not.toContain('<details');
+});
+
+it('準備中の通常対戦・履歴は対象の運営者だけに表示する', () => {
+  state.administrator = false;
+  state.permissions = [];
+  expect(renderToStaticMarkup(createElement(Navigation))).not.toContain('対戦する');
+  for (const permission of ['questions', 'authors', 'users'] as const) {
+    state.permissions = [permission];
+    const markup = renderToStaticMarkup(createElement(Navigation));
+    expect(markup).toContain('対戦する');
+    expect(markup).toContain('対戦履歴・ランキング');
+  }
+  state.permissions = [];
+  state.administrator = true;
+  expect(renderToStaticMarkup(createElement(Navigation))).toContain('対戦する');
 });

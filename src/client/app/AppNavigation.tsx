@@ -1,3 +1,4 @@
+import { canAccessInstance } from '../../shared/organization';
 import '../styles/menu-scrollbar.css';
 import Button from '../components/Button';
 import MenuPopover from '../components/MenuPopover';
@@ -25,7 +26,7 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
   const linkClass = (href: string) =>
     `block rounded px-3 py-2.5 break-words ${current(href) ? 'bg-paper font-bold text-ink' : 'hover:bg-paper'}`;
   const items =
-    selected?.state === 'published' || data?.enabled === false
+    canAccessInstance(selected, data?.account?.administrator) || data?.enabled === false
       ? [
           { label: '対戦する', href: gameHref(instanceId) },
           { label: '対戦履歴・ランキング', href: gameHref(instanceId, 'history') },

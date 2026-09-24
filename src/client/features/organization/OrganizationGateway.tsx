@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { canAccessInstance } from '../../../shared/organization';
 import { useApp } from '../../app/context';
 import { gameHref } from '../../app/navigation';
 import { GAME_PATH } from '../../app/paths';
@@ -17,7 +18,8 @@ export default function OrganizationGateway() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const matchingPage =
     url.pathname.replace(/\/$/, '') === GAME_PATH.replace(/\/$/, '') && !view;
-  const available = legacy || selected?.state === 'published';
+  const available =
+    legacy || canAccessInstance(selected, organization.data?.account?.administrator);
   const canSwitch =
     sessionId === null ||
     (matchStatus?.instanceId === sessionId && !matchStatus.retained);
@@ -28,6 +30,11 @@ export default function OrganizationGateway() {
 
   return (
     <>
+      {selected?.state === 'preparing' && available && !view && (
+        <p role="status" className="my-3">
+          準備中：このインスタンスの運営者のみ参加できます。通常の戦績・レートに反映されます。
+        </p>
+      )}
       {sessionId !== null && (
         <div hidden={!matchingPage || !available || sessionId !== instanceId}>
           <MatchLobby

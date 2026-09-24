@@ -46,13 +46,20 @@ export function connectGameSocket(
 
     if (code === 1008) {
       if (
-        ['NO_RANKED_QUESTIONS', 'SETUP_UNAVAILABLE', 'WAITING_EXPIRED'].includes(reason)
+        [
+          'NO_RANKED_QUESTIONS',
+          'SETUP_UNAVAILABLE',
+          'WAITING_EXPIRED',
+          'INSTANCE_ACCESS_REVOKED',
+        ].includes(reason)
       )
         callbacks.released?.();
       stop(
-        reason === 'NO_RANKED_QUESTIONS'
-          ? '出題できる問題がないため待機を解除しました。問題が復旧したら、改めてマッチングしてください。'
-          : '接続が拒否されました。他のタブを閉じ、再接続してください。',
+        reason === 'INSTANCE_ACCESS_REVOKED'
+          ? 'このインスタンスの参加権限がなくなったため、待機を解除しました。'
+          : reason === 'NO_RANKED_QUESTIONS'
+            ? '出題できる問題がないため待機を解除しました。問題が復旧したら、改めてマッチングしてください。'
+            : '接続が拒否されました。他のタブを閉じ、再接続してください。',
       );
       return;
     }

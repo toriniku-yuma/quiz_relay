@@ -335,6 +335,10 @@ export class Matchmaker extends DurableObject<Env> {
     return { ok: true as const };
   }
 
+  async refreshWaiting(actor: string, instanceId: string) {
+    await this.clean(actor, instanceId);
+  }
+
   private async status(room: string) {
     let timer: number | undefined;
     try {
