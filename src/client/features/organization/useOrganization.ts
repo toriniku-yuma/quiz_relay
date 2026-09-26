@@ -6,9 +6,9 @@ import { creationRequest } from './creationRequest';
 
 const errors: Record<string, string> = {
   RATE_LIMIT: '操作が多いため、少し待ってから再試行してください。',
-  EDIT_CONFLICT: '他の操作で変更されました。一覧を再読み込みして内容を確認してください。',
+  EDIT_CONFLICT: '他の操作で変更されました。ページを開き直して内容を確認してください。',
   SETUP_FORBIDDEN: '設置者が指定したアカウントでログインしてください。',
-  ALREADY_CONFIGURED: '初回設定は完了しています。一覧を再読み込みしてください。',
+  ALREADY_CONFIGURED: '初回設定は完了しています。ページを開き直してください。',
   ADMIN_REQUIRED: 'この操作には組織管理者の権限が必要です。',
   INVALID_NAME: '名前を1〜80文字で入力してください。',
   INSTANCE_CONFLICT: '同じ追加要求の内容が変わっています。一覧を確認してください。',
@@ -39,15 +39,18 @@ export function useOrganization(enabled = true) {
   const [version, setVersion] = useState(0);
   const [data, setData] = useState<OrganizationOverview | null>(null);
   const [error, setError] = useState('');
+  const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => {
     setBusy(true);
     setError('');
+    setLoadFailed(false);
     try {
       setData(await organizationRequest(API_PATHS.organizationOverview));
       setVersion((value) => value + 1);
       return true;
     } catch (error) {
+      setLoadFailed(true);
       setError(error instanceof Error ? error.message : '通信に失敗しました。');
       return false;
     } finally {
@@ -64,15 +67,13 @@ export function useOrganization(enabled = true) {
       const key = `quiz-relay-instance-request:${data?.organization?.id}:${data?.account?.actorId}`;
       if (path === API_PATHS.organizationAdd) {
         if (!data?.organization?.id || !data.account?.actorId)
-          throw new Error('組織情報を再読み込みしてください。');
+          throw new Error('ページを開き直して組織情報を確認してください。');
         body = creationRequest(localStorage, key, (body as { name?: unknown }).name);
       }
       await organizationRequest(path, body);
       const refreshed = await refresh();
       if (!refreshed) {
-        setError(
-          '保存は完了しましたが一覧を取得できませんでした。再読み込みしてください。',
-        );
+        setError('保存は完了しましたが一覧を取得できませんでした。再試行してください。');
         return false;
       }
       if (path === API_PATHS.organizationAdd) localStorage.removeItem(key);
@@ -107,5 +108,5 @@ export function useOrganization(enabled = true) {
       setBusy(false);
     }
   }
-  return { data, error, busy, refresh, mutate, version, moreAccounts };
+  return { data, error, loadFailed, busy, refresh, mutate, version, moreAccounts };
 }

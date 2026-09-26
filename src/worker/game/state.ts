@@ -10,13 +10,37 @@ import { settings } from '../../shared/settings';
 import type { MatchDefinition } from '../catalog/definition';
 import type { MatchKind } from '../results/rating';
 import { makeResultRecord, type ResultRecord } from '../results/record';
-import { choicesFor, graphemes, type Question } from './questions';
+import {
+  answerReadings,
+  choicesFor,
+  graphemes,
+  orderQuestions,
+  type Question,
+  readingChoices,
+} from './questions';
 import { appendEvent } from './recovery';
 import { type Rules, rules } from './rules';
 
 export { rules } from './rules';
 
 export type State = {
+  startingRatings?: Record<string, number>;
+  questionParticipants?: string[];
+  completedQuestions?: {
+    authorName?: string;
+    id: string;
+    text: string;
+    displayAnswer: string;
+    readings: string[];
+    explanation: string;
+    source: string;
+    categoryId?: string;
+    seriesId?: string;
+    generation?: string;
+    difficulty?: number;
+    correct: boolean;
+    participants: string[];
+  }[];
   matchKind?: MatchKind;
   startedAt?: number;
   completed?: ResultRecord;
@@ -52,6 +76,20 @@ export function createState(
   definition?: MatchDefinition,
 ): State {
   const fixedRules = definition?.rules ?? { ...rules, showSelections };
+  if (definition?.selection?.authorNames)
+    source = source.map((question) => ({
+      ...question,
+      ...(definition.selection?.authorNames?.[question.id]
+        ? { authorName: definition.selection.authorNames[question.id] }
+        : {}),
+    }));
+  if (definition && /^authored-band-[0-2]$/.test(definition.competition.id))
+    source = orderQuestions(
+      source,
+      Number(definition.competition.id.slice(-1)),
+      definition.selection?.weights,
+      definition.selection?.categories,
+    );
   const question = source[questionIndex];
   if (
     !question ||
@@ -74,6 +112,9 @@ export function createState(
     ...(definition
       ? {
           definition: {
+            ...(definition.selection
+              ? { selection: structuredClone(definition.selection) }
+              : {}),
             competition: structuredClone(definition.competition),
             ruleset: structuredClone(definition.ruleset),
             questionSet: structuredClone(definition.questionSet),
@@ -110,7 +151,23 @@ export function createState(
 }
 
 export function snapshot(state: State): Snapshot {
+  const completedQuestion = state.completedQuestions?.find(
+    (q) => q.id === state.question.id,
+  );
   return {
+    ...(completedQuestion
+      ? {
+          revealedAnswer: {
+            displayAnswer: completedQuestion.displayAnswer,
+            readings: completedQuestion.readings,
+            explanation: completedQuestion.explanation,
+            source: completedQuestion.source,
+            ...(completedQuestion.authorName
+              ? { authorName: completedQuestion.authorName }
+              : {}),
+          },
+        }
+      : { revealedAnswer: null }),
     matchId: state.matchId,
     questionId: state.question.id,
     questionNumber: state.questionIndex + 1,
@@ -136,11 +193,13 @@ function activatePanel(state: State, now: number, position: number, attemptId: s
     attemptId,
     panelId: crypto.randomUUID(),
     position,
-    choices: choicesFor(
-      graphemes(state.question.answer)[position],
-      state.rules.choiceCount ?? 4,
-      state.question.distractors,
-    ),
+    choices: state.question.readings
+      ? readingChoices(state.question, state.response?.text ?? '')
+      : choicesFor(
+          graphemes(state.question.answer)[position],
+          state.rules.choiceCount ?? 4,
+          state.question.distractors,
+        ),
     deadline: now + state.rules.characterAnswerTimeMs,
   };
   state.deadline = state.panel.deadline;
@@ -152,6 +211,9 @@ function judge(
   now: number,
 ) {
   const player = state.players.find(({ id }) => id === state.holder);
+  state.questionParticipants ??= state.players
+    .filter((p) => !p.disqualified)
+    .map((p) => p.id);
   if (player) {
     if (result === 'correct') player.correct++;
     else {
@@ -162,6 +224,34 @@ function judge(
   }
 
   state.judgment = { actorId: state.holder, result };
+  if (
+    state.players.filter((player) => !player.disqualified).length >= 2 &&
+    (result === 'correct' ||
+      result === 'unanswered' ||
+      state.players.every((player) => player.locked || player.disqualified))
+  ) {
+    const question = state.question;
+    state.completedQuestions ??= [];
+    if (!state.completedQuestions.some((q) => q.id === question.id))
+      state.completedQuestions.push({
+        ...(question.authorName ? { authorName: question.authorName } : {}),
+        id: question.id,
+        text: question.text,
+        displayAnswer: question.displayAnswer ?? question.answer,
+        readings: answerReadings(question),
+        explanation: question.explanation,
+        source:
+          'source' in question && typeof question.source === 'string'
+            ? question.source
+            : '',
+        ...(question.categoryId ? { categoryId: question.categoryId } : {}),
+        ...(question.seriesId ? { seriesId: question.seriesId } : {}),
+        ...(question.generation ? { generation: question.generation } : {}),
+        ...(question.difficulty !== undefined ? { difficulty: question.difficulty } : {}),
+        correct: result === 'correct',
+        participants: [...state.questionParticipants],
+      });
+  }
   state.phase = 'JUDGED';
   state.panel = null;
   state.holder = null;
@@ -205,6 +295,7 @@ export function advance(state: State, now: number) {
         finish(state, 'exhausted', leaders.length === 1 ? leaders[0].id : null, now);
       } else {
         state.questionIndex++;
+        state.questionParticipants = undefined;
         state.question = state.questions[state.questionIndex];
         state.revealed = 0;
         state.waitRemaining = state.rules.fullRevealWaitMs;
@@ -303,9 +394,11 @@ export function adjudicate(
       if (!choice) code = 'CHOICE_REJECTED';
       else {
         if (state.response) state.response.text += choice.text;
-        const answer = graphemes(state.question.answer);
-        if (choice.text !== answer[panel.position]) judge(state, 'wrong', now);
-        else if (panel.position === answer.length - 1) judge(state, 'correct', now);
+        const answers = answerReadings(state.question);
+        const entered = state.response?.text ?? '';
+        if (!answers.some((answer) => answer.startsWith(entered)))
+          judge(state, 'wrong', now);
+        else if (answers.includes(entered)) judge(state, 'correct', now);
         else activatePanel(state, now, panel.position + 1, panel.attemptId);
         changed(state, now);
       }

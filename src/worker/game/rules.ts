@@ -2,7 +2,7 @@ import defaults from '../../../config/matchmaking.json' with { type: 'json' };
 
 // Supported fields and bounds are a contract, independent of editable default values.
 const limits = {
-  choiceCount: [2, 8],
+  choiceCount: [4, 4],
   revealIntervalMs: [1, 10000],
   characterAnswerTimeMs: [1, 60000],
   judgedDisplayMs: [1, 60000],

@@ -133,6 +133,19 @@ export default function GameBoard({ game }: { game: Game }) {
         )}
       </Panel>
 
+      {state.revealedAnswer && (
+        <Panel title="正答と解説">
+          <p className="mt-3 font-bold">
+            {state.revealedAnswer.displayAnswer}（
+            {state.revealedAnswer.readings.join('・')}）
+          </p>
+          <p>{state.revealedAnswer.explanation}</p>
+          <p className="break-words">{state.revealedAnswer.source}</p>
+          {state.revealedAnswer.authorName && (
+            <p>作問：{state.revealedAnswer.authorName}</p>
+          )}
+        </Panel>
+      )}
       <Panel title="参加者">
         <p className="mt-3 text-sm">
           参加登録 {state.players.length} / {state.playersRequired} 人

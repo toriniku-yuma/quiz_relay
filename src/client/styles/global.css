@@ -27,7 +27,7 @@
     text-underline-offset: 0.25em;
   }
   :focus-visible {
-    outline: 3px solid var(--color-accent);
-    outline-offset: 4px;
+    outline: 1px solid color-mix(in srgb, var(--color-ink) 70%, var(--color-paper));
+    outline-offset: 2px;
   }
 }

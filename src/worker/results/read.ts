@@ -49,6 +49,17 @@ export async function readResults(
         ranking,
         history: history.map(({ payload, ...entry }) => ({
           ...entry,
+          questions: payload.completedQuestions?.map(
+            ({ id, text, displayAnswer, readings, explanation, source, authorName }) => ({
+              id,
+              text,
+              displayAnswer,
+              readings,
+              explanation,
+              source,
+              ...(authorName ? { authorName } : {}),
+            }),
+          ),
           outcome:
             entry.reason === 'connections' || entry.reason === 'disqualifications'
               ? 'invalid'

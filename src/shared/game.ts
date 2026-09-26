@@ -36,6 +36,13 @@ export type Result = {
   ratingChanges?: { actorId: string; delta: number }[];
 };
 export type Snapshot = {
+  revealedAnswer?: {
+    authorName?: string;
+    displayAnswer: string;
+    readings: string[];
+    explanation: string;
+    source?: string;
+  } | null;
   matchId: string;
   questionId: string;
   questionNumber: number;

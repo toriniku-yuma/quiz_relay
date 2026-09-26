@@ -1,0 +1,1 @@
+ALTER TABLE "quiz_game"."question_submissions" ADD COLUMN "author_name" text DEFAULT '作問者' NOT NULL;

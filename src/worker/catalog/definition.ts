@@ -1,3 +1,4 @@
+import { type QuestionSelection, readingIssues } from '../../shared/questions.ts';
 import { graphemes, type Question } from '../game/questions.ts';
 import { type Rules, validateRules } from '../game/rules.ts';
 import { contentHash } from './hash.ts';
@@ -11,6 +12,7 @@ export type FixedQuestion = Question & {
   demoAllowed: true;
 };
 export type MatchDefinition = {
+  selection?: QuestionSelection;
   competition: VersionRef;
   ruleset: VersionRef;
   questionSet: VersionRef;
@@ -50,6 +52,38 @@ export function validateRef(value: unknown): VersionRef {
 
 export async function validateDefinition(value: unknown): Promise<MatchDefinition> {
   if (!record(value)) throw new Error('INVALID_DEFINITION');
+  const selection = value.selection;
+  if (selection !== undefined) {
+    if (
+      !record(selection) ||
+      !Number.isInteger(selection.band) ||
+      Number(selection.band) < 0 ||
+      Number(selection.band) > 2 ||
+      !Array.isArray(selection.boundaries) ||
+      selection.boundaries.length !== 2 ||
+      !selection.boundaries.every(Number.isFinite) ||
+      selection.boundaries[0] >= selection.boundaries[1] ||
+      !Array.isArray(selection.weights) ||
+      selection.weights.length !== 3 ||
+      selection.weights.some(
+        (weight, index) =>
+          !Number.isFinite(weight) ||
+          weight < 0 ||
+          (index > Number(selection.band) && weight !== 0),
+      ) ||
+      selection.weights.reduce((sum, weight) => sum + weight, 0) <= 0 ||
+      !record(selection.categories) ||
+      Object.values(selection.categories).some(
+        (weight) => typeof weight !== 'number' || !Number.isFinite(weight) || weight < 0,
+      ) ||
+      !Number.isSafeInteger(selection.revision) ||
+      Number(selection.revision) < 0 ||
+      (selection.authorNames !== undefined &&
+        (!record(selection.authorNames) ||
+          Object.values(selection.authorNames).some((name) => !text(name, 80))))
+    )
+      throw new Error('INVALID_DEFINITION');
+  }
   const competition = validateRef(value.competition);
   const ruleset = validateRef(value.ruleset);
   const questionSet = validateRef(value.questionSet);
@@ -62,7 +96,7 @@ export async function validateDefinition(value: unknown): Promise<MatchDefinitio
     Number(value.playersPerMatch) > 4 ||
     !Array.isArray(value.questions) ||
     value.questions.length < 1 ||
-    value.questions.length > 100
+    (value.questions.length > 100 && !/^authored-band-[0-2]$/.test(competition.id))
   )
     throw new Error('INVALID_DEFINITION');
 
@@ -79,6 +113,7 @@ export async function validateDefinition(value: unknown): Promise<MatchDefinitio
     throw new Error('DEFINITION_HASH_MISMATCH');
 
   return {
+    ...(value.selection ? { selection: value.selection as QuestionSelection } : {}),
     competition,
     ruleset,
     questionSet,
@@ -107,6 +142,31 @@ export function validateQuestion(item: unknown, choiceCount: number): FixedQuest
   )
     throw new Error('INVALID_QUESTION');
   const answer = item.answer.normalize('NFKC').trim();
+  if (
+    item.readings !== undefined &&
+    (!Array.isArray(item.readings) ||
+      item.readings.length < 1 ||
+      item.readings.length > 8 ||
+      item.readings.some((r) => typeof r !== 'string') ||
+      !item.readings.includes(answer) ||
+      readingIssues(item.readings).length)
+  )
+    throw new Error('INVALID_CHOICES');
+  if (item.displayAnswer !== undefined && !text(item.displayAnswer, 80))
+    throw new Error('INVALID_QUESTION');
+  if (
+    item.traps !== undefined &&
+    (!Array.isArray(item.traps) ||
+      item.traps.length > 16 ||
+      item.traps.some(
+        (t) =>
+          !record(t) ||
+          !text(t.answer, 80) ||
+          typeof t.reading !== 'string' ||
+          readingIssues([t.reading]).length,
+      ))
+  )
+    throw new Error('INVALID_CHOICES');
   const letters = graphemes(answer);
   const distractors = item.distractors.map((candidate: unknown) => {
     if (
@@ -133,6 +193,13 @@ export function validateQuestion(item: unknown, choiceCount: number): FixedQuest
     version: 1,
     text: item.text,
     answer,
+    ...(item.readings ? { readings: item.readings as string[] } : {}),
+    ...(item.displayAnswer ? { displayAnswer: item.displayAnswer as string } : {}),
+    ...(item.traps ? { traps: item.traps as { answer: string; reading: string }[] } : {}),
+    ...(typeof item.categoryId === 'string' ? { categoryId: item.categoryId } : {}),
+    ...(typeof item.difficulty === 'number' ? { difficulty: item.difficulty } : {}),
+    ...(typeof item.seriesId === 'string' ? { seriesId: item.seriesId } : {}),
+    ...(typeof item.generation === 'string' ? { generation: item.generation } : {}),
     explanation: item.explanation,
     distractors,
     source: item.source,

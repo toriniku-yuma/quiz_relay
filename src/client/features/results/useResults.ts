@@ -32,7 +32,7 @@ export function useResults(refreshKey: string, instanceId = '') {
       if (!signal.aborted) setData(value);
     } catch {
       if (!signal.aborted)
-        setError('履歴とランキングを読み込めませんでした。再読み込みしてください。');
+        setError('履歴とランキングを読み込めませんでした。再試行してください。');
     } finally {
       if (!signal.aborted) setBusy(false);
     }

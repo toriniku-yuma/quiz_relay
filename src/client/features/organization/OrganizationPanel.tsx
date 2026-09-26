@@ -33,12 +33,16 @@ export default function OrganizationPanel({
           <code className="block break-all select-all">{data.account.actorId}</code>
         </Panel>
       )}
-      {management && (
-        <p>再読み込みすると、変更された項目の未保存入力はリセットされます。</p>
+      {organization.loadFailed && (
+        <div>
+          {management && (
+            <p>再試行すると、変更された項目の未保存入力はリセットされます。</p>
+          )}
+          <Button onClick={refresh} disabled={busy}>
+            再試行
+          </Button>
+        </div>
       )}
-      <Button onClick={refresh} disabled={busy}>
-        一覧を再読み込み
-      </Button>
       {!data ? (
         <p role="status">組織情報を確認しています。</p>
       ) : data.setup ? (

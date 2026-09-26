@@ -1,0 +1,1 @@
+ALTER TABLE "quiz_game"."question_notifications" ADD COLUMN "target" jsonb;

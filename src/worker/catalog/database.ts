@@ -1,4 +1,4 @@
-import { and, asc, eq, exists } from 'drizzle-orm';
+import { and, asc, eq, exists, or, sql } from 'drizzle-orm';
 import { connectDatabase } from '../db/connection.ts';
 import {
   questionAvailability as a,
@@ -10,10 +10,15 @@ import {
   questionSets as s,
 } from '../db/schema.ts';
 import type { Env } from '../env';
+import { rankingBand } from '../questions/ranking.ts';
 import { type VersionRef, validateDefinition, validateRef } from './definition.ts';
 
 // One statement keeps the definition, ordered questions and availability in one DB snapshot.
-export async function loadMatchDefinition(env: Env, reference?: VersionRef) {
+export async function loadMatchDefinition(
+  env: Env,
+  reference?: VersionRef,
+  actorId?: string,
+) {
   const ref = reference ? validateRef(reference) : null;
   const owner = ref?.owner ?? env.GAME_OWNER;
   const profile = env.GAME_CONFIG_PROFILE;
@@ -47,7 +52,17 @@ export async function loadMatchDefinition(env: Env, reference?: VersionRef) {
       )
       .leftJoin(
         i,
-        and(eq(i.owner, s.owner), eq(i.setId, s.setId), eq(i.setVersion, s.version)),
+        and(
+          eq(i.owner, s.owner),
+          or(
+            eq(i.setId, s.setId),
+            and(
+              sql`${s.setId} ~ '^authored-band-[0-2]$'`,
+              sql`${i.setId} LIKE ${s.setId} || '-chunk-%'`,
+            ),
+          ),
+          eq(i.setVersion, s.version),
+        ),
       )
       .leftJoin(
         q,
@@ -78,16 +93,35 @@ export async function loadMatchDefinition(env: Env, reference?: VersionRef) {
               ),
         ),
       )
-      .orderBy(asc(i.ordinal));
+      .orderBy(asc(i.setId), asc(i.ordinal));
     if (!rows.length)
       throw new Error(ref ? 'DEFINITION_NOT_FOUND' : 'RANKED_NOT_CONFIGURED');
+    if (
+      !ref &&
+      actorId &&
+      /^authored-band-[0-2]$/.test(rows[0].competition.competitionId)
+    ) {
+      const band = await rankingBand(
+        env,
+        owner,
+        actorId,
+        rows[0].questionSet.selection?.boundaries,
+      );
+      if (band > 0)
+        return loadMatchDefinition({
+          ...env,
+          GAME_CONFIG_PROFILE: `${profile}-band-${band}`,
+        });
+    }
     if (
       rows.every(
         (row) =>
           !row.question || (!!row.availability && row.availability.retiredAt !== null),
       )
     )
-      throw new Error('NO_RANKED_QUESTIONS');
+      throw Object.assign(new Error('NO_RANKED_QUESTIONS'), {
+        band: rows[0].questionSet.selection?.band,
+      });
     if (
       rows.some(
         (row) =>
@@ -97,6 +131,7 @@ export async function loadMatchDefinition(env: Env, reference?: VersionRef) {
       throw new Error('QUESTION_UNAVAILABLE');
     const { competition, ruleset, questionSet } = rows[0];
     return await validateDefinition({
+      ...(questionSet.selection ? { selection: questionSet.selection } : {}),
       competition: {
         owner: competition.owner,
         id: competition.competitionId,

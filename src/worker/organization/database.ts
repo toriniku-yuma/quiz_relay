@@ -308,6 +308,9 @@ export async function setInstanceGrants(
   const permissions = input.permissions as InstancePermission[];
   await db.transaction(async (tx) => {
     await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${id}`}, 0))`,
+    );
+    await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${id + actorId}, 0))`,
     );
     const [instance] = await tx

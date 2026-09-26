@@ -6,6 +6,8 @@ import { handleError, health, notFound } from './http/handlers';
 import matchmaking from './matchmaking/routes';
 import organization from './organization/routes';
 import probes from './probes/routes';
+import questions from './questions/routes';
+import { scheduledQuestions } from './questions/scheduled';
 import results from './results/routes';
 
 export { GameRoom } from './game/GameRoom';
@@ -21,9 +23,14 @@ app.route('/', game);
 app.route('/', matchmaking);
 app.route('/', results);
 app.route('/', organization);
+app.route('/', questions);
 
 app.notFound(notFound);
 
 app.onError(handleError);
 
-export default app;
+export default Object.assign(app, {
+  scheduled: (_event: ScheduledController, env: Env, ctx: ExecutionContext) => {
+    ctx.waitUntil(scheduledQuestions(env));
+  },
+});

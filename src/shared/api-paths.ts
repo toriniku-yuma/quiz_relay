@@ -3,6 +3,7 @@ export const GAME_PREFIX = '/api/game';
 export const PROBE_PREFIX = '/api/probes';
 
 export const API_PATHS = {
+  questions: '/api/questions/manage',
   health: '/api/health',
   organizationOverview: '/api/organization/overview',
   organizationSetup: '/api/organization/setup',

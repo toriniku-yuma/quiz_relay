@@ -18,6 +18,12 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { InstancePermission } from '../../shared/organization';
+import type {
+  QuestionInput,
+  QuestionSelection,
+  QuestionSettings,
+  SubmissionStatus,
+} from '../../shared/questions';
 import type { FixedQuestion } from '../catalog/definition.ts';
 import type { Rules } from '../game/rules.ts';
 import type { ResultRecord } from '../results/record';
@@ -44,7 +50,28 @@ export const catalogOperators = quizGame
 
 function catalogPolicies(owner: AnyPgColumn, mutable = false) {
   const access = sql`${owner} IN (SELECT owner FROM quiz_game.catalog_operators WHERE role_name = current_user)`;
+  const organizationOwner = sql`${owner} IN (SELECT owner FROM quiz_game.instances WHERE organization_id::text = current_setting('quiz.organization_id', true))`;
   return [
+    pgPolicy('organization_catalog_read', {
+      for: 'select',
+      to: ['quiz_organization'],
+      using: organizationOwner,
+    }),
+    pgPolicy('organization_catalog_insert', {
+      for: 'insert',
+      to: ['quiz_organization'],
+      withCheck: organizationOwner,
+    }),
+    ...(mutable
+      ? [
+          pgPolicy('organization_catalog_update', {
+            for: 'update',
+            to: ['quiz_organization'],
+            using: organizationOwner,
+            withCheck: organizationOwner,
+          }),
+        ]
+      : []),
     pgPolicy('catalog_read', { for: 'select', to: ['quiz_game_catalog'], using: access }),
     pgPolicy('catalog_insert', {
       for: 'insert',
@@ -130,6 +157,7 @@ export const questionSets = quizGame
       setId: text('set_id').notNull(),
       version: integer().notNull(),
       manifestHash: text('manifest_hash').notNull(),
+      selection: jsonb().$type<QuestionSelection>(),
     },
     (table) => [
       ...catalogPolicies(table.owner),
@@ -638,6 +666,282 @@ export const organizationEvents = quizGame
       ),
       index().on(t.occurredAt),
       organizationAccess(),
+    ],
+  )
+  .enableRLS();
+
+const questionOrganizationAccess = () =>
+  pgPolicy('organization_service', {
+    for: 'all',
+    to: ['quiz_organization'],
+    using: sql`instance_id IN (SELECT id FROM quiz_game.instances WHERE organization_id::text = current_setting('quiz.organization_id', true))`,
+    withCheck: sql`instance_id IN (SELECT id FROM quiz_game.instances WHERE organization_id::text = current_setting('quiz.organization_id', true))`,
+  });
+
+export const questionSettings = quizGame
+  .table(
+    'question_settings',
+    {
+      instanceId: uuid('instance_id')
+        .primaryKey()
+        .references(() => instances.id),
+      revision: integer().notNull().default(1),
+      config: jsonb().$type<QuestionSettings>().notNull(),
+    },
+    (t) => [
+      questionOrganizationAccess(),
+      check('question_settings_revision', sql`${t.revision} > 0`),
+    ],
+  )
+  .enableRLS();
+
+export const questionCategories = quizGame
+  .table(
+    'question_categories',
+    {
+      id: uuid().primaryKey(),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      name: text().notNull(),
+      active: boolean().notNull().default(true),
+      revision: integer().notNull().default(1),
+    },
+    (t) => [
+      questionOrganizationAccess(),
+      unique().on(t.instanceId, t.name),
+      unique().on(t.instanceId, t.id),
+    ],
+  )
+  .enableRLS();
+
+export const questionSubmissions = quizGame
+  .table(
+    'question_submissions',
+    {
+      authorName: text('author_name').notNull().default('作問者'),
+      id: uuid().primaryKey(),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      seriesId: uuid('series_id').notNull(),
+      authorId: text('author_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      revision: integer().notNull().default(1),
+      status: text().$type<SubmissionStatus>().notNull().default('draft'),
+      input: jsonb().$type<QuestionInput>().notNull(),
+      reason: text().notNull().default(''),
+      publishedId: uuid('published_id'),
+      stopped: boolean().notNull().default(false),
+      updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+    },
+    (t) => [
+      questionOrganizationAccess(),
+      index().on(t.instanceId, t.authorId),
+      index().on(t.instanceId, t.status),
+      check('question_submission_revision', sql`${t.revision} > 0`),
+      check(
+        'question_submission_status',
+        sql`${t.status} IN ('draft','pending','returned','approved','rejected','ended')`,
+      ),
+    ],
+  )
+  .enableRLS();
+
+export const questionSubmissionEvents = quizGame
+  .table(
+    'question_submission_events',
+    {
+      id: uuid().primaryKey(),
+      submissionId: uuid('submission_id')
+        .notNull()
+        .references(() => questionSubmissions.id),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      revision: integer().notNull(),
+      actorId: text('actor_id').notNull(),
+      action: text().notNull(),
+      input: jsonb().$type<QuestionInput>().notNull(),
+      reason: text().notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+    },
+    (t) => [questionOrganizationAccess(), index().on(t.submissionId, t.revision)],
+  )
+  .enableRLS();
+
+export const questionAuthors = quizGame
+  .table(
+    'question_authors',
+    {
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      status: text().$type<'pending' | 'qualified' | 'rejected' | 'revoked'>().notNull(),
+      reason: text().notNull().default(''),
+      retryAt: timestamp('retry_at', { withTimezone: true, mode: 'string' }),
+      revision: integer().notNull().default(1),
+    },
+    (t) => [
+      questionOrganizationAccess(),
+      primaryKey({ columns: [t.instanceId, t.actorId] }),
+      check(
+        'question_author_status',
+        sql`${t.status} IN ('pending','qualified','rejected','revoked')`,
+      ),
+    ],
+  )
+  .enableRLS();
+
+export const questionNotifications = quizGame
+  .table(
+    'question_notifications',
+    {
+      id: uuid().primaryKey(),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      message: text().notNull(),
+      target: jsonb().$type<{ page: 'edit' | 'qualification'; id?: string }>(),
+      read: boolean().notNull().default(false),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+    },
+    (t) => [questionOrganizationAccess(), index().on(t.instanceId, t.actorId)],
+  )
+  .enableRLS();
+
+export const questionTags = quizGame
+  .table(
+    'question_tags',
+    {
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      key: text().notNull(),
+      name: text().notNull(),
+      aliases: jsonb().$type<string[]>().notNull().default([]),
+    },
+    (t) => [questionOrganizationAccess(), primaryKey({ columns: [t.instanceId, t.key] })],
+  )
+  .enableRLS();
+
+export const questionImports = quizGame
+  .table(
+    'question_imports',
+    {
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      requestId: uuid('request_id').notNull(),
+      hash: text().notNull(),
+      ids: jsonb().$type<string[]>().notNull(),
+    },
+    (t) => [
+      questionOrganizationAccess(),
+      primaryKey({ columns: [t.instanceId, t.actorId, t.requestId] }),
+    ],
+  )
+  .enableRLS();
+
+export const questionReviewCases = quizGame
+  .table(
+    'question_review_cases',
+    {
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      questionId: text('question_id').notNull(),
+      kind: text().$type<'defect' | 'category'>().notNull(),
+      round: integer().notNull(),
+      count: integer().notNull().default(0),
+      resolved: boolean().notNull().default(false),
+      reason: text().notNull().default(''),
+    },
+    (t) => [
+      primaryKey({ columns: [t.instanceId, t.questionId, t.kind, t.round] }),
+      questionOrganizationAccess(),
+      check('review_case_kind', sql`${t.kind} IN ('defect','category')`),
+    ],
+  )
+  .enableRLS();
+
+export const questionReports = quizGame
+  .table(
+    'question_reports',
+    {
+      id: uuid().primaryKey(),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      questionId: text('question_id').notNull(),
+      kind: text().$type<'defect' | 'category'>().notNull(),
+      round: integer().notNull(),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      reason: text().notNull(),
+      suggestedCategory: text('suggested_category').notNull().default(''),
+    },
+    (t) => [
+      unique().on(t.instanceId, t.questionId, t.kind, t.round, t.actorId),
+      questionOrganizationAccess(),
+      check('question_report_kind', sql`${t.kind} IN ('defect','category')`),
+    ],
+  )
+  .enableRLS();
+
+export const questionDifficulty = quizGame
+  .table(
+    'question_difficulty',
+    {
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      seriesId: uuid('series_id').notNull(),
+      generation: uuid().notNull(),
+      current: integer().notNull(),
+      fixed: boolean().notNull().default(false),
+      revision: integer().notNull().default(1),
+      lastDay: text('last_day'),
+      cursor: text(),
+      stats: jsonb()
+        .$type<
+          {
+            band: number;
+            players: number;
+            rulesHash: string;
+            bandRevision: number;
+            trials: number;
+            correct: number;
+            participants: number;
+            lower: number;
+            upper: number;
+          }[]
+        >()
+        .notNull()
+        .default([]),
+      reason: text().notNull().default('自己申告'),
+    },
+    (t) => [
+      primaryKey({ columns: [t.instanceId, t.seriesId] }),
+      questionOrganizationAccess(),
+      check('question_difficulty_range', sql`${t.current} BETWEEN 0 AND 2`),
     ],
   )
   .enableRLS();

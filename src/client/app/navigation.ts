@@ -1,7 +1,13 @@
 import { useSyncExternalStore } from 'react';
+import { questionPages } from '../features/questions/pages';
 import { DEBUG_PATH, GAME_PATH, LOCAL_GAME_PATH } from './paths';
 
-const paths: readonly string[] = [GAME_PATH, DEBUG_PATH, LOCAL_GAME_PATH];
+const paths: readonly string[] = [
+  GAME_PATH,
+  DEBUG_PATH,
+  LOCAL_GAME_PATH,
+  ...Object.values(questionPages).map((page) => page.path),
+];
 
 export function isAppUrl(url: URL, current: URL) {
   return (
@@ -16,8 +22,9 @@ export function gameHref(instanceId = '', view = '') {
   return `${GAME_PATH}${query.size ? `?${query}` : ''}`;
 }
 
-export function navigate(href: string) {
-  history.pushState(null, '', href);
+export function navigate(href: string, replace = false) {
+  if (replace) history.replaceState(null, '', href);
+  else history.pushState(null, '', href);
   window.dispatchEvent(new PopStateEvent('popstate'));
 }
 

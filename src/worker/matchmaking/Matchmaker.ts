@@ -6,6 +6,7 @@ import type { Env } from '../env';
 
 export type InstanceScope = { id: string; owner: string };
 type Entry = {
+  band?: number;
   created: number;
   room: string;
   key: string;
@@ -74,6 +75,7 @@ export class Matchmaker extends DurableObject<Env> {
       definition = await loadMatchDefinition(
         scope ? { ...this.env, GAME_OWNER: scope.owner } : this.env,
         reference,
+        actorId,
       );
     } catch (error) {
       if (
@@ -81,7 +83,7 @@ export class Matchmaker extends DurableObject<Env> {
         error instanceof Error &&
         ['NO_RANKED_QUESTIONS', 'RANKED_NOT_CONFIGURED'].includes(error.message)
       ) {
-        await this.stopWaiting(scope);
+        await this.stopWaiting(scope, (error as Error & { band?: number }).band);
         return { ok: false as const, code: error.message };
       }
       return { ok: false as const, code: 'GAME_DATABASE_UNAVAILABLE' };
@@ -142,6 +144,7 @@ export class Matchmaker extends DurableObject<Env> {
       )
         return { ok: false as const, code: 'MATCHMAKING_FULL' };
       const entry: Entry = {
+        band: definition.selection?.band,
         created: Date.now(),
         room: available ?? crypto.randomUUID(),
         key,
@@ -359,28 +362,43 @@ export class Matchmaker extends DurableObject<Env> {
     const queue = await this.read();
     const scopes = new Map(
       Object.values(queue.actors).flatMap((entry) =>
-        entry.scope ? [[entry.scope.id, entry.scope] as const] : [],
+        entry.scope
+          ? [
+              [
+                `${entry.scope.id}:${entry.band ?? ''}`,
+                { scope: entry.scope, band: entry.band },
+              ] as const,
+            ]
+          : [],
       ),
     );
     await Promise.all(
-      [...scopes.values()].map(async (scope) => {
+      [...scopes.values()].map(async ({ scope, band }) => {
         try {
-          await loadMatchDefinition({ ...this.env, GAME_OWNER: scope.owner });
+          await loadMatchDefinition({
+            ...this.env,
+            GAME_OWNER: scope.owner,
+            GAME_CONFIG_PROFILE:
+              band === undefined
+                ? this.env.GAME_CONFIG_PROFILE
+                : `${this.env.GAME_CONFIG_PROFILE}-band-${band}`,
+          });
         } catch (error) {
           if (
             error instanceof Error &&
             ['NO_RANKED_QUESTIONS', 'RANKED_NOT_CONFIGURED'].includes(error.message)
           )
-            await this.stopWaiting(scope);
+            await this.stopWaiting(scope, band);
         }
       }),
     );
     await this.clean();
   }
-  private async stopWaiting(scope: InstanceScope) {
+  private async stopWaiting(scope: InstanceScope, band?: number) {
     const queue = await this.read();
     const entries = Object.entries(queue.actors).filter(
-      ([, entry]) => entry.scope?.id === scope.id,
+      ([, entry]) =>
+        entry.scope?.id === scope.id && (band === undefined || entry.band === band),
     );
     const rooms = [...new Set(entries.map(([, entry]) => entry.room))];
     await Promise.allSettled(rooms.map((id) => this.room(id).stopWaiting(scope.id)));

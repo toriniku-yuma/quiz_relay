@@ -120,6 +120,55 @@
       "when": 1789567649675,
       "tag": "0016_organization_audit_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790301868015,
+      "tag": "0017_question_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790302923997,
+      "tag": "0018_authored_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790302925340,
+      "tag": "0019_question_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790303566395,
+      "tag": "0020_question_review_statistics",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790306096496,
+      "tag": "0021_question_author_display",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790306440390,
+      "tag": "0022_question_scope_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790327816055,
+      "tag": "0023_notification_targets",
+      "breakpoints": true
     }
   ]
 }

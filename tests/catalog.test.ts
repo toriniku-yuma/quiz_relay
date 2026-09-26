@@ -33,7 +33,7 @@ async function definition(): Promise<MatchDefinition> {
   const owner = 'https://example.com';
   const config = {
     ...rules,
-    choiceCount: 6,
+    choiceCount: 4,
     characterAnswerTimeMs: 5000,
     showSelections: false,
   };
@@ -89,8 +89,8 @@ describe('1C fixed catalog', () => {
     );
 
     expect(reply.ok).toBe(true);
-    expect(state.panel?.choices).toHaveLength(6);
-    expect(new Set(state.panel?.choices.map(({ text }) => text)).size).toBe(6);
+    expect(state.panel?.choices).toHaveLength(4);
+    expect(new Set(state.panel?.choices.map(({ text }) => text)).size).toBe(4);
     expect(state.panel?.deadline).toBe(5100);
     expect(state.question.answer).toBe('にじ');
     expect(state.definition?.competition.version).toBe(1);
@@ -110,7 +110,7 @@ describe('1C fixed catalog', () => {
       changed.manifestHash = await contentHash(changed.questions);
       await expect(validateDefinition(changed)).rejects.toThrow('INVALID_CHOICES');
     }
-    for (const choiceCount of [0, 1, 9, 2.5, Infinity]) {
+    for (const choiceCount of [0, 1, 2, 3, 5, 6, 8, 9, 2.5, Infinity]) {
       await expect(
         validateDefinition({ ...original, rules: { ...original.rules, choiceCount } }),
       ).rejects.toThrow('INVALID_RULES');

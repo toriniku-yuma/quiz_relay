@@ -1,6 +1,15 @@
 export type ResultsOverview = {
   ranking: { actorId: string; name: string; rating: number; rank: number }[];
   history: {
+    questions?: {
+      authorName?: string;
+      id: string;
+      text: string;
+      displayAnswer: string;
+      readings: string[];
+      explanation: string;
+      source: string;
+    }[];
     resultId: string;
     finishedAt: string;
     reason: string;

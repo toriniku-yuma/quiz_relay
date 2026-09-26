@@ -1,4 +1,5 @@
 import { canAccessInstance } from '../../shared/organization';
+import { type QuestionPage, questionHref } from '../features/questions/pages';
 import '../styles/menu-scrollbar.css';
 import Button from '../components/Button';
 import MenuPopover from '../components/MenuPopover';
@@ -32,8 +33,57 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
           { label: '対戦履歴・ランキング', href: gameHref(instanceId, 'history') },
         ]
       : [];
-  if (selected && data?.account?.administrator)
-    items.push({ label: 'インスタンス設定', href: gameHref(instanceId, 'settings') });
+  const administrator = data?.account?.administrator === true;
+  const review =
+    !!selected && (administrator || selected.permissions.includes('questions'));
+  const manageAuthors =
+    !!selected && (administrator || selected.permissions.includes('authors'));
+  const questionLink = (page: QuestionPage, label: string) => ({
+    label,
+    href: questionHref(page, instanceId),
+  });
+  const sections = [
+    { title: '対戦', items },
+    {
+      title: '作問',
+      items: selected
+        ? [
+            questionLink('mine', '自分の問題'),
+            questionLink('new', '新規作成'),
+            questionLink('import', 'JSON取込'),
+            questionLink('qualification', '資格申請'),
+          ]
+        : [],
+    },
+    {
+      title: '審査',
+      management: true,
+      items: review
+        ? [
+            questionLink('pending', '審査待ち'),
+            questionLink('reports', '通報・再審議'),
+            questionLink('categoryRequests', 'カテゴリ変更申請'),
+          ]
+        : [],
+    },
+    {
+      title: '問題管理',
+      management: true,
+      items: review || manageAuthors ? [questionLink('management', '問題管理')] : [],
+    },
+    {
+      title: 'インスタンス管理',
+      management: true,
+      items:
+        selected && administrator
+          ? [
+              { label: 'インスタンス設定', href: gameHref(instanceId, 'settings') },
+              questionLink('settings', '投稿設定'),
+              questionLink('selection', '出題設定'),
+            ]
+          : [],
+    },
+  ].filter((section) => section.items.length > 0);
   const name =
     auth.user?.user_metadata.full_name ??
     auth.user?.user_metadata.name ??
@@ -89,11 +139,16 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
             </a>
           </div>
         )}
-        {(items.length > 0 || !auth.user) && (
-          <section className="border-t border-line pt-4 pb-5">
-            <h2 className="mb-2 px-3 text-base font-bold">インスタンスメニュー</h2>
+        {sections.map((section, index) => (
+          <section key={section.title} className="border-t border-line pt-4 pb-5">
+            {section.management && !sections[index - 1]?.management && (
+              <p className="mb-4 px-3 text-sm font-bold text-muted">管理</p>
+            )}
+            {section.title !== '問題管理' && (
+              <h2 className="mb-2 px-3 text-base font-bold">{section.title}</h2>
+            )}
             <ul className="grid gap-1">
-              {items.map((item) => (
+              {section.items.map((item) => (
                 <li key={item.href}>
                   <a
                     className={linkClass(item.href)}
@@ -104,15 +159,13 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
                   </a>
                 </li>
               ))}
-              {!auth.user && (
-                <li>
-                  <a className={linkClass(GAME_PATH)} href={GAME_PATH}>
-                    ログイン
-                  </a>
-                </li>
-              )}
             </ul>
           </section>
+        ))}
+        {!auth.user && (
+          <a className={linkClass(GAME_PATH)} href={GAME_PATH}>
+            ログイン
+          </a>
         )}
         {data?.account?.administrator && (
           <div className="grid gap-5 border-t border-line pt-4 pb-5">

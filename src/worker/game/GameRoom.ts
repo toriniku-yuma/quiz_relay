@@ -11,6 +11,7 @@ import {
 } from '../matchmaking/config';
 import type { InstanceScope } from '../matchmaking/Matchmaker';
 import { allowedInstanceActors } from '../organization/database';
+import { rankingRating } from '../questions/ranking';
 import { ResultConflict, saveResult } from '../results/database';
 import { replayEvents } from './recovery';
 import {
@@ -343,7 +344,14 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async fetch(request: Request) {
-    let validation: { matchId: string; result: MatchDefinition | string } | undefined;
+    let validation:
+      | {
+          matchId: string;
+          actorKey: string;
+          ratings?: Record<string, number>;
+          result: MatchDefinition | string;
+        }
+      | undefined;
     for (;;) {
       const result = await this.ctx.blockConcurrencyWhile(async () => {
         if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
@@ -377,10 +385,22 @@ export class GameRoom extends DurableObject<Env> {
             room.state.playersRequired
         ) {
           // DBの待機は直列化区間の外へ出す。戻ったら保存状態・認可・人数を再確認する。
-          if (validation?.matchId !== room.state.matchId)
+          const actorKey = room.state.players
+            .map((player) => player.id)
+            .sort()
+            .join(',');
+          if (
+            validation?.matchId !== room.state.matchId ||
+            validation.actorKey !== actorKey
+          )
             return {
               matchId: room.state.matchId,
               reference: room.state.definition.competition,
+              actorKey,
+              actors:
+                room.state.definition.selection && room.state.matchKind === 'ranked'
+                  ? room.state.players.map((player) => player.id)
+                  : [],
             };
           let code = typeof validation.result === 'string' ? validation.result : '';
           if (
@@ -444,6 +464,9 @@ export class GameRoom extends DurableObject<Env> {
           room.state.players.filter(({ connected }) => connected).length ===
             room.state.playersRequired
         ) {
+          if (room.state.definition?.selection && room.state.matchKind === 'ranked') {
+            room.state.startingRatings = validation?.ratings;
+          }
           room.state.startedAt = now;
           room.state.phase = 'REVEALING';
           room.state.deadline = now + room.state.rules.revealIntervalMs;
@@ -456,13 +479,28 @@ export class GameRoom extends DurableObject<Env> {
       });
       if (result instanceof Response) return result;
       try {
+        const [definition, entries] = await Promise.all([
+          loadMatchDefinition(this.env, result.reference),
+          Promise.all(
+            result.actors.map(
+              async (actor) =>
+                [
+                  actor,
+                  await rankingRating(this.env, result.reference.owner, actor),
+                ] as const,
+            ),
+          ),
+        ]);
         validation = {
           matchId: result.matchId,
-          result: await loadMatchDefinition(this.env, result.reference),
+          actorKey: result.actorKey,
+          ratings: Object.fromEntries(entries),
+          result: definition,
         };
       } catch (error) {
         validation = {
           matchId: result.matchId,
+          actorKey: result.actorKey,
           result:
             error instanceof Error ? error.message || 'DB_UNAVAILABLE' : 'DB_UNAVAILABLE',
         };

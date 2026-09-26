@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import MenuToggle from '../components/MenuToggle';
 import type { Auth } from '../features/auth/useAuth';
 import { useOrganization } from '../features/organization/useOrganization';
+import NotificationBell from '../features/questions/NotificationBell';
 import MatchPage from '../pages/MatchPage';
 import NotFoundPage from '../pages/NotFoundPage';
 import Navigation from './AppNavigation';
@@ -18,6 +19,12 @@ export default function Application({ auth }: { auth: Auth }) {
 
   const content = useRef<HTMLDivElement>(null);
   const href = url.href;
+  const pageLocation = [
+    url.pathname,
+    url.searchParams.get('instance'),
+    url.searchParams.get('view'),
+    url.searchParams.get('id'),
+  ].join(':');
   const menu = useMobileMenu(href);
   const path = `${url.pathname.replace(/\/$/, '')}/`;
   const route = routes.find((candidate) => candidate.path === path);
@@ -33,7 +40,7 @@ export default function Application({ auth }: { auth: Auth }) {
   }, []);
 
   useEffect(() => {
-    if (!href) return;
+    if (!pageLocation) return;
     window.scrollTo(0, 0);
     if (menu.dialog.current?.open || document.querySelector('[popover]:popover-open'))
       return;
@@ -41,7 +48,7 @@ export default function Application({ auth }: { auth: Auth }) {
       '[data-page]:not([hidden]) h1',
     );
     heading?.focus({ preventScroll: true });
-  }, [href, menu.dialog]);
+  }, [pageLocation, menu.dialog]);
 
   return (
     <AppContext.Provider value={{ auth, organization, url, matchStatus, setMatchStatus }}>
@@ -56,9 +63,12 @@ export default function Application({ auth }: { auth: Auth }) {
       </aside>
       <div className="min-h-dvh lg:pl-72">
         <div className="sticky top-0 z-20 border-b border-line bg-paper">
-          <div className="flex items-center gap-4 px-4 py-3 lg:hidden">
-            <MenuToggle expanded={menu.expanded} onClick={menu.open} />
-            <span className="font-extrabold tracking-widest">QUIZ RELAY</span>
+          <div className="flex items-center gap-4 px-4 py-3">
+            <div className="lg:hidden">
+              <MenuToggle expanded={menu.expanded} onClick={menu.open} />
+            </div>
+            <span className="font-extrabold tracking-widest lg:sr-only">QUIZ RELAY</span>
+            {auth.user && <NotificationBell />}
           </div>
           {active && (
             <div

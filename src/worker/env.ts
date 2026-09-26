@@ -8,6 +8,7 @@ export interface Env {
   MATCHMAKER: DurableObjectNamespace<Matchmaker>;
   GAME_OWNER: string;
   ORGANIZATION_ENABLED?: string;
+  QUESTION_DIFFICULTY_ENABLED?: string;
   ORGANIZATION_DATABASE_URL?: string;
   ORGANIZATION_HYPERDRIVE?: Hyperdrive;
   INITIAL_ADMIN_SUBJECT?: string;

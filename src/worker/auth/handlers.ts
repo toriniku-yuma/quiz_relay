@@ -8,6 +8,7 @@ export type AuthEnv = {
   Variables: {
     actorId: string;
     subject: string;
+    displayName: string;
     instanceOwner: string;
     instanceId: string;
     organizationId: string;
@@ -65,6 +66,15 @@ export const authenticate: MiddlewareHandler<AuthEnv> = async (c, next) => {
   )
     return c.json({ code: 'RATE_LIMIT' }, 429);
   c.set('subject', data.user.id);
+  const displayName = data.user.user_metadata?.display_name;
+  c.set(
+    'displayName',
+    typeof displayName === 'string' &&
+      displayName.trim().length > 0 &&
+      displayName.length <= 80
+      ? displayName.trim()
+      : '作問者',
+  );
   c.set('actorId', await contentHash({ home: c.env.GAME_OWNER, subject: data.user.id }));
   await next();
 };

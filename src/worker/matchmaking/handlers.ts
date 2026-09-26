@@ -10,10 +10,14 @@ const roomId = (value: unknown): value is string =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 
 export const matchConfig: Handler<AuthEnv> = async (c) => {
-  const definition = await loadMatchDefinition({
-    ...c.env,
-    GAME_OWNER: c.get('instanceOwner'),
-  }).catch((error: unknown) => {
+  const definition = await loadMatchDefinition(
+    {
+      ...c.env,
+      GAME_OWNER: c.get('instanceOwner'),
+    },
+    undefined,
+    c.get('actorId'),
+  ).catch((error: unknown) => {
     if (
       error instanceof Error &&
       ['NO_RANKED_QUESTIONS', 'RANKED_NOT_CONFIGURED'].includes(error.message)

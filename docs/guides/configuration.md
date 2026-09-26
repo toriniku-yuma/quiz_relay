@@ -62,7 +62,7 @@ JSONを保存しただけでは稼働中DBへ反映されない。DB反映後は
 | `playersPerMatch` | 接続がそろうと開始する人数 | 4人（ローカル2人）、2〜4 |
 | `rules.correctAnswersToWin` | 勝利する正解数 | 7、1〜100 |
 | `rules.mistakesToDisqualify` | 失格になるお手つき数 | 3、1〜100 |
-| `rules.choiceCount` | 文字パネルの候補数 | 4から変更しない。仕様は4択固定。現行コードの2〜8許容は固定化への修正対象 |
+| `rules.choiceCount` | 文字パネルの候補数 | 4固定。その他の値は入力検証で拒否する |
 | `rules.revealIntervalMs` | 本文1書記素の表示間隔 | 100、1〜10000ms |
 | `rules.characterAnswerTimeMs` | 1文字の解答期限 | 3000、1〜60000ms |
 | `rules.judgedDisplayMs` | 判定の表示時間 | 2000、1〜60000ms |
