@@ -12,6 +12,7 @@ import {
   setInstanceGrants,
   setupOrganization,
 } from './database';
+import { saveProfile } from './profile';
 
 export const organizationOverview: Handler<AuthEnv> = async (c) => {
   if (!organizationEnabled(c.env)) return c.json({ enabled: false, instances: [] });
@@ -38,6 +39,10 @@ export const mutateOrganization: Handler<AuthEnv> = async (c) => {
   const { db, close } = organizationDatabase(c.env);
   try {
     const value = input as Record<string, unknown>;
+    if (c.req.path.endsWith('/profile'))
+      return c.json(
+        await saveProfile(db, c.get('subject'), value, c.env.GAME_CONFIG_PROFILE),
+      );
     if (c.req.path.endsWith('/permissions'))
       return c.json(await accountPermissions(db, c.get('subject'), value));
     if (c.req.path.endsWith('/setup'))
@@ -87,6 +92,7 @@ const contextFor =
         )
           throw new OrganizationError('INSTANCE_PREPARING', 409);
         c.set('actorId', account.actorId);
+        c.set('profileName', account.displayName ?? null);
         c.set('organizationId', organization.id);
         c.set('instanceId', instance.id);
         c.set('instanceOwner', instance.owner);

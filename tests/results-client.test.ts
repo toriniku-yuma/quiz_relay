@@ -36,6 +36,7 @@ beforeEach(() => {
   harness.state = [];
   harness.effect = undefined;
   requests.length = 0;
+  vi.stubGlobal('window', new EventTarget());
   harness.session
     .mockReset()
     .mockResolvedValue({ data: { session: { access_token: 'test' } } });
@@ -50,6 +51,21 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+it('表示名の変更で再取得し、破棄後は変更通知を受け取らない', async () => {
+  useResults('ready');
+  const cleanup = harness.effect?.();
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  window.dispatchEvent(new Event('profile:refresh'));
+  await vi.waitFor(() => expect(requests).toHaveLength(2));
+  expect(requests[0].signal.aborted).toBe(true);
+  cleanup?.();
+  window.dispatchEvent(new Event('profile:refresh'));
+  await Promise.resolve();
+  expect(requests).toHaveLength(2);
+  for (const request of requests)
+    request.resolve(Response.json({ ranking: [], history: [] }));
 });
 
 it.each(['success', 'failure'] as const)(

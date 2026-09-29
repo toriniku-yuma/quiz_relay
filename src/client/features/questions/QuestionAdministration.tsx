@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { QuestionOverview, SubmissionMode } from '../../../shared/questions';
 import Button from '../../components/Button';
+import Checkbox from '../../components/Checkbox';
 import TextField from '../../components/TextField';
 import { type QuestionPage, questionHref } from './pages';
 
@@ -268,8 +269,7 @@ export default function QuestionAdministration({
                 onChange={(e) => setWaitDays(Number(e.target.value))}
               />
               <label>
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={showAuthor}
                   onChange={(e) => setShowAuthor(e.target.checked)}
                 />{' '}

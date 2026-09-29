@@ -11,7 +11,6 @@ import {
 } from '../src/client/features/questions/pages';
 import QuestionManagementMenu from '../src/client/features/questions/QuestionManagementMenu';
 import QuestionWorkspace from '../src/client/features/questions/QuestionWorkspace';
-import { type QuestionSort, sortQuestions } from '../src/client/features/questions/sort';
 import {
   defaultQuestionSettings,
   emptyQuestion,
@@ -78,60 +77,6 @@ const render = (page: QuestionPage, selectedId: string | null = null) =>
     createElement(QuestionWorkspace, { instanceId: 'instance', page, selectedId }),
   );
 
-it('並び順は選択した集計の正答率・回数、現在の難易度、更新日時で切り替わる', () => {
-  if (!model.data) throw new Error('fixture');
-  const rows = model.data.submissions;
-  rows[0].updatedAt = '2026-09-20T00:00:00Z';
-  rows[1].updatedAt = '2026-09-21T00:00:00Z';
-  const difficulties = rows.map((row, index) => ({
-    seriesId: row.seriesId,
-    generation: row.id,
-    current: index === 0 ? 2 : 0,
-    fixed: false,
-    revision: 1,
-    reason: '',
-    stats: [
-      {
-        band: 0,
-        players: 2,
-        trials: index === 0 ? 10 : 20,
-        correct: index === 0 ? 8 : 4,
-        participants: 20,
-        lower: 0,
-        upper: 1,
-      },
-      {
-        band: 0,
-        players: 3,
-        trials: index === 0 ? 30 : 5,
-        correct: 0,
-        participants: 20,
-        lower: 0,
-        upper: 1,
-      },
-    ],
-  }));
-  const expected: [QuestionSort, string[]][] = [
-    ['rate-asc', ['other', 'me']],
-    ['rate-desc', ['me', 'other']],
-    ['trials-asc', ['me', 'other']],
-    ['trials-desc', ['other', 'me']],
-    ['difficulty-asc', ['other', 'me']],
-    ['difficulty-desc', ['me', 'other']],
-    ['updated-asc', ['me', 'other']],
-    ['updated-desc', ['other', 'me']],
-  ];
-  for (const [sort, ids] of expected)
-    expect(sortQuestions(rows, difficulties, 2, 0, sort).map((row) => row.id)).toEqual(
-      ids,
-    );
-  expect(
-    sortQuestions(rows, difficulties, 3, 0, 'trials-asc').map((row) => row.id),
-  ).toEqual(['other', 'me']);
-  expect(sortQuestions(rows, [], 2, 0, 'rate-asc')).toEqual(rows);
-  expect(rows.map((row) => row.id)).toEqual(['me', 'other']);
-});
-
 it('取得失敗時だけ再試行を表示し、保存・入力エラーでは表示しない', () => {
   expect(render('review')).not.toContain('再試行');
   expect(render('review')).not.toContain('再読み込み');
@@ -161,6 +106,10 @@ it('条件変更中と取得失敗時は古い結果・件数・ページ数を�
 
 it('一覧条件と戻り先を保持し、外部URL・別インスタンスへの戻り先を受け入れない', () => {
   const state = {
+    band: 'all' as const,
+    players: 'all' as const,
+    sort: 'text',
+    direction: 'asc' as const,
     query: '日本&山',
     status: 'pending',
     category: '11111111-1111-4111-8111-111111111111',
@@ -183,6 +132,10 @@ it('一覧条件と戻り先を保持し、外部URL・別インスタンスへ�
       questionReturnHref(`return=${encodeURIComponent(value)}`, 'instance'),
     ).toBeUndefined();
   expect(questionListState('page=-1&size=20&status=invalid&category=invalid')).toEqual({
+    band: 'all',
+    players: 'all',
+    sort: 'updatedAt',
+    direction: 'desc',
     query: '',
     status: '',
     category: '',
@@ -275,13 +228,7 @@ it('問題管理のメニューは担当権限で区分とリンクを絞る', (
       }),
     );
   const admin = menu(true, false, false);
-  for (const label of [
-    '全問題',
-    '難易度',
-    '分類・整理',
-    'カテゴリ管理',
-    '作問者資格の管理',
-  ])
+  for (const label of ['全問題', '分類・整理', 'カテゴリ管理', '作問者資格の管理'])
     expect(admin).toContain(label);
   expect(admin).not.toContain('<details');
   const reviewer = menu(false, true, false);

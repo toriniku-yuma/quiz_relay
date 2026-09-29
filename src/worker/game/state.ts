@@ -24,6 +24,13 @@ import { type Rules, rules } from './rules';
 export { rules } from './rules';
 
 export type State = {
+  answerStats?: {
+    actorId: string;
+    result: 'correct' | 'wrong' | 'timeout';
+    elapsedMs: number | null;
+  }[];
+  buzzClock?: { questionId: string; elapsed: number; since: number | null };
+  currentBuzzMs?: number | null;
   startingRatings?: Record<string, number>;
   questionParticipants?: string[];
   completedQuestions?: {
@@ -107,6 +114,7 @@ export function createState(
   }
 
   return {
+    answerStats: [],
     matchKind: definition ? 'ranked' : 'development',
     rules: structuredClone(fixedRules),
     ...(definition
@@ -214,6 +222,12 @@ function judge(
   state.questionParticipants ??= state.players
     .filter((p) => !p.disqualified)
     .map((p) => p.id);
+  if (player && result !== 'unanswered' && state.answerStats)
+    state.answerStats.push({
+      actorId: player.id,
+      result,
+      elapsedMs: state.currentBuzzMs ?? null,
+    });
   if (player) {
     if (result === 'correct') player.correct++;
     else {
@@ -372,6 +386,10 @@ export function adjudicate(
     else {
       if (state.revealed === graphemes(state.question.text).length)
         state.waitRemaining = Math.max(0, (state.deadline ?? now) - now);
+      state.currentBuzzMs = state.buzzClock
+        ? state.buzzClock.elapsed +
+          (state.buzzClock.since === null ? 0 : Math.max(0, now - state.buzzClock.since))
+        : null;
       state.phase = 'ANSWERING';
       state.holder = actorId;
       state.response = { actorId, text: '' };
@@ -458,6 +476,13 @@ function checkInvalid(state: State, now: number) {
 }
 
 export function changed(state: State, now: number) {
+  if (state.answerStats) {
+    if (!state.buzzClock || state.buzzClock.questionId !== state.question.id)
+      state.buzzClock = { questionId: state.question.id, elapsed: 0, since: null };
+    const clock = state.buzzClock;
+    if (clock.since !== null) clock.elapsed += Math.max(0, now - clock.since);
+    clock.since = state.phase === 'REVEALING' && !state.reconnect ? now : null;
+  }
   state.roomSeq++;
   const current = snapshot(state);
   state.events = appendEvent(state.events, state.publicState, current, now);

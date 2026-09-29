@@ -1,5 +1,7 @@
+import { useApp } from '../../app/context';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
+import ReasonAction from '../moderation/ReasonAction';
 import QuestionReview from './QuestionReview';
 import { useResults } from './useResults';
 
@@ -10,6 +12,7 @@ export default function ResultsPanel({
   refreshKey: string;
   instanceId?: string;
 }) {
+  const { organization } = useApp();
   const results = useResults(refreshKey, instanceId);
   return (
     <Panel title="このインスタンスのランキング・対戦履歴">
@@ -65,14 +68,27 @@ export default function ResultsPanel({
             }
             ／ レート {entry.ratingDelta > 0 ? '+' : ''}
             {entry.ratingDelta}（確定）
-            <p className="mt-1 text-sm">
-              {entry.players
-                .map(
-                  (player) =>
-                    `${player.name}：正解${player.correct}・お手つき${player.mistakes}`,
-                )
-                .join(' ／ ')}
-            </p>
+            <ul className="mt-1 text-sm">
+              {entry.players.map((player) => (
+                <li key={player.id} className="flex items-center gap-2">
+                  <span>
+                    {player.name}：正解{player.correct}・お手つき{player.mistakes}
+                  </span>
+                  {instanceId && player.id !== organization.data?.account?.actorId && (
+                    <ReasonAction
+                      report
+                      title={`${player.name}を通報`}
+                      input={{
+                        action: 'report',
+                        instanceId,
+                        actorId: player.id,
+                        resultId: entry.resultId,
+                      }}
+                    />
+                  )}
+                </li>
+              ))}
+            </ul>
             {entry.questions && (
               <QuestionReview
                 questions={entry.questions}

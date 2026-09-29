@@ -5,14 +5,20 @@ import type {
   QuestionOverview,
   QuestionView,
 } from '../../../shared/questions';
+import type { SortState } from '../../../shared/sorting';
 import { setupAuth } from '../auth/client';
 
 const messages: Record<string, string> = {
+  PROFILE_REQUIRED: 'マイページで表示名を登録してから提出してください。',
+  PARTICIPATION_RESTRICTED:
+    '問題提出が制限されています。マイページで理由・期限を確認してください。',
   ALREADY_REPORTED: 'この問題・通報種別には、今回の審議ですでに通報しています。',
   INVALID_SETTINGS:
     '実力帯は昇順、割合は0以上にしてください。各帯の出題割合には少なくとも1つ正の値が必要です。',
   INVALID_CATEGORY: '有効な移動先カテゴリを選んでください。',
   INVALID_TAG: '統合元・統合先に、異なる既存のタグ名を指定してください。',
+  INVALID_CHANGES: '対象は1〜500件で指定してください。',
+  QUESTION_DELETED: '削除済みです。復元してから操作してください。',
   QUESTION_NOT_FOUND: '対象の問題を確認できません。',
   EDIT_CONFLICT:
     '他の操作で更新されました。このページを開き直して、現在の内容を確認してください。',
@@ -24,6 +30,14 @@ const messages: Record<string, string> = {
   INSTANCE_PREPARING: 'このインスタンスは準備中です。',
 };
 
+export class QuestionRequestError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
 export async function questionsRequest<T>(instanceId: string, body: object): Promise<T> {
   const client = await setupAuth();
   const { data } = await client.auth.getSession();
@@ -42,11 +56,14 @@ export async function questionsRequest<T>(instanceId: string, body: object): Pro
     issues?: { path: string; message: string }[];
   };
   if (!response.ok)
-    throw new Error(
+    throw new QuestionRequestError(
       result.issues?.length
-        ? result.issues.map((issue) => `${issue.path}: ${issue.message}`).join('\n')
+        ? result.issues
+            .map((issue) => `${issue.path}: ${messages[issue.message] ?? issue.message}`)
+            .join('\n')
         : (messages[result.code ?? ''] ??
             '操作を完了できませんでした。接続と現在の状態を確認してください。'),
+      response.status,
     );
   return result;
 }
@@ -58,7 +75,25 @@ export function useQuestions(
   view?: QuestionView,
 ) {
   const requestBody = JSON.stringify({ operation: 'overview', list, view });
+  const collection = JSON.stringify({
+    instanceId,
+    view,
+    list: list && {
+      scope: list.scope,
+      query: list.query,
+      category: list.category,
+      status: list.status,
+      pageSize: list.pageSize,
+      band: list.band,
+      players: list.players,
+    },
+  });
   const [loadedRequest, setLoadedRequest] = useState('');
+  const [loadedCollection, setLoadedCollection] = useState('');
+  const [displaySorting, setDisplaySorting] = useState<SortState>({
+    sort: 'updatedAt',
+    direction: 'desc',
+  });
   const [data, setData] = useState<QuestionOverview | null>(null);
   const [error, setError] = useState('');
   const [loadFailed, setLoadFailed] = useState(false);
@@ -78,6 +113,12 @@ export function useQuestions(
       if (sequence === requestSequence.current) {
         setData(result);
         setLoadedRequest(requestBody);
+        setLoadedCollection(collection);
+        const requested = JSON.parse(requestBody).list;
+        setDisplaySorting({
+          sort: requested?.sort ?? 'updatedAt',
+          direction: requested?.direction ?? 'desc',
+        });
       }
     } catch (error) {
       if (sequence === requestSequence.current) {
@@ -87,7 +128,7 @@ export function useQuestions(
     } finally {
       if (sequence === requestSequence.current) setBusy(false);
     }
-  }, [instanceId, requestBody]);
+  }, [instanceId, requestBody, collection]);
   useEffect(() => {
     if (enabled && instanceId) void refresh();
     return () => {
@@ -112,9 +153,14 @@ export function useQuestions(
       setBusy(false);
     }
   }
+  const retaining = loadedCollection === collection && loadedRequest !== requestBody;
   return {
     data,
-    stale: loadedRequest !== requestBody || loadFailed,
+    retaining,
+    displaySorting,
+    stale:
+      loadedCollection !== collection ||
+      (!retaining && (loadedRequest !== requestBody || loadFailed)),
     error,
     loadFailed,
     busy,

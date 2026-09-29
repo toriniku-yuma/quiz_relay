@@ -7,6 +7,7 @@ import { contentHash } from '../catalog/hash.ts';
 import type { Env } from '../env';
 
 export class OrganizationError extends Error {
+  target?: string;
   readonly code: string;
   readonly status: 400 | 403 | 404 | 409 | 503;
   constructor(code: string, status: 400 | 403 | 404 | 409 | 503 = 403) {

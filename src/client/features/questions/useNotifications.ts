@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { API_PATHS } from '../../../shared/api-paths';
 import type { QuestionNotification } from '../../../shared/questions';
 import { useApp } from '../../app/context';
+import { organizationRequest } from '../organization/useOrganization';
 import { questionsRequest } from './useQuestions';
 
 export function useNotifications() {
@@ -23,7 +25,13 @@ export function useNotifications() {
     setLoading(true);
     const ids: string[] = JSON.parse(scope);
     const results = await Promise.allSettled(
-      ids.map(async (instanceId) => {
+      [...ids, ...(organization.data?.account ? [''] : [])].map(async (instanceId) => {
+        if (!instanceId)
+          return (
+            await organizationRequest<{
+              notifications: (QuestionNotification & { instanceId: string })[];
+            }>(API_PATHS.moderationPersonal)
+          ).notifications;
         const result = await questionsRequest<{ notifications: QuestionNotification[] }>(
           instanceId,
           { operation: 'notifications' },
@@ -44,7 +52,7 @@ export function useNotifications() {
         : '',
     );
     setLoading(false);
-  }, [scope, identity]);
+  }, [scope, identity, organization.data?.account]);
 
   useEffect(() => {
     setRows([]);
@@ -79,7 +87,9 @@ export function useNotifications() {
         const ids = unread
           .filter((row) => row.instanceId === instanceId)
           .map((row) => row.id);
-        await questionsRequest(instanceId, { operation: 'read-notifications', ids });
+        if (instanceId)
+          await questionsRequest(instanceId, { operation: 'read-notifications', ids });
+        else await organizationRequest(API_PATHS.moderationPersonal, { readIds: ids });
         return ids;
       }),
     )

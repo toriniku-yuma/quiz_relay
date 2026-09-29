@@ -15,8 +15,10 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { Restriction, Sanction, SanctionKind } from '../../shared/moderation';
 import type { InstancePermission } from '../../shared/organization';
 import type {
   QuestionInput,
@@ -551,6 +553,66 @@ const organizationAccess = () =>
     using: sql`true`,
     withCheck: sql`true`,
   });
+export const moderationSanctions = quizGame
+  .table(
+    'moderation_sanctions',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      instanceId: uuid('instance_id').references(() => instances.id),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      kind: text().$type<SanctionKind>().notNull(),
+      restrictions: jsonb().$type<Restriction[]>().notNull(),
+      reason: text().notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true, mode: 'string' }),
+      revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'string' }),
+      revision: integer().notNull().default(1),
+    },
+    (t) => [
+      organizationAccess(),
+      index().on(t.actorId, t.instanceId),
+      check('sanction_kind', sql`${t.kind} IN ('timeout','ban','partial')`),
+      check('sanction_scope', sql`${t.instanceId} IS NOT NULL OR ${t.kind} = 'ban'`),
+      check(
+        'sanction_expiry',
+        sql`(${t.kind} = 'timeout') = (${t.expiresAt} IS NOT NULL)`,
+      ),
+      check('sanction_revision', sql`${t.revision} > 0`),
+    ],
+  )
+  .enableRLS();
+export const moderationEvents = quizGame
+  .table(
+    'moderation_events',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      instanceId: uuid('instance_id').references(() => instances.id),
+      actorId: text('actor_id').notNull(),
+      operatorId: text('operator_id').notNull(),
+      action: text().$type<'add' | 'change' | 'revoke' | 'inspect'>().notNull(),
+      reason: text().notNull(),
+      requestHash: text('request_hash').notNull(),
+      before: jsonb().$type<Sanction>(),
+      after: jsonb().$type<Sanction>(),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      readAt: timestamp('read_at', { withTimezone: true, mode: 'string' }),
+    },
+    (t) => [
+      organizationAccess(),
+      index().on(t.actorId, t.createdAt),
+      check('moderation_action', sql`${t.action} IN ('add','change','revoke','inspect')`),
+    ],
+  )
+  .enableRLS();
 export const organizations = quizGame
   .table(
     'organizations',
@@ -584,9 +646,13 @@ export const organizationAccounts = quizGame
       subject: text().notNull(),
       actorId: text('actor_id').primaryKey(),
       administrator: boolean().notNull().default(false),
+      displayName: text('display_name'),
+      profileRevision: integer('profile_revision').notNull().default(0),
     },
     (t) => [
       unique().on(t.organizationId, t.subject),
+      unique('organization_display_name_unique').on(t.organizationId, t.displayName),
+      check('profile_revision_valid', sql`${t.profileRevision} >= 0`),
       check(
         'account_subject_length',
         sql`char_length(btrim(${t.subject})) BETWEEN 1 AND 256`,
@@ -720,6 +786,12 @@ export const questionSubmissions = quizGame
     'question_submissions',
     {
       authorName: text('author_name').notNull().default('作問者'),
+      provenance: jsonb('provenance').$type<{
+        author: string;
+        instance: string;
+      } | null>(),
+      deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
+      reviewHold: boolean('review_hold').notNull().default(false),
       id: uuid().primaryKey(),
       instanceId: uuid('instance_id')
         .notNull()
@@ -942,6 +1014,144 @@ export const questionDifficulty = quizGame
       primaryKey({ columns: [t.instanceId, t.seriesId] }),
       questionOrganizationAccess(),
       check('question_difficulty_range', sql`${t.current} BETWEEN 0 AND 2`),
+    ],
+  )
+  .enableRLS();
+
+export const userReports = quizGame
+  .table(
+    'user_reports',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      reporterId: text('reporter_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      resultId: uuid('result_id').notNull(),
+      reason: text().notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true, mode: 'string' }),
+      operatorId: text('operator_id'),
+      resolution: text(),
+    },
+    (t) => [
+      organizationAccess(),
+      index().on(t.instanceId, t.actorId, t.resolvedAt),
+      check('user_report_other', sql`${t.actorId} <> ${t.reporterId}`),
+      check(
+        'user_report_resolution',
+        sql`(${t.resolvedAt} IS NULL AND ${t.operatorId} IS NULL AND ${t.resolution} IS NULL) OR (${t.resolvedAt} IS NOT NULL AND ${t.operatorId} IS NOT NULL AND ${t.resolution} IS NOT NULL AND char_length(btrim(${t.resolution})) BETWEEN 1 AND 1000)`,
+      ),
+      check(
+        'user_report_reason',
+        sql`char_length(btrim(${t.reason})) BETWEEN 1 AND 1000`,
+      ),
+    ],
+  )
+  .enableRLS();
+export const sanctionAppeals = quizGame
+  .table(
+    'sanction_appeals',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      sanctionId: uuid('sanction_id')
+        .notNull()
+        .references(() => moderationSanctions.id),
+      sanctionRevision: integer('sanction_revision').notNull(),
+      reason: text().notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true, mode: 'string' }),
+      operatorId: text('operator_id'),
+      resolution: text(),
+      decision: text().$type<'revoke' | 'maintain'>(),
+      readAt: timestamp('read_at', { withTimezone: true, mode: 'string' }),
+    },
+    (t) => [
+      organizationAccess(),
+      index().on(t.actorId, t.resolvedAt),
+      check('appeal_reason', sql`char_length(btrim(${t.reason})) BETWEEN 1 AND 1000`),
+      check('appeal_revision', sql`${t.sanctionRevision} > 0`),
+      check(
+        'appeal_decision',
+        sql`${t.decision} IS NULL OR ${t.decision} IN ('maintain','revoke')`,
+      ),
+      check(
+        'appeal_resolution',
+        sql`(${t.resolvedAt} IS NULL AND ${t.operatorId} IS NULL AND ${t.resolution} IS NULL AND ${t.decision} IS NULL) OR (${t.resolvedAt} IS NOT NULL AND ${t.operatorId} IS NOT NULL AND ${t.decision} IS NOT NULL AND ${t.resolution} IS NOT NULL AND char_length(btrim(${t.resolution})) BETWEEN 1 AND 1000)`,
+      ),
+      uniqueIndex().on(t.sanctionId).where(sql`${t.resolvedAt} IS NULL`),
+    ],
+  )
+  .enableRLS();
+export const moderationRequests = quizGame
+  .table(
+    'moderation_requests',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      operatorId: text('operator_id').notNull(),
+      requestHash: text('request_hash').notNull(),
+      details: jsonb().$type<Record<string, unknown>>().notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+    },
+    () => [organizationAccess()],
+  )
+  .enableRLS();
+export const administratorTransfers = quizGame
+  .table(
+    'administrator_transfers',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      senderId: text('sender_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      targetId: text('target_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      keepSender: boolean('keep_sender').notNull(),
+      readAt: timestamp('read_at', { withTimezone: true, mode: 'string' }),
+      state: text()
+        .$type<'pending' | 'accepted' | 'cancelled'>()
+        .notNull()
+        .default('pending'),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      expiresAt: timestamp('expires_at', {
+        withTimezone: true,
+        mode: 'string',
+      }).notNull(),
+    },
+    (t) => [
+      organizationAccess(),
+      index().on(t.targetId, t.state),
+      check('transfer_state', sql`${t.state} IN ('pending','accepted','cancelled')`),
+      check('transfer_target', sql`${t.senderId} <> ${t.targetId}`),
     ],
   )
   .enableRLS();

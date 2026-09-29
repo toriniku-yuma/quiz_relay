@@ -2,11 +2,10 @@ import { eq } from 'drizzle-orm';
 import type { Handler } from 'hono';
 import type { AuthEnv } from '../auth/handlers';
 import { connectDatabase } from '../db/connection';
-import { instances, matchResults } from '../db/schema';
+import { matchResults } from '../db/schema';
 import { organizationDatabase } from '../organization/database';
 import { QuestionError, questionMutation, questionOverview } from './database';
 import { verifiedReportedQuestion } from './reports';
-import { questionStatistics } from './statistics';
 
 export const questionsHandler: Handler<AuthEnv> = async (c) => {
   const { db, close } = organizationDatabase(c.env);
@@ -23,31 +22,23 @@ export const questionsHandler: Handler<AuthEnv> = async (c) => {
         instanceId,
         body.list,
         body.view,
-      );
-      if (overview.review && overview.difficulty.length) {
-        const [instance] = await db
-          .select()
-          .from(instances)
-          .where(eq(instances.id, instanceId));
-        const binding = c.env.GAME_HYPERDRIVE;
-        const address = binding?.connectionString ?? c.env.GAME_DATABASE_URL;
-        if (instance && address) {
+        async (owner) => {
+          const binding = c.env.GAME_HYPERDRIVE,
+            address = binding?.connectionString ?? c.env.GAME_DATABASE_URL;
+          if (!address) throw new QuestionError('RESULTS_UNAVAILABLE');
           const reader = connectDatabase(address, c.env.DATABASE_CA_CERT, !!binding);
           try {
-            const records = await reader.db
-              .select({ payload: matchResults.payload })
-              .from(matchResults)
-              .where(eq(matchResults.owner, instance.owner));
-            for (const row of overview.difficulty)
-              row.stats = questionStatistics(
-                records.map((record) => record.payload),
-                row.generation,
-              );
+            return (
+              await reader.db
+                .select({ payload: matchResults.payload })
+                .from(matchResults)
+                .where(eq(matchResults.owner, owner))
+            ).map((r) => r.payload);
           } finally {
             await reader.close();
           }
-        }
-      }
+        },
+      );
       return c.json(overview);
     }
     return c.json(

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { MatchStatus } from '../../app/context';
+import { type MatchStatus, useApp } from '../../app/context';
+import { PROFILE_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
@@ -18,6 +19,9 @@ export default function MatchLobby({
   onStatus?: (status: MatchStatus) => void;
 }) {
   const match = useMatchmaking(auth.user?.id ?? '', instanceId);
+  const { organization } = useApp();
+  const registeredName = organization.data?.account?.displayName;
+  const organized = organization.data?.enabled === true;
   const [name, setName] = useState('');
   const [logoutError, setLogoutError] = useState('');
   const game = match.game;
@@ -80,21 +84,34 @@ export default function MatchLobby({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              void match.join(name);
+              void match.join(organized ? (registeredName ?? '') : name);
             }}
           >
-            <TextField
-              id="match-name"
-              label="表示名"
-              placeholder="例：クイズ太郎"
-              autoComplete="nickname"
-              maxLength={24}
-              required
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-            />
+            {organized ? (
+              <p className="my-4">
+                表示名：{registeredName ?? '未登録'}{' '}
+                <a className="underline" href={PROFILE_PATH}>
+                  マイページで変更
+                </a>
+              </p>
+            ) : (
+              <TextField
+                id="match-name"
+                label="表示名"
+                placeholder="例：クイズ太郎"
+                autoComplete="nickname"
+                maxLength={24}
+                required
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            )}
             <div className="flex flex-wrap gap-3">
-              <Button type="submit" tone="primary" disabled={match.busy}>
+              <Button
+                type="submit"
+                tone="primary"
+                disabled={match.busy || (organized && !registeredName)}
+              >
                 マッチングする
               </Button>
               <Button onClick={match.resume} disabled={match.busy}>

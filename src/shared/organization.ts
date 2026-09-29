@@ -5,7 +5,12 @@ export type OrganizationOverview = {
   enabled: boolean;
   organization?: { id: string; name: string };
   setup?: { subject: string; eligible: boolean };
-  account?: { actorId: string; administrator: boolean };
+  account?: {
+    actorId: string;
+    administrator: boolean;
+    displayName?: string | null;
+    profileRevision?: number;
+  };
   instances: {
     id: string;
     name: string;

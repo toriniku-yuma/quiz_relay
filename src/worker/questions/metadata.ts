@@ -35,7 +35,8 @@ export async function republishQuestionMetadata(
   await db.insert(questionAvailability).values({
     owner,
     questionId: id,
-    retiredAt: row.stopped ? new Date().toISOString() : null,
+    retiredAt:
+      row.stopped || row.reviewHold || row.deletedAt ? new Date().toISOString() : null,
   });
   await db
     .update(questionAvailability)

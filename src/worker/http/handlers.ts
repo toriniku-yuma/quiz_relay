@@ -10,7 +10,10 @@ export const notFound: NotFoundHandler<{ Bindings: Env }> = (c) =>
 
 export const handleError: ErrorHandler<{ Bindings: Env }> = (error, c) => {
   if (error instanceof OrganizationError)
-    return c.json({ code: error.code }, error.status);
+    return c.json(
+      { code: error.code, ...(error.target ? { target: error.target } : {}) },
+      error.status,
+    );
   const correlationId = crypto.randomUUID();
   const operation = c.req.path.startsWith('/api/organization/')
     ? 'organization'

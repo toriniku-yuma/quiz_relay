@@ -9,6 +9,7 @@ export type AuthEnv = {
     actorId: string;
     subject: string;
     displayName: string;
+    profileName: string | null;
     instanceOwner: string;
     instanceId: string;
     organizationId: string;

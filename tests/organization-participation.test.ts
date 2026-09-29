@@ -25,6 +25,9 @@ vi.mock('../src/worker/organization/database', () => ({
   allowedInstanceActors: mocks.allowed,
 }));
 vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
+vi.mock('../src/worker/organization/moderation', () => ({
+  requireUnrestricted: vi.fn(),
+}));
 const runtime = {
   ...env,
   ORGANIZATION_ENABLED: 'true',
@@ -65,7 +68,7 @@ beforeEach(async () => {
   }));
   mocks.resolve.mockImplementation(async (_db, subject) => ({
     organization: { id: org },
-    account: { actorId: subject, administrator: false },
+    account: { actorId: subject, administrator: false, displayName: subject },
     instance: { id, owner, state: 'preparing' },
     permissions: mocks.blocked.has(subject) ? [] : ['questions'],
   }));

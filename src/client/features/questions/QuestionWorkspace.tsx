@@ -1,15 +1,19 @@
 import { useState } from 'react';
-import { exportQuestionJson, parseQuestionJson } from '../../../shared/question-json';
+import { exportQuestionJson } from '../../../shared/question-json';
 import {
   canSubmitQuestion,
-  questionPageSizes,
   type Submission,
   statusLabels,
   validateQuestionInput,
 } from '../../../shared/questions';
 import { navigate } from '../../app/navigation';
 import Button from '../../components/Button';
+import Checkbox from '../../components/Checkbox';
+import DataTable from '../../components/DataTable';
+import IconButton from '../../components/IconButton';
+import Pagination from '../../components/Pagination';
 import TextField from '../../components/TextField';
+import { useTableSelection } from '../../components/useTableSelection';
 import {
   canOpenQuestionPage,
   type QuestionPage,
@@ -20,9 +24,13 @@ import {
   questionPages,
   questionReturnHref,
 } from './pages';
+import QuestionActions from './QuestionActions';
 import QuestionAdministration from './QuestionAdministration';
 import QuestionCategoryRequest from './QuestionCategoryRequest';
+import QuestionClassification from './QuestionClassification';
 import QuestionEditor from './QuestionEditor';
+import QuestionExport from './QuestionExport';
+import QuestionImport from './QuestionImport';
 import QuestionOrganization from './QuestionOrganization';
 import QuestionReports from './QuestionReports';
 import QuestionSelectionSettings from './QuestionSelectionSettings';
@@ -46,7 +54,17 @@ export default function QuestionWorkspace({
     group.pages.some((target) => target === page),
   );
   const listState = questionListState(search);
-  const { query, status, category, page: listPage, pageSize } = listState;
+  const {
+    query,
+    status,
+    category,
+    page: listPage,
+    pageSize,
+    sort,
+    direction,
+    band,
+    players,
+  } = listState;
   function updateList(change: Partial<typeof listState>) {
     if (listing)
       navigate(
@@ -61,6 +79,10 @@ export default function QuestionWorkspace({
         category,
         page: listPage,
         pageSize,
+        sort,
+        direction,
+        band,
+        players,
       })
     : undefined;
   const returnHref = questionReturnHref(search, instanceId);
@@ -76,12 +98,16 @@ export default function QuestionWorkspace({
     true,
     listing
       ? {
+          band,
+          players,
           scope: page === 'mine' ? 'mine' : page === 'pending' ? 'pending' : 'all',
           page: listPage,
           pageSize,
           query,
           status,
           category,
+          sort,
+          direction,
         }
       : undefined,
     !listing && page !== 'management' ? { page, id: selectedId } : undefined,
@@ -98,11 +124,25 @@ export default function QuestionWorkspace({
     | null
   >(null);
   const data = model.data;
-  const resultsReady = !!data && !model.stale && !model.busy && !model.loadFailed;
+  const selection = useTableSelection<Submission>(
+    JSON.stringify([
+      instanceId,
+      data?.actorId,
+      page,
+      query,
+      status,
+      category,
+      band,
+      players,
+    ]),
+  );
+  const [actionRows, setActionRows] = useState<Submission[]>([]),
+    [actionsOpen, setActionsOpen] = useState(false),
+    [exportOpen, setExportOpen] = useState(false),
+    [classificationOpen, setClassificationOpen] = useState(false);
+  const resultsReady =
+    !!data && !model.stale && (model.retaining || (!model.busy && !model.loadFailed));
   const pagination = resultsReady ? data?.pagination : undefined;
-  const currentPage = pagination?.page ?? listPage;
-  const total = pagination?.total ?? 0;
-  const lastPage = Math.max(1, Math.ceil(total / pageSize));
   const selected = data?.submissions.find(
     (row) =>
       row.id === selectedId &&
@@ -140,6 +180,9 @@ export default function QuestionWorkspace({
           (page !== 'pending' || row.status === 'pending'),
       )
     : undefined;
+  const visible = filtered ?? [];
+  const allSelected =
+    visible.length > 0 && visible.every((r) => selection.rows.some((s) => s.id === r.id));
   if (data && !canOpenQuestionPage(page, data))
     return <p role="alert">このページを利用する権限がありません。</p>;
   return (
@@ -248,33 +291,13 @@ export default function QuestionWorkspace({
           </Button>
         </div>
       )}
-      {page === 'import' && (
-        <label className="grid gap-2">
-          JSONを下書きとして取り込む（500問・2MB以内）
-          <input
-            type="file"
-            accept=".json,application/json"
-            disabled={!canSubmit || model.busy}
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-              if (!file) return;
-              try {
-                if (file.size > 2000000)
-                  throw new Error('2MB以内のファイルを選んでください。');
-                const source = await file.text();
-                parseQuestionJson(source);
-                await model.mutate({
-                  operation: 'import',
-                  requestId: crypto.randomUUID(),
-                  source,
-                });
-              } catch (e) {
-                model.setError(e instanceof Error ? e.message : '読み込めませんでした。');
-              }
-              event.target.value = '';
-            }}
-          />
-        </label>
+      {page === 'import' && data && (
+        <QuestionImport
+          instanceId={instanceId}
+          data={data}
+          canSubmit={!!canSubmit}
+          saved={model.refresh}
+        />
       )}
       {listing && (
         <section className="grid gap-4 border border-line p-4">
@@ -313,6 +336,7 @@ export default function QuestionWorkspace({
                     </option>
                   ))}
                   <option value="stopped">使用停止中</option>
+                  <option value="deleted">削除済み</option>
                 </select>
               </label>
             )}
@@ -341,74 +365,225 @@ export default function QuestionWorkspace({
               </select>
             </label>
           </div>
-          <label>
-            1ページの表示件数{' '}
-            <select
-              className="border border-line p-2"
-              value={pageSize}
-              onChange={(e) => {
-                updateList({ pageSize: Number(e.target.value) });
-              }}
-            >
-              {questionPageSizes.map((size) => (
-                <option key={size} value={size}>
-                  {size}件
-                </option>
-              ))}
-            </select>
-          </label>
-          <p role="status">
-            {!resultsReady
-              ? model.loadFailed
+          {!resultsReady && (
+            <p role="status">
+              {model.loadFailed
                 ? '問題一覧を取得できませんでした。'
-                : '問題一覧を読み込んでいます。'
-              : `全${total}件${total ? `中 ${(currentPage - 1) * pageSize + 1}〜${Math.min(currentPage * pageSize, total)}件` : ''}`}
-          </p>
-          <ul
-            className="grid gap-3"
-            aria-busy={model.busy || (!data && !model.loadFailed)}
+                : '問題一覧を読み込んでいます。'}
+            </p>
+          )}
+          {reviewing && data && (
+            <>
+              <div className="flex flex-wrap items-center gap-3">
+                <label>
+                  実力帯
+                  <select
+                    className="m-2 border border-line p-2"
+                    value={band}
+                    onChange={(e) =>
+                      updateList({
+                        band: e.target.value === 'all' ? 'all' : Number(e.target.value),
+                      })
+                    }
+                  >
+                    <option value="all">すべて</option>
+                    {['初級帯', '中級帯', '上級帯'].map((s, i) => (
+                      <option key={s} value={i}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  対戦人数
+                  <select
+                    className="m-2 border border-line p-2"
+                    value={players}
+                    onChange={(e) =>
+                      updateList({
+                        players:
+                          e.target.value === 'all' ? 'all' : Number(e.target.value),
+                      })
+                    }
+                  >
+                    <option value="all">すべて</option>
+                    {[2, 3, 4].map((n) => (
+                      <option key={n} value={n}>
+                        {n}人
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span>選択中 {selection.rows.length}件</span>
+                <Button
+                  disabled={!selection.rows.length}
+                  onClick={() => {
+                    setActionRows(selection.rows);
+                    setActionsOpen(true);
+                  }}
+                >
+                  一括操作
+                </Button>
+                <Button disabled={!selection.rows.length} onClick={selection.clear}>
+                  選択解除
+                </Button>
+                <Button onClick={() => setExportOpen(true)}>問題エクスポート</Button>
+                <Button
+                  disabled={!selection.rows.length}
+                  onClick={() => setClassificationOpen(true)}
+                >
+                  分類用JSON
+                </Button>
+              </div>
+              <QuestionActions
+                rows={actionRows}
+                data={data}
+                instanceId={instanceId}
+                open={actionsOpen}
+                onClose={() => setActionsOpen(false)}
+                saved={async () => {
+                  await model.refresh();
+                  selection.clear();
+                }}
+              />
+              {exportOpen && (
+                <QuestionExport
+                  instanceId={instanceId}
+                  ids={selection.rows.map((r) => r.id)}
+                  onClose={() => setExportOpen(false)}
+                />
+              )}
+              <QuestionClassification
+                open={classificationOpen}
+                onClose={() => setClassificationOpen(false)}
+                data={{ ...data, submissions: selection.rows }}
+                instanceId={instanceId}
+                saved={model.refresh}
+              />
+            </>
+          )}
+          <DataTable
+            selection={
+              reviewing ? (
+                <Checkbox
+                  aria-label="このページの問題をすべて選択"
+                  checked={allSelected}
+                  mixed={
+                    !allSelected &&
+                    visible.some((r) => selection.rows.some((s) => s.id === r.id))
+                  }
+                  onChange={(e) => selection.select(visible, e.target.checked)}
+                />
+              ) : undefined
+            }
+            label="問題一覧"
+            sorting={model.retaining ? model.displaySorting : { sort, direction }}
+            busy={model.busy}
+            onSort={updateList}
+            columns={[
+              { label: '問題文', key: 'text' },
+              { label: '正答・読み', key: 'answer' },
+              { label: '状態', key: 'status' },
+              { label: 'カテゴリ', key: 'category' },
+              { label: '作問者', key: 'author' },
+              { label: '更新日時', key: 'updatedAt', initial: 'desc' },
+              ...(reviewing
+                ? [
+                    { label: '難易度', key: 'difficulty', initial: 'desc' as const },
+                    { label: '更新方式', key: 'fixed', initial: 'desc' as const },
+                    { label: '正答率', key: 'rate', initial: 'desc' as const },
+                    { label: '出題回数', key: 'trials', initial: 'desc' as const },
+                    { label: '未対応通報', key: 'reports', initial: 'desc' as const },
+                    { label: '再審議', key: 'review', initial: 'desc' as const },
+                    '操作',
+                  ]
+                : []),
+            ]}
           >
             {filtered?.map((row) => (
-              <li key={row.id} className="border border-line p-3">
-                <a
-                  className="font-bold underline"
-                  href={href(reviewing ? 'decision' : 'edit', row.id)}
-                >
-                  {row.input.text || '（未入力）'}
-                </a>
-                <p>
-                  {statusLabels[row.status]}
-                  {row.stopped ? '・使用停止中' : ''} ／ {row.input.displayAnswer} ／{' '}
+              <tr key={row.id}>
+                {reviewing && (
+                  <td>
+                    <Checkbox
+                      aria-label={`${row.input.text || '未入力'}を選択`}
+                      checked={selection.rows.some((r) => r.id === row.id)}
+                      onChange={(e) => selection.select([row], e.target.checked)}
+                    />
+                  </td>
+                )}
+                <td className="max-w-sm whitespace-normal">
+                  <a
+                    className="font-bold underline"
+                    href={href(reviewing ? 'decision' : 'edit', row.id)}
+                  >
+                    {row.input.text || '（未入力）'}
+                  </a>
+                </td>
+                <td>
+                  {row.input.displayAnswer}
+                  <br />
                   {row.input.readings.join('・')}
-                </p>
-                {reviewing && <p className="text-muted">{row.input.explanation}</p>}
-              </li>
+                </td>
+                <td>
+                  {statusLabels[row.status]}
+                  {row.deletedAt
+                    ? '・削除済み'
+                    : row.stopped || row.reviewHold
+                      ? '・使用停止中'
+                      : ''}
+                </td>
+                <td>
+                  {data?.categories.find((c) => c.id === row.input.categoryId)?.name ??
+                    '未設定'}
+                </td>
+                <td>
+                  {row.provenance?.author ??
+                    data?.authorNames?.[row.authorId] ??
+                    '表示名未登録'}
+                  {row.provenance && (
+                    <p className="text-xs">出力元：{row.provenance.instance}</p>
+                  )}
+                </td>
+                <td>{new Date(row.updatedAt).toLocaleString()}</td>
+                {reviewing && (
+                  <>
+                    <td>
+                      {
+                        ['初級', '中級', '上級'][
+                          row.metrics?.difficulty ?? row.input.difficulty
+                        ]
+                      }
+                    </td>
+                    <td>{row.metrics?.fixed ? '固定' : '自動'}</td>
+                    <td>
+                      {row.metrics?.rate == null
+                        ? '—'
+                        : `${(row.metrics.rate * 100).toFixed(1)}%`}
+                    </td>
+                    <td>{row.metrics?.trials ?? 0}</td>
+                    <td>{row.metrics?.reports ?? 0}</td>
+                    <td>{row.metrics?.review ? '対象' : '—'}</td>
+                    <td>
+                      <IconButton
+                        icon="wrench"
+                        label={`問題「${row.input.text}」の操作`}
+                        onClick={() => {
+                          setActionRows([row]);
+                          setActionsOpen(true);
+                        }}
+                      />
+                    </td>
+                  </>
+                )}
+              </tr>
             ))}
-          </ul>
-          <nav
-            aria-label="問題一覧のページ移動"
-            className="flex flex-wrap items-center gap-3"
-          >
-            <Button
-              disabled={!resultsReady || !!model.error || currentPage <= 1}
-              onClick={() => {
-                updateList({ page: currentPage - 1 });
-              }}
-            >
-              前へ
-            </Button>
-            <span>
-              {pagination ? `${currentPage} / ${lastPage}ページ` : 'ページ数を確認中'}
-            </span>
-            <Button
-              disabled={!resultsReady || !!model.error || currentPage >= lastPage}
-              onClick={() => {
-                updateList({ page: currentPage + 1 });
-              }}
-            >
-              次へ
-            </Button>
-          </nav>
+          </DataTable>
+          <Pagination
+            value={pagination}
+            pageSize={pageSize}
+            disabled={model.busy || !resultsReady || !!model.error}
+            onChange={updateList}
+          />
         </section>
       )}
       {(creating || (data && selected && (page === 'edit' || page === 'decision'))) && (
@@ -591,25 +766,16 @@ export default function QuestionWorkspace({
           selectedId={selectedId}
         />
       )}
-      {(
-        [
-          'classify',
-          'classificationJson',
-          'difficulty',
-          'tags',
-          'categoryRequests',
-        ] as string[]
-      ).includes(page) &&
-        data?.review && (
-          <QuestionOrganization
-            data={data}
-            busy={model.busy}
-            mutate={model.mutate}
-            page={page}
-            instanceId={instanceId}
-            selectedId={selectedId}
-          />
-        )}
+      {(['tags', 'categoryRequests'] as string[]).includes(page) && data?.review && (
+        <QuestionOrganization
+          data={data}
+          busy={model.busy}
+          mutate={model.mutate}
+          page={page}
+          instanceId={instanceId}
+          selectedId={selectedId}
+        />
+      )}
       {(['qualification', 'authors', 'categories', 'settings'] as string[]).includes(
         page,
       ) &&

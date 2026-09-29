@@ -56,7 +56,7 @@ beforeEach(() => {
 it('Origin・本人認証・JSONサイズを操作前に確認する', async () => {
   expect((await request({}, { Origin: 'https://other.test' })).status).toBe(403);
   expect((await request({}, { Authorization: '' })).status).toBe(401);
-  expect((await request('x'.repeat(2010001))).status).toBe(413);
+  expect((await request('x'.repeat(5000001))).status).toBe(413);
   expect(mocks.mutate).not.toHaveBeenCalled();
 });
 it('画面別取得条件を検証済み本人情報とともに渡す', async () => {
@@ -68,6 +68,7 @@ it('画面別取得条件を検証済み本人情報とともに渡す', async (
     instance,
     undefined,
     view,
+    expect.any(Function),
   );
   expect(mocks.close).toHaveBeenCalled();
 });

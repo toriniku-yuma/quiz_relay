@@ -1,4 +1,5 @@
 import { and, asc, eq, exists, gt, inArray, or, sql } from 'drizzle-orm';
+import { blocks } from '../../shared/moderation.ts';
 import {
   type InstancePermission,
   instancePermissions,
@@ -10,6 +11,7 @@ import {
   organizationAccounts as accounts,
   instanceGrants as grants,
   instances,
+  moderationSanctions,
   organizationEvents,
   organizations,
 } from '../db/schema.ts';
@@ -143,7 +145,12 @@ export async function overview(
   return {
     enabled: true,
     organization: { id: organization.id, name: organization.name },
-    account: { actorId: account.actorId, administrator: account.administrator },
+    account: {
+      actorId: account.actorId,
+      administrator: account.administrator,
+      displayName: account.displayName,
+      profileRevision: account.profileRevision,
+    },
     instances: all
       .map((instance) => ({
         id: instance.id,
@@ -324,6 +331,7 @@ export async function setInstanceGrants(
         and(eq(accounts.actorId, actorId), eq(accounts.organizationId, organization.id)),
       );
     if (!instance || !target) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
+    requireAdministrator((await organizationIdentity(tx, subject)).account);
     const previous = await tx
       .select({ permission: grants.permission })
       .from(grants)
@@ -446,7 +454,23 @@ export async function allowedInstanceActors(
           ),
         ),
       );
-    return rows.map((row) => row.actorId);
+    const restrictions = await db
+      .select()
+      .from(moderationSanctions)
+      .where(
+        and(
+          inArray(moderationSanctions.actorId, actors),
+          or(
+            eq(moderationSanctions.instanceId, scope.id),
+            sql`${moderationSanctions.instanceId} IS NULL`,
+          ),
+        ),
+      );
+    return rows
+      .map((row) => row.actorId)
+      .filter(
+        (id) => !restrictions.some((row) => row.actorId === id && blocks(row, 'ranked')),
+      );
   } finally {
     await close();
   }

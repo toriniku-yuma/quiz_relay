@@ -1,6 +1,18 @@
-import { and, asc, count, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { parseQuestionJson } from '../../shared/question-json.ts';
+import { parseTransfer, type TransferQuestion } from '../../shared/question-transfer.ts';
 import {
   canReviewQuestion,
   canSubmitQuestion,
@@ -17,6 +29,7 @@ import {
   submissionModes,
   validateQuestionInput,
 } from '../../shared/questions.ts';
+import { compareValues, questionSortKeys, sortInput } from '../../shared/sorting.ts';
 import { contentHash } from '../catalog/hash.ts';
 import {
   questionAuthors as authors,
@@ -25,6 +38,7 @@ import {
   questionDifficulty as difficulty,
   questionSubmissionEvents as events,
   questionImports as imports,
+  moderationRequests,
   questionNotifications as notifications,
   organizationAccounts,
   questionAvailability,
@@ -34,6 +48,7 @@ import {
   questionSubmissions as submissions,
   questionTags as tags,
 } from '../db/schema.ts';
+import { orderValue } from '../db/sorting.ts';
 import { dummyCharacters } from '../game/questions.ts';
 import {
   OrganizationError,
@@ -41,9 +56,11 @@ import {
   validId,
 } from '../organization/access.ts';
 import { resolveInstance } from '../organization/database.ts';
+import { requireUnrestricted } from '../organization/moderation.ts';
 import type { ResultRecord } from '../results/record';
 import { publishQuestionCatalog } from './catalog.ts';
 import { republishQuestionMetadata } from './metadata.ts';
+import { questionStatistics } from './statistics.ts';
 
 type Database = Pick<
   PostgresJsDatabase,
@@ -128,10 +145,25 @@ function listQuery(value: unknown): QuestionListQuery | undefined {
     input.query.length > 150 ||
     typeof input.category !== 'string' ||
     typeof input.status !== 'string' ||
-    !['', 'stopped', ...Object.keys(statusLabels)].includes(input.status)
+    !['', 'stopped', 'deleted', ...Object.keys(statusLabels)].includes(input.status)
   )
     fail('INVALID_QUERY', 400);
+  try {
+    sortInput(input, questionSortKeys, 'updatedAt');
+  } catch {
+    fail('INVALID_QUERY', 400);
+  }
   if (input.category) validId(input.category);
+  if (
+    input.band !== undefined &&
+    !['all', 0, 1, 2].includes(input.band as string | number)
+  )
+    fail('INVALID_QUERY', 400);
+  if (
+    input.players !== undefined &&
+    !['all', 2, 3, 4].includes(input.players as string | number)
+  )
+    fail('INVALID_QUERY', 400);
   return { ...input, query: normalizeTag(input.query as string) } as QuestionListQuery;
 }
 
@@ -141,25 +173,19 @@ async function readQuestionOverview(
   instanceId: string,
   list?: QuestionListQuery,
   view?: QuestionView,
+  readRecords?: (owner: string) => Promise<ResultRecord[]>,
 ): Promise<QuestionOverview> {
   const ctx = await context(db, subject, instanceId);
   if (list && list.scope !== 'mine' && !ctx.review) fail('REVIEW_FORBIDDEN');
   const needs = (...pages: QuestionView['page'][]) =>
     (!view && !list) || (!!view && pages.includes(view.page));
   if (view) {
-    if (['categories', 'settings', 'selection', 'difficulty'].includes(view.page))
+    if (['categories', 'settings', 'selection'].includes(view.page))
       requireAdministrator(ctx.account);
     else if (view.page === 'authors') {
       if (!ctx.manageAuthors) fail('REVIEW_FORBIDDEN');
     } else if (
-      [
-        'decision',
-        'reports',
-        'categoryRequests',
-        'classify',
-        'classificationJson',
-        'tags',
-      ].includes(view.page) &&
+      ['decision', 'reports', 'categoryRequests', 'tags'].includes(view.page) &&
       !ctx.review
     )
       fail('REVIEW_FORBIDDEN');
@@ -185,6 +211,11 @@ async function readQuestionOverview(
   const scope = and(
     eq(submissions.instanceId, instanceId),
     detail ? eq(submissions.id, view.id as string) : undefined,
+    detail
+      ? undefined
+      : list?.status === 'deleted'
+        ? isNotNull(submissions.deletedAt)
+        : isNull(submissions.deletedAt),
     !ctx.review ||
       list?.scope === 'mine' ||
       view?.page === 'edit' ||
@@ -194,8 +225,8 @@ async function readQuestionOverview(
     list?.scope === 'pending'
       ? eq(submissions.status, 'pending')
       : list?.status === 'stopped'
-        ? eq(submissions.stopped, true)
-        : list?.status
+        ? or(eq(submissions.stopped, true), eq(submissions.reviewHold, true))
+        : list?.status && list.status !== 'deleted'
           ? eq(submissions.status, list.status as keyof typeof statusLabels)
           : undefined,
     list?.category
@@ -217,24 +248,116 @@ async function readQuestionOverview(
   const page = list
     ? Math.min(list.page, Math.max(1, Math.ceil(total / list.pageSize)))
     : 1;
+  const sorting = sortInput(list ?? {}, questionSortKeys, 'updatedAt');
+  const sortValues = {
+    text: sql`nullif(${submissions.input}->>'text', '')`,
+    answer: sql`nullif(${submissions.input}->>'displayAnswer', '')`,
+    status: sql`(${JSON.stringify(statusLabels)}::jsonb ->> ${submissions.status}) || case when ${submissions.stopped} then '・使用停止中' else '' end`,
+    category: sql`(select name from quiz_game.question_categories where id::text = ${submissions.input}->>'categoryId' and instance_id = ${instanceId})`,
+    author: sql`coalesce(${submissions.provenance}->>'author', (select display_name from quiz_game.organization_accounts where actor_id = ${submissions.authorId}))`,
+    updatedAt: submissions.updatedAt,
+  };
+  const metricSort = [
+    'rate',
+    'trials',
+    'difficulty',
+    'fixed',
+    'reports',
+    'review',
+  ].includes(sorting.sort);
   const query = db
     .select()
     .from(submissions)
     .where(scope)
-    .orderBy(desc(submissions.updatedAt), desc(submissions.id))
+    .orderBy(
+      orderValue(
+        sortValues[sorting.sort as keyof typeof sortValues] ?? submissions.updatedAt,
+        sorting.direction,
+      ),
+      desc(submissions.id),
+    )
     .$dynamic();
-  const rows = list
-    ? await query.limit(list.pageSize).offset((page - 1) * list.pageSize)
-    : detail ||
-        needs(
-          'reports',
-          'categoryRequests',
-          'classify',
-          'classificationJson',
-          'difficulty',
-        )
+  let rows = list
+    ? metricSort
+      ? await query
+      : await query.limit(list.pageSize).offset((page - 1) * list.pageSize)
+    : detail || needs('reports', 'categoryRequests')
       ? await query
       : [];
+  const levels =
+    ctx.review && (list || needs())
+      ? await db.select().from(difficulty).where(eq(difficulty.instanceId, instanceId))
+      : [];
+  if (levels.length && readRecords) {
+    const records = await readRecords(ctx.instance.owner);
+    for (const level of levels)
+      level.stats = questionStatistics(records, level.generation);
+  }
+  const reviewCases =
+    ctx.review && (list || needs('reports'))
+      ? await db.select().from(cases).where(eq(cases.instanceId, instanceId))
+      : [];
+  const metrics = new Map<
+    string,
+    NonNullable<QuestionOverview['submissions'][number]['metrics']>
+  >();
+  if (list && ctx.review) {
+    const versions = await db
+      .select({
+        id: questionVersions.questionId,
+        series: sql<string>`${questionVersions.payload}->>'seriesId'`,
+      })
+      .from(questionVersions)
+      .where(eq(questionVersions.owner, ctx.instance.owner));
+    for (const row of rows) {
+      const level = levels.find((l) => l.seriesId === row.seriesId);
+      const stats = (level?.stats ?? []).filter(
+        (s) =>
+          (list.band === undefined || list.band === 'all' || s.band === list.band) &&
+          (list.players === undefined ||
+            list.players === 'all' ||
+            s.players === list.players),
+      );
+      const trials = stats.reduce((n, s) => n + s.trials, 0),
+        correct = stats.reduce((n, s) => n + s.correct, 0);
+      const pending = reviewCases.filter(
+        (c) =>
+          !c.resolved &&
+          (c.questionId === row.publishedId ||
+            versions.some((v) => v.id === c.questionId && v.series === row.seriesId)),
+      );
+      metrics.set(row.id, {
+        rate: trials ? correct / trials : null,
+        trials,
+        difficulty: level?.current ?? row.input.difficulty,
+        fixed: level?.fixed ?? false,
+        reports: pending.reduce((n, c) => n + c.count, 0),
+        review: pending.some(
+          (c) =>
+            c.count >=
+            (c.kind === 'defect'
+              ? ctx.config.reportThreshold
+              : ctx.config.categoryReportThreshold),
+        ),
+      });
+    }
+    if (metricSort)
+      rows = rows
+        .sort((a, b) => {
+          const key = sorting.sort as keyof NonNullable<
+            QuestionOverview['submissions'][number]['metrics']
+          >;
+          const value = (r: typeof a) => {
+            const v = metrics.get(r.id)?.[key] ?? null;
+            return typeof v === 'boolean' ? Number(v) : v;
+          };
+          return (
+            compareValues(value(a), value(b), sorting.direction) ||
+            b.id.localeCompare(a.id)
+          );
+        })
+        .slice((page - 1) * list.pageSize, page * list.pageSize);
+  }
   const categoryEvents =
     rows.length && needs('categoryRequest', 'categoryRequests')
       ? await db
@@ -262,6 +385,23 @@ async function readQuestionOverview(
     if (!latestCategory.has(event.submissionId))
       latestCategory.set(event.submissionId, event);
   return {
+    authorNames: Object.fromEntries(
+      (rows.length
+        ? await db
+            .select({
+              id: organizationAccounts.actorId,
+              name: organizationAccounts.displayName,
+            })
+            .from(organizationAccounts)
+            .where(
+              inArray(
+                organizationAccounts.actorId,
+                rows.map((r) => r.authorId),
+              ),
+            )
+        : []
+      ).map((r) => [r.id, r.name ?? '表示名未登録']),
+    ),
     ...(list ? { pagination: { page, pageSize: list.pageSize, total } } : {}),
     categoryRequests: [...latestCategory.values()]
       .filter((event) => event.action === 'category-request')
@@ -277,29 +417,21 @@ async function readQuestionOverview(
     qualified: ctx.author?.status === 'qualified',
     settings: ctx.config,
     settingsRevision: ctx.configuration?.revision ?? 0,
-    reviewCases:
-      ctx.review && needs('reports')
-        ? await db.select().from(cases).where(eq(cases.instanceId, instanceId))
-        : [],
+    reviewCases,
     reports:
       ctx.review && needs('reports')
         ? await db.select().from(reports).where(eq(reports.instanceId, instanceId))
         : [],
-    difficulty:
-      ctx.review && needs('difficulty', 'classify', 'classificationJson')
-        ? await db.select().from(difficulty).where(eq(difficulty.instanceId, instanceId))
-        : [],
-    submissions: rows,
+    difficulty: levels,
+    submissions: rows.map((row) => ({ ...row, metrics: metrics.get(row.id) })),
     categories:
       list ||
       needs(
         'new',
+        'import',
         'edit',
         'categoryRequest',
         'categoryRequests',
-        'classify',
-        'classificationJson',
-        'difficulty',
         'categories',
         'selection',
       )
@@ -344,6 +476,7 @@ export async function questionOverview(
   instanceId: string,
   input?: unknown,
   viewInput?: unknown,
+  readRecords?: (owner: string) => Promise<ResultRecord[]>,
 ): Promise<QuestionOverview> {
   const list = listQuery(input);
   let view: QuestionView | undefined;
@@ -363,7 +496,7 @@ export async function questionOverview(
     view = value as QuestionView;
   }
   return db.transaction((tx) =>
-    readQuestionOverview(tx, subject, instanceId, list, view),
+    readQuestionOverview(tx, subject, instanceId, list, view, readRecords),
   );
 }
 
@@ -483,7 +616,8 @@ async function publish(
   await db.insert(questionAvailability).values({
     owner,
     questionId: id,
-    retiredAt: row.stopped ? new Date().toISOString() : null,
+    retiredAt:
+      row.stopped || row.reviewHold || row.deletedAt ? new Date().toISOString() : null,
   });
   if (row.publishedId)
     await db
@@ -552,13 +686,48 @@ export async function questionMutation(
       sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${instanceId}`}, 0))`,
     );
     const ctx = await context(tx, subject, instanceId);
+    authorName = ctx.account.displayName ?? authorName;
     // Transaction-local RLS scope is derived from the authenticated account, not the request.
     await tx.execute(
       sql`select set_config('quiz.organization_id', ${ctx.organization.id}, true)`,
     );
     const actorId = ctx.account.actorId;
     const operation = input.operation;
+    if (operation === 'submit' && !ctx.account.displayName) fail('PROFILE_REQUIRED', 409);
+    if (operation === 'submit')
+      await requireUnrestricted(tx, ctx.organization.id, actorId, instanceId, 'submit');
     const scope = eq(submissions.instanceId, instanceId);
+    if (operation === 'export-managed') {
+      if (!ctx.review) fail('REVIEW_FORBIDDEN');
+      const ids = input.ids;
+      if (input.all !== true && (!Array.isArray(ids) || !ids.length))
+        fail('INVALID_CHANGES', 400);
+      const rows = await tx
+        .select()
+        .from(submissions)
+        .where(
+          and(
+            scope,
+            input.all === true
+              ? and(eq(submissions.status, 'approved'), isNull(submissions.deletedAt))
+              : inArray(submissions.id, (ids as unknown[]).map(validId)),
+          ),
+        )
+        .orderBy(asc(submissions.id));
+      if (input.all !== true && rows.length !== new Set(ids as string[]).size)
+        fail('QUESTION_NOT_FOUND', 404);
+      const categoryRows = await tx
+        .select()
+        .from(categories)
+        .where(eq(categories.instanceId, instanceId));
+      const questions: TransferQuestion[] = rows.map((r) => ({
+        input: r.input,
+        category: categoryRows.find((c) => c.id === r.input.categoryId)?.name ?? '',
+        stopped: r.stopped || r.reviewHold,
+        provenance: r.provenance ?? { author: r.authorName, instance: ctx.instance.name },
+      }));
+      return { questions };
+    }
     if (operation === 'report') {
       if (!observedQuestion || observedQuestion.id !== input.questionId)
         throw new QuestionError('QUESTION_NOT_FOUND', 404);
@@ -717,6 +886,182 @@ export async function questionMutation(
       !ctx.permissions.length
     )
       fail('INSTANCE_PREPARING');
+    if (operation === 'import-transfer') {
+      if (
+        !canSubmitQuestion(
+          ctx.config.mode,
+          ctx.account.administrator,
+          ctx.author?.status === 'qualified',
+        )
+      )
+        fail('SUBMISSION_FORBIDDEN');
+      const requestId = validId(input.requestId),
+        hash = await contentHash({ instanceId, input });
+      const [receipt] = await tx
+        .select()
+        .from(moderationRequests)
+        .where(eq(moderationRequests.id, requestId));
+      if (receipt) {
+        if (receipt.operatorId !== actorId || receipt.requestHash !== hash)
+          fail('EDIT_CONFLICT', 409);
+        return { ok: true };
+      }
+      let portable: TransferQuestion[];
+      try {
+        portable = parseTransfer(String(input.source));
+      } catch (e) {
+        throw new QuestionError('INVALID_IMPORT', 400, [
+          { path: 'JSON', message: (e as Error).message },
+        ]);
+      }
+      if (
+        !input.mapping ||
+        typeof input.mapping !== 'object' ||
+        Array.isArray(input.mapping)
+      )
+        fail('INVALID_CATEGORY', 400);
+      const mapping = input.mapping as Record<string, { id?: string; name?: string }>;
+      const mapped = new Map<string, string>();
+      for (const name of new Set(portable.map((r) => r.category))) {
+        const dest = mapping[name];
+        if (!dest) fail('INVALID_CATEGORY', 400);
+        if (dest.name) {
+          requireAdministrator(ctx.account);
+          const created = await questionMutation(
+            tx,
+            subject,
+            instanceId,
+            { operation: 'category', name: dest.name },
+            profile,
+          );
+          const [category] = await tx
+            .select()
+            .from(categories)
+            .where(
+              and(
+                eq(categories.instanceId, instanceId),
+                eq(categories.name, dest.name.trim()),
+              ),
+            );
+          if (!created || !category) fail('INVALID_CATEGORY', 400);
+          mapped.set(name, category.id);
+        } else {
+          const [category] = await tx
+            .select()
+            .from(categories)
+            .where(
+              and(
+                eq(categories.instanceId, instanceId),
+                eq(categories.id, validId(dest.id)),
+                eq(categories.active, true),
+              ),
+            );
+          if (!category) fail('INVALID_CATEGORY', 400);
+          mapped.set(name, category.id);
+        }
+      }
+      for (const row of portable) {
+        const id = crypto.randomUUID();
+        const value = await checkedInput(
+          tx,
+          instanceId,
+          { ...row.input, categoryId: mapped.get(row.category) },
+          false,
+        );
+        const [saved] = await tx
+          .insert(submissions)
+          .values({
+            id,
+            instanceId,
+            seriesId: id,
+            authorId: actorId,
+            authorName: row.provenance.author,
+            provenance: row.provenance,
+            stopped: row.stopped,
+            input: value,
+          })
+          .returning();
+        await audit(tx, saved, actorId, 'import');
+      }
+      await tx.insert(moderationRequests).values({
+        id: requestId,
+        organizationId: ctx.organization.id,
+        operatorId: actorId,
+        requestHash: hash,
+        details: { instanceId, operation },
+      });
+      return { ok: true };
+    }
+    if (operation === 'bulk') {
+      if (!ctx.review) fail('REVIEW_FORBIDDEN');
+      const requestId = validId(input.requestId),
+        hash = await contentHash({ instanceId, input });
+      const [previous] = await tx
+        .select()
+        .from(moderationRequests)
+        .where(eq(moderationRequests.id, requestId));
+      if (previous) {
+        if (previous.operatorId !== actorId || previous.requestHash !== hash)
+          fail('EDIT_CONFLICT', 409);
+        return { ok: true };
+      }
+      if (
+        ![
+          'classify',
+          'difficulty',
+          'stop',
+          'resume',
+          'return',
+          'delete',
+          'restore',
+          'approve',
+          'reject',
+        ].includes(String(input.action)) ||
+        !Array.isArray(input.changes) ||
+        !input.changes.length ||
+        input.changes.length > 500
+      )
+        fail('INVALID_CHANGES', 400);
+      if (
+        ['approve', 'reject'].includes(String(input.action)) &&
+        (input.changes as unknown[]).length !== 1
+      )
+        fail('INVALID_CHANGES', 400);
+      const changes = input.changes as { id: string; revision: number }[];
+      if (new Set(changes.map((r) => r.id)).size !== changes.length)
+        fail('DUPLICATE_QUESTION', 400);
+      for (const change of changes) {
+        try {
+          await questionMutation(
+            tx,
+            subject,
+            instanceId,
+            { ...input, ...change, operation: input.action, changes: [change] },
+            profile,
+          );
+        } catch (error) {
+          if (error instanceof QuestionError) {
+            const [target] = await tx
+              .select()
+              .from(submissions)
+              .where(and(scope, eq(submissions.id, validId(change.id))));
+            error.issues.push({
+              path: target?.input.text || '選択した問題',
+              message: error.code,
+            });
+          }
+          throw error;
+        }
+      }
+      await tx.insert(moderationRequests).values({
+        id: requestId,
+        organizationId: ctx.organization.id,
+        operatorId: actorId,
+        requestHash: hash,
+        details: { instanceId, action: input.action, ids: changes.map((r) => r.id) },
+      });
+      return { ok: true };
+    }
     if (operation === 'category') {
       requireAdministrator(ctx.account);
       const name = typeof input.name === 'string' ? input.name.trim() : '';
@@ -796,6 +1141,7 @@ export async function questionMutation(
         (operation === 'request-category' ? row.authorId !== actorId : !ctx.review)
       )
         fail('QUESTION_NOT_FOUND', 404);
+      if (row.deletedAt) fail('QUESTION_DELETED', 409);
       if (row.revision !== input.revision) fail('EDIT_CONFLICT', 409);
       const reason = reasonFor(input, operation === 'reject-category');
       if (operation === 'request-category') {
@@ -852,6 +1198,7 @@ export async function questionMutation(
           .from(submissions)
           .where(and(scope, eq(submissions.id, validId(change.id))));
         if (!row) fail('QUESTION_NOT_FOUND', 404);
+        if (row.deletedAt) fail('QUESTION_DELETED', 409);
         if (row.revision !== change.revision) fail('EDIT_CONFLICT', 409);
         let value = row.input;
         if (operation === 'classify') {
@@ -880,20 +1227,23 @@ export async function questionMutation(
           await republishQuestionMetadata(tx, ctx.instance.owner, row, {
             difficulty: value.difficulty,
           });
+          const settings = {
+            current: value.difficulty,
+            fixed: change.fixed,
+            reason: reasonFor(input),
+          };
           await tx
-            .update(difficulty)
-            .set({
-              current: value.difficulty,
-              fixed: change.fixed,
-              revision: sql`${difficulty.revision} + 1`,
-              reason: reasonFor(input),
+            .insert(difficulty)
+            .values({
+              instanceId,
+              seriesId: row.seriesId,
+              generation: row.seriesId,
+              ...settings,
             })
-            .where(
-              and(
-                eq(difficulty.instanceId, instanceId),
-                eq(difficulty.seriesId, row.seriesId),
-              ),
-            );
+            .onConflictDoUpdate({
+              target: [difficulty.instanceId, difficulty.seriesId],
+              set: { ...settings, revision: sql`${difficulty.revision} + 1` },
+            });
         }
         const [updated] = await tx
           .update(submissions)
@@ -1090,7 +1440,13 @@ export async function questionMutation(
       const rows = await tx
         .select()
         .from(submissions)
-        .where(and(scope, inArray(submissions.status, ['pending', 'returned'])));
+        .where(
+          and(
+            scope,
+            isNull(submissions.deletedAt),
+            inArray(submissions.status, ['pending', 'returned']),
+          ),
+        );
       for (const row of rows) {
         const [author] = await tx
           .select()
@@ -1125,10 +1481,15 @@ export async function questionMutation(
           });
         } else if (config.mode === 'open' && row.status === 'pending') {
           await checkedInput(tx, instanceId, row.input, true);
-          const publishedId = await publish(tx, ctx, row);
+          const publishedId = await publish(tx, ctx, { ...row, reviewHold: false });
           const [updated] = await tx
             .update(submissions)
-            .set({ status: 'approved', publishedId, revision: row.revision + 1 })
+            .set({
+              status: 'approved',
+              reviewHold: false,
+              publishedId,
+              revision: row.revision + 1,
+            })
             .where(eq(submissions.id, row.id))
             .returning();
           await audit(tx, updated, actorId, 'automatic-approval');
@@ -1261,6 +1622,7 @@ export async function questionMutation(
       if (!row) fail('QUESTION_NOT_FOUND', 404);
       if (
         row.revision !== input.revision ||
+        row.deletedAt ||
         row.status === 'pending' ||
         row.status === 'rejected'
       )
@@ -1286,6 +1648,7 @@ export async function questionMutation(
     if (!row || (!ctx.review && row.authorId !== actorId))
       fail('QUESTION_NOT_FOUND', 404);
     if (row.revision !== input.revision) fail('EDIT_CONFLICT', 409);
+    if (row.deletedAt && operation !== 'restore') fail('QUESTION_DELETED', 409);
     const patch: Partial<typeof submissions.$inferInsert> = {
       revision: row.revision + 1,
       updatedAt: new Date().toISOString(),
@@ -1305,7 +1668,10 @@ export async function questionMutation(
       await checkedInput(tx, instanceId, row.input, true);
       patch.status = ctx.config.mode === 'open' ? 'approved' : 'pending';
       patch.reason = '';
-      if (patch.status === 'approved') patch.publishedId = await publish(tx, ctx, row);
+      if (patch.status === 'approved') {
+        patch.reviewHold = false;
+        patch.publishedId = await publish(tx, ctx, { ...row, reviewHold: false });
+      }
     } else if (operation === 'withdraw') {
       if (row.authorId !== actorId) fail('SUBMISSION_FORBIDDEN');
       if (row.status !== 'pending') fail('EDIT_CONFLICT', 409);
@@ -1319,7 +1685,8 @@ export async function questionMutation(
         !canReviewQuestion(ctx.account.administrator, ctx.review, row.authorId, actorId)
       )
         fail('REVIEW_FORBIDDEN');
-      if (row.status !== 'pending') fail('EDIT_CONFLICT', 409);
+      if (row.status !== 'pending' && !(operation === 'return' && row.publishedId))
+        fail('EDIT_CONFLICT', 409);
       const [author] = await tx
         .select()
         .from(authors)
@@ -1347,7 +1714,21 @@ export async function questionMutation(
             : 'rejected';
       if (operation === 'approve') {
         await checkedInput(tx, instanceId, row.input, true);
-        patch.publishedId = await publish(tx, ctx, row);
+        patch.reviewHold = false;
+        patch.publishedId = await publish(tx, ctx, { ...row, reviewHold: false });
+      }
+      if (operation === 'return') {
+        patch.reviewHold = true;
+        if (row.publishedId)
+          await tx
+            .update(questionAvailability)
+            .set({ retiredAt: new Date().toISOString() })
+            .where(
+              and(
+                eq(questionAvailability.owner, ctx.instance.owner),
+                eq(questionAvailability.questionId, row.publishedId),
+              ),
+            );
       }
       await notify(
         tx,
@@ -1356,6 +1737,25 @@ export async function questionMutation(
         `問題「${row.input.text}」：${operation === 'approve' ? '承認' : operation === 'return' ? '差戻し' : '却下'}。${patch.reason}`,
         { page: 'edit', id: row.id },
       );
+    } else if (operation === 'delete' || operation === 'restore') {
+      if (!ctx.review) fail('REVIEW_FORBIDDEN');
+      if (operation === 'restore' && !row.deletedAt) fail('EDIT_CONFLICT', 409);
+      patch.deletedAt = operation === 'delete' ? new Date().toISOString() : null;
+      patch.reason = reasonFor(input);
+      if (row.publishedId)
+        await tx
+          .update(questionAvailability)
+          .set({
+            retiredAt:
+              patch.deletedAt ||
+              (row.stopped || row.reviewHold ? new Date().toISOString() : null),
+          })
+          .where(
+            and(
+              eq(questionAvailability.owner, ctx.instance.owner),
+              eq(questionAvailability.questionId, row.publishedId),
+            ),
+          );
     } else if (operation === 'stop' || operation === 'resume') {
       if (!ctx.review) fail('REVIEW_FORBIDDEN');
       patch.stopped = operation === 'stop';
@@ -1363,7 +1763,9 @@ export async function questionMutation(
       if (row.publishedId)
         await tx
           .update(questionAvailability)
-          .set({ retiredAt: patch.stopped ? new Date().toISOString() : null })
+          .set({
+            retiredAt: patch.stopped || row.reviewHold ? new Date().toISOString() : null,
+          })
           .where(
             and(
               eq(questionAvailability.owner, ctx.instance.owner),
@@ -1377,7 +1779,10 @@ export async function questionMutation(
       .where(eq(submissions.id, row.id))
       .returning();
     await audit(tx, updated, actorId, String(operation));
-    if (patch.publishedId || operation === 'stop' || operation === 'resume')
+    if (
+      patch.publishedId ||
+      ['stop', 'resume', 'return', 'delete', 'restore'].includes(String(operation))
+    )
       await publishQuestionCatalog(tx, instanceId, ctx.instance.owner, profile);
     return { id: row.id };
   });

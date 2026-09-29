@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import matchmaking from '../../../../config/matchmaking.json';
 import Button from '../../components/Button';
+import Checkbox from '../../components/Checkbox';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
 import type { Game } from './useGame';
@@ -76,14 +77,13 @@ export default function JoinGame({ game }: { game: Game }) {
           />
         </div>
 
-        <TextField
-          id="show-selections"
-          label="回答者が選んだ文字を全員に表示する（試合共通）"
-          type="checkbox"
-          checked={showSelections}
-          onChange={(event) => setShowSelections(event.target.checked)}
-          className="size-5 accent-accent"
-        />
+        <label className="flex items-center gap-2">
+          <Checkbox
+            checked={showSelections}
+            onChange={(event) => setShowSelections(event.target.checked)}
+          />
+          回答者が選んだ文字を全員に表示する（試合共通）
+        </label>
 
         <Button type="submit" tone="primary" disabled={game.connection === 'connecting'}>
           参加する

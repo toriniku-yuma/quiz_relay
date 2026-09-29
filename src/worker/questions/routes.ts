@@ -9,7 +9,8 @@ questions.use('/api/questions/*', sameOrigin);
 questions.use(
   '/api/questions/*',
   bodyLimit({
-    maxSize: 2010000,
+    // The 2 MB JSON file is escaped inside a JSON request; category mapping adds overhead.
+    maxSize: 5000000,
     onError: (c) => c.json({ code: 'IMPORT_TOO_LARGE' }, 413),
   }),
 );

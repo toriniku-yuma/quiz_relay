@@ -4,6 +4,7 @@ import type { State } from '../game/state';
 import { type MatchKind, ratingChange, ratingPolicy } from './rating';
 
 export type ResultRecord = {
+  answerStats?: State['answerStats'];
   startingRatings?: Record<string, number>;
   completedQuestions?: State['completedQuestions'];
   version: 1;
@@ -27,6 +28,7 @@ export function makeResultRecord(
     players: Player[];
     completedQuestions?: State['completedQuestions'];
     startingRatings?: Record<string, number>;
+    answerStats?: State['answerStats'];
   },
   result: Result,
 ): ResultRecord | undefined {
@@ -42,6 +44,7 @@ export function makeResultRecord(
   return structuredClone({
     ...(state.startingRatings ? { startingRatings: state.startingRatings } : {}),
     ...(state.completedQuestions ? { completedQuestions: state.completedQuestions } : {}),
+    ...(state.answerStats ? { answerStats: state.answerStats } : {}),
     version: 1,
     owner: state.definition.competition.owner,
     matchId: state.matchId,

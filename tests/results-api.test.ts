@@ -55,6 +55,7 @@ it('履歴のactor・開催元をクライアント入力で変更できない',
     {},
     runtime.GAME_OWNER,
     await contentHash({ home: runtime.GAME_OWNER, subject: 'self' }),
+    [],
   );
 });
 it('DB停止は503。秘密やDB例外を応答へ出さない', async () => {

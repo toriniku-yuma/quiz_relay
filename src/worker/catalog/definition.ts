@@ -1,3 +1,4 @@
+import { normalizeDisplayName } from '../../shared/profile.ts';
 import { type QuestionSelection, readingIssues } from '../../shared/questions.ts';
 import { graphemes, type Question } from '../game/questions.ts';
 import { type Rules, validateRules } from '../game/rules.ts';
@@ -80,7 +81,9 @@ export async function validateDefinition(value: unknown): Promise<MatchDefinitio
       Number(selection.revision) < 0 ||
       (selection.authorNames !== undefined &&
         (!record(selection.authorNames) ||
-          Object.values(selection.authorNames).some((name) => !text(name, 80))))
+          Object.values(selection.authorNames).some(
+            (name) => !text(name, 80) && normalizeDisplayName(name) === undefined,
+          )))
     )
       throw new Error('INVALID_DEFINITION');
   }

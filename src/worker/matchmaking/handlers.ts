@@ -4,6 +4,7 @@ import type { AuthEnv } from '../auth/handlers';
 import { loadMatchDefinition } from '../catalog/database';
 import { OrganizationError, organizationEnabled } from '../organization/access';
 import { organizationDatabase, organizationIdentity } from '../organization/database';
+import { requireUnrestricted } from '../organization/moderation';
 
 const roomId = (value: unknown): value is string =>
   typeof value === 'string' &&
@@ -39,18 +40,35 @@ export const enterMatch: Handler<AuthEnv> = async (c) => {
     return c.json({ code: 'INVALID_SETUP' }, 400);
   const value = body as Record<string, unknown>;
   const resume = c.req.path.endsWith('/resume');
+  const organized = organizationEnabled(c.env);
+  const name = organized ? c.get('profileName') : value.name;
+  if (!resume && organized && !name) return c.json({ code: 'PROFILE_REQUIRED' }, 409);
   if (
     (!resume &&
       (Object.keys(value).join(',') !== 'name' ||
         typeof value.name !== 'string' ||
         !value.name.trim() ||
-        value.name.length > 24)) ||
+        (!organized && value.name.length > 24))) ||
     (resume && Object.keys(value).length !== 0)
   )
     return c.json({ code: 'INVALID_SETUP' }, 400);
+  if (!resume && organized) {
+    const connection = organizationDatabase(c.env);
+    try {
+      await requireUnrestricted(
+        connection.db,
+        c.get('organizationId'),
+        c.get('actorId'),
+        c.get('instanceId'),
+        'ranked',
+      );
+    } finally {
+      await connection.close();
+    }
+  }
   const result = await c.env.MATCHMAKER.getByName(c.get('organizationId')).enter(
     c.get('actorId'),
-    resume ? '' : String(value.name).trim(),
+    resume ? '' : String(name).trim(),
     undefined,
     resume,
     c.get('instanceId')

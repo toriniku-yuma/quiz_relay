@@ -41,7 +41,12 @@ export function useResults(refreshKey: string, instanceId = '') {
   useEffect(() => {
     if (!refreshKey) return;
     void refresh();
-    return () => activeRequest.current?.abort();
+    const onProfile = () => void refresh();
+    window.addEventListener('profile:refresh', onProfile);
+    return () => {
+      activeRequest.current?.abort();
+      window.removeEventListener('profile:refresh', onProfile);
+    };
   }, [refresh, refreshKey]);
 
   return { data, error, busy, refresh };

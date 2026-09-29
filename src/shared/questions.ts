@@ -185,6 +185,17 @@ export const statusLabels: Record<SubmissionStatus, string> = {
   ended: '審査終了',
 };
 export type Submission = {
+  provenance?: { author: string; instance: string } | null;
+  deletedAt?: string | null;
+  reviewHold?: boolean;
+  metrics?: {
+    rate: number | null;
+    trials: number;
+    difficulty: number;
+    fixed: boolean;
+    reports: number;
+    review: boolean;
+  };
   id: string;
   seriesId: string;
   authorId: string;
@@ -223,6 +234,7 @@ export const defaultQuestionSettings: QuestionSettings = {
   categoryReportThreshold: 5,
 };
 export type QuestionOverview = {
+  authorNames?: Record<string, string>;
   pagination?: { page: number; pageSize: number; total: number };
   categoryRequests: { submissionId: string; categoryId: string; reason: string }[];
   reviewCases: {
@@ -278,7 +290,7 @@ export type QuestionOverview = {
   notifications: QuestionNotification[];
 };
 
-export const questionPageSizes = [10, 30, 100] as const;
+export { pageSizes as questionPageSizes } from './pagination.ts';
 export const questionViews = [
   'new',
   'edit',
@@ -288,9 +300,6 @@ export const questionViews = [
   'decision',
   'reports',
   'categoryRequests',
-  'classify',
-  'classificationJson',
-  'difficulty',
   'tags',
   'authors',
   'categories',
@@ -300,6 +309,10 @@ export const questionViews = [
 export type QuestionView = { page: (typeof questionViews)[number]; id?: string | null };
 export type QuestionListQuery = {
   scope: 'mine' | 'all' | 'pending';
+  band?: 'all' | number;
+  players?: 'all' | number;
+  sort?: string;
+  direction?: 'asc' | 'desc';
   page: number;
   pageSize: number;
   query: string;
@@ -334,5 +347,5 @@ export type QuestionNotification = {
   message: string;
   createdAt: string;
   read: boolean;
-  target?: { page: 'edit' | 'qualification'; id?: string } | null;
+  target?: { page: 'edit' | 'qualification' | 'profile'; id?: string } | null;
 };

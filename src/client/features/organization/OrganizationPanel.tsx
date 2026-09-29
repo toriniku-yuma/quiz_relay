@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import { canAccessInstance } from '../../../shared/organization';
+import { USERS_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
-import InstanceGrants from './InstanceGrants';
 import type { useOrganization } from './useOrganization';
 
 export default function OrganizationPanel({
@@ -26,12 +26,6 @@ export default function OrganizationPanel({
         <p role="alert" className="border border-accent p-3">
           {error}
         </p>
-      )}
-      {management && !instanceId && data?.account && (
-        <Panel title="本人確認用の識別子">
-          <p>権限を依頼するときは、この識別子を管理者へ伝えてください。</p>
-          <code className="block break-all select-all">{data.account.actorId}</code>
-        </Panel>
       )}
       {organization.loadFailed && (
         <div>
@@ -56,6 +50,7 @@ export default function OrganizationPanel({
             にこの識別子を設定してください。DBパスワードの入力は不要です。
           </p>
           <form
+            className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
               void mutate(API_PATHS.organizationSetup, {
@@ -162,11 +157,12 @@ export default function OrganizationPanel({
                       </form>
                     )}
                     {management && data.account?.administrator && (
-                      <InstanceGrants
-                        key={`${instance.id}:${organization.version}`}
-                        instanceId={instance.id}
-                        organization={organization}
-                      />
+                      <a
+                        className="mt-4 block underline"
+                        href={`${USERS_PATH}?instance=${instance.id}`}
+                      >
+                        ユーザー管理で権限を設定
+                      </a>
                     )}
                   </li>
                 ))}
@@ -199,23 +195,6 @@ export default function OrganizationPanel({
                   準備中として追加
                 </Button>
               </form>
-            </Panel>
-          )}
-          {management && !instanceId && data.accounts && (
-            <Panel title="組織のアカウント">
-              {data.nextAccountCursor && (
-                <Button onClick={organization.moreAccounts} disabled={busy}>
-                  次の100件を表示
-                </Button>
-              )}
-              <ul className="mt-3 grid gap-2">
-                {data.accounts.map((account) => (
-                  <li key={account.actorId} className="break-all">
-                    <code>{account.actorId}</code>：
-                    {account.administrator ? '管理者' : '共通ユーザー'}
-                  </li>
-                ))}
-              </ul>
             </Panel>
           )}
         </>

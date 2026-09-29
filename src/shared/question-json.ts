@@ -1,7 +1,7 @@
 import { type QuestionInput, validateQuestionInput } from './questions.ts';
 
 // JSON.parse keeps the last duplicate key silently. Inspect object keys before parsing.
-export function parseQuestionJson(source: string): QuestionInput[] {
+export function readQuestionJson(source: string): unknown {
   if (new TextEncoder().encode(source).length > 2000000)
     throw new Error('JSONは2MB以内にしてください。');
   let position = 0;
@@ -70,7 +70,10 @@ export function parseQuestionJson(source: string): QuestionInput[] {
   value();
   whitespace();
   if (position !== source.length) error('余分な文字があります。');
-  const parsed = JSON.parse(source) as { version: number; questions: unknown[] };
+  return JSON.parse(source);
+}
+export function parseQuestionJson(source: string): QuestionInput[] {
+  const parsed = readQuestionJson(source) as { version: number; questions: unknown[] };
   if (
     !parsed ||
     Object.keys(parsed).sort().join(',') !== 'questions,version' ||

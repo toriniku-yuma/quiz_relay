@@ -5,7 +5,13 @@ import Button from '../components/Button';
 import MenuPopover from '../components/MenuPopover';
 import { useApp } from './context';
 import { gameHref } from './navigation';
-import { DEBUG_PATH, GAME_PATH, LOCAL_GAME_PATH } from './paths';
+import {
+  DEBUG_PATH,
+  GAME_PATH,
+  LOCAL_GAME_PATH,
+  PROFILE_PATH,
+  USERS_PATH,
+} from './paths';
 import { useSidebarScroll } from './useSidebarScroll';
 
 export default function Navigation({ mobile = false }: { mobile?: boolean }) {
@@ -74,21 +80,27 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
     {
       title: 'インスタンス管理',
       management: true,
-      items:
-        selected && administrator
+      items: [
+        ...(selected && (administrator || selected.permissions.includes('users'))
+          ? [
+              {
+                label: 'ユーザー管理',
+                href: `${USERS_PATH}?instance=${encodeURIComponent(instanceId)}`,
+              },
+            ]
+          : []),
+        ...(selected && administrator
           ? [
               { label: 'インスタンス設定', href: gameHref(instanceId, 'settings') },
               questionLink('settings', '投稿設定'),
               questionLink('selection', '出題設定'),
             ]
-          : [],
+          : []),
+      ],
     },
   ].filter((section) => section.items.length > 0);
   const name =
-    auth.user?.user_metadata.full_name ??
-    auth.user?.user_metadata.name ??
-    auth.user?.email ??
-    'ログインしていません';
+    data?.account?.displayName ?? (auth.user ? '表示名未登録' : 'ログインしていません');
   const debugQuery = instanceId ? `?instance=${encodeURIComponent(instanceId)}` : '';
 
   return (
@@ -178,7 +190,7 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
                   view === 'organization' && path === GAME_PATH ? 'page' : undefined
                 }
               >
-                組織設定・アカウント一覧
+                組織設定
               </a>
             </section>
             <div>
@@ -210,12 +222,9 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
         </p>
         {auth.user && (
           <MenuPopover title="アカウント" upward>
-            {data?.account && (
-              <p className="my-3 px-3 text-base">
-                本人確認用の識別子
-                <code className="block select-all break-all">{data.account.actorId}</code>
-              </p>
-            )}
+            <a className="block px-3 py-2.5 underline" href={PROFILE_PATH}>
+              マイページ
+            </a>
             <Button className="m-3" onClick={auth.logout} disabled={auth.busy}>
               ログアウト
             </Button>

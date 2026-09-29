@@ -56,6 +56,22 @@ async function definition(): Promise<MatchDefinition> {
 }
 
 describe('1C fixed catalog', () => {
+  it('プロフィールの32書記素の作問者名を試合へ取り込める', async () => {
+    const source = await definition();
+    const name = '👩‍👩‍👧‍👦'.repeat(32);
+    source.selection = {
+      authorNames: { [source.questions[0].id]: name },
+      band: 0,
+      boundaries: [1200, 1600],
+      weights: [1, 0, 0],
+      categories: {},
+      revision: 1,
+    };
+    const loaded = await validateDefinition(source);
+    expect(
+      createState(loaded.questions, 0, 3, true, loaded).questions[0].authorName,
+    ).toBe(name);
+  });
   it('G14: fixed settings drive panels and deadlines without mutating older matches', async () => {
     const source = await definition();
     const previous = createState(questions, 0, 2);

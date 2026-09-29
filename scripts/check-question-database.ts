@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
@@ -19,6 +19,9 @@ import { rules } from '../src/worker/game/rules.ts';
 import { actorForSubject } from '../src/worker/organization/access.ts';
 import { questionMutation, questionOverview } from '../src/worker/questions/database.ts';
 import type { ResultRecord } from '../src/worker/results/record.ts';
+import { verifyModeration } from './check-moderation-database.ts';
+import { verifyWorkflows } from './check-moderation-workflows.ts';
+import { verifyProfiles } from './check-profile-database.ts';
 import { verifyLocalDifficultyUpdate } from './question-local-difficulty.ts';
 import { provisionLocalQuestionPermissions } from './question-local-permissions.ts';
 
@@ -89,6 +92,7 @@ try {
       subject,
       actorId: actors[i],
       administrator: i === 0,
+      displayName: subject,
     })),
   );
   await db.insert(schema.instances).values(
@@ -637,8 +641,16 @@ try {
     [],
   );
   assert.ok(
-    (await overview('admin', instanceId, undefined, { page: 'difficulty' })).difficulty
-      .length,
+    (
+      await overview('admin', instanceId, {
+        scope: 'all',
+        page: 1,
+        pageSize: 10,
+        query: '',
+        status: '',
+        category: '',
+      })
+    ).difficulty.length,
   );
   await assert.rejects(
     overview('author', instanceId, undefined, { page: 'decision', id: own.id }),
@@ -673,6 +685,26 @@ try {
       allRows.map((row) => row.id),
     );
     assert.equal(new Set(ids).size, allRows.length);
+  }
+  for (const sort of ['text', 'answer', 'status', 'category', 'author', 'updatedAt']) {
+    for (const direction of ['asc', 'desc'] as const) {
+      const sorted = await overview('admin', instanceId, {
+        ...list,
+        sort,
+        direction,
+        pageSize: 100,
+      });
+      const second = await overview('admin', instanceId, {
+        ...list,
+        sort,
+        direction,
+        page: 2,
+      });
+      assert.deepEqual(
+        second.submissions.map((r) => r.id),
+        sorted.submissions.slice(10, 20).map((r) => r.id),
+      );
+    }
   }
   const mine = await overview('admin', instanceId, { ...list, scope: 'mine' });
   assert.equal(
@@ -788,9 +820,282 @@ try {
   );
   assert.equal(storedNotices.find((row) => row.id === noticeIds[0])?.read, false);
   await assert.rejects(mutate('author', { operation: 'read-notifications' }));
+
+  // Management actions are atomic, replayable and preserve deletion/return availability.
+  const managedIds: string[] = [];
+  for (const text of ['一括検証A', '一括検証B']) {
+    const created = (await mutate('admin', {
+      operation: 'save',
+      input: { ...question, text },
+    })) as { id: string };
+    managedIds.push(created.id);
+  }
+  const managed = () =>
+    db
+      .select()
+      .from(schema.questionSubmissions)
+      .where(inArray(schema.questionSubmissions.id, managedIds));
+  let batchRows = await managed();
+  const batch = {
+    operation: 'bulk',
+    action: 'stop',
+    reason: '一括検証',
+    requestId: crypto.randomUUID(),
+    changes: batchRows.map((r) => ({ id: r.id, revision: r.revision })),
+  };
+  await assert.rejects(
+    mutate('admin', {
+      ...batch,
+      changes: [batch.changes[0], { ...batch.changes[1], revision: -1 }],
+    }),
+    /EDIT_CONFLICT/,
+  );
+  assert.deepEqual(
+    (await managed()).map((r) => r.stopped),
+    [false, false],
+  );
+  await mutate('admin', batch);
+  await mutate('admin', batch);
+  assert.deepEqual(
+    (await managed()).map((r) => r.revision),
+    batchRows.map((r) => r.revision + 1),
+  );
+  batchRows = await managed();
+  await mutate('admin', {
+    ...batch,
+    action: 'delete',
+    requestId: crypto.randomUUID(),
+    changes: batchRows.map((r) => ({ id: r.id, revision: r.revision })),
+  });
+  batchRows = await managed();
+  assert.ok(batchRows.every((r) => r.deletedAt));
+  await assert.rejects(
+    mutate('admin', {
+      operation: 'resume',
+      id: batchRows[0].id,
+      revision: batchRows[0].revision,
+      reason: '禁止',
+    }),
+    /QUESTION_DELETED/,
+  );
+  const exported = (await mutate('admin', {
+    operation: 'export-managed',
+    ids: managedIds,
+    all: false,
+  })) as { questions: import('../src/shared/question-transfer.ts').TransferQuestion[] };
+  assert.equal(exported.questions.length, 2);
+  assert.ok(exported.questions.every((r) => r.stopped));
+  const whole = (await mutate('admin', {
+    operation: 'export-managed',
+    all: true,
+  })) as typeof exported;
+  assert.ok(whole.questions.every((r) => !r.input.text.startsWith('一括検証')));
+  const transfer = {
+    operation: 'import-transfer',
+    requestId: crypto.randomUUID(),
+    source: JSON.stringify({ version: 2, questions: exported.questions }),
+    mapping: { 地理: { id: categoryId } },
+  };
+  await mutate('admin', transfer);
+  await mutate('admin', transfer);
+  const imported = (await overview('admin')).submissions.filter((r) =>
+    r.input.text.startsWith('一括検証'),
+  );
+  assert.equal(imported.length, 2);
+  assert.ok(
+    imported.every(
+      (r) =>
+        r.status === 'draft' && r.stopped && r.provenance && !managedIds.includes(r.id),
+    ),
+  );
+  await mutate('admin', {
+    ...batch,
+    action: 'restore',
+    requestId: crypto.randomUUID(),
+    changes: batchRows.map((r) => ({ id: r.id, revision: r.revision })),
+  });
+  assert.ok(
+    (await managed()).every((r) => !r.deletedAt && r.stopped && r.status === 'draft'),
+  );
+  const currentManaged = async () => {
+    const row = (await managed()).find((r) => r.id === managedIds[0]);
+    assert.ok(row);
+    return row;
+  };
+  const transition = async (operation: string) => {
+    const r = await currentManaged();
+    await mutate('admin', {
+      operation,
+      id: r.id,
+      revision: r.revision,
+      reason: '停止状態の検証',
+    });
+  };
+  const fixedDraft = await currentManaged();
+  await mutate('admin', {
+    operation: 'bulk',
+    action: 'difficulty',
+    requestId: crypto.randomUUID(),
+    reason: '未公開で固定',
+    changes: [
+      { id: fixedDraft.id, revision: fixedDraft.revision, difficulty: 2, fixed: true },
+    ],
+  });
+  const fixedSettings = async () =>
+    (
+      await db
+        .select()
+        .from(schema.questionDifficulty)
+        .where(
+          and(
+            eq(schema.questionDifficulty.instanceId, instanceId),
+            eq(schema.questionDifficulty.seriesId, fixedDraft.seriesId),
+          ),
+        )
+    )[0];
+  assert.equal((await fixedSettings()).fixed, true);
+  assert.equal((await fixedSettings()).current, 2);
+  await transition('resume');
+  await transition('submit');
+  if ((await currentManaged()).status === 'pending') await transition('approve');
+  assert.equal((await fixedSettings()).fixed, true);
+  assert.equal((await fixedSettings()).current, 2);
+  const available = async () => {
+    const r = await currentManaged();
+    assert.ok(r.publishedId);
+    return (
+      await db
+        .select()
+        .from(schema.questionAvailability)
+        .where(
+          and(
+            eq(schema.questionAvailability.owner, owner),
+            eq(schema.questionAvailability.questionId, r.publishedId),
+          ),
+        )
+    )[0];
+  };
+  assert.equal((await available()).retiredAt, null);
+  await transition('return');
+  assert.equal((await currentManaged()).reviewHold, true);
+  assert.ok((await available()).retiredAt);
+  await transition('resume');
+  assert.ok((await available()).retiredAt);
+  await transition('delete');
+  await transition('restore');
+  assert.equal((await currentManaged()).status, 'returned');
+  assert.ok((await available()).retiredAt);
+  await transition('submit');
+  if ((await currentManaged()).status === 'pending') await transition('approve');
+  assert.equal((await currentManaged()).reviewHold, false);
+  assert.equal((await available()).retiredAt, null);
+  const malformedTransfer = {
+    ...transfer,
+    requestId: crypto.randomUUID(),
+    source: JSON.stringify({
+      version: 2,
+      questions: [
+        exported.questions[0],
+        { ...exported.questions[1], category: '未対応カテゴリ' },
+      ],
+    }),
+    mapping: { 地理: { name: '取消される新カテゴリ' } },
+  };
+  await assert.rejects(mutate('admin', malformedTransfer), /INVALID_CATEGORY/);
+  assert.equal(
+    (
+      await db
+        .select()
+        .from(schema.questionCategories)
+        .where(eq(schema.questionCategories.name, '取消される新カテゴリ'))
+    ).length,
+    0,
+  );
+  console.log(
+    'PASS: published return hold, resume protection, restore hold, resubmission and import category rollback',
+  );
+  console.log(
+    'PASS: atomic question bulk rollback/replay, soft deletion, exact restore, deleted selected export and portable import replay',
+  );
+  const reviewRollback = new Error('private import test rollback');
+  await assert.rejects(
+    db.transaction(async (tx) => {
+      const privateId = crypto.randomUUID();
+      await tx.insert(schema.instances).values({
+        id: privateId,
+        organizationId,
+        name: '非公開取込検証',
+        owner: `urn:uuid:${privateId}`,
+        state: 'preparing',
+      });
+      await tx.execute(sql`SET LOCAL ROLE quiz_organization`);
+      const privateMutation = (subject: string, body: Record<string, unknown>) =>
+        questionMutation(tx, subject, privateId, body);
+      await privateMutation('admin', { operation: 'category', name: '検証カテゴリ' });
+      const [category] = await tx
+        .select()
+        .from(schema.questionCategories)
+        .where(eq(schema.questionCategories.instanceId, privateId));
+      const portable = {
+        operation: 'import-transfer',
+        requestId: crypto.randomUUID(),
+        source: JSON.stringify({
+          version: 2,
+          questions: [
+            {
+              input: question,
+              category: '検証カテゴリ',
+              stopped: false,
+              provenance: { author: '検証', instance: '元' },
+            },
+          ],
+        }),
+        mapping: { 検証カテゴリ: { id: category.id } },
+      };
+      for (const body of [{ operation: 'save', input: question }, portable])
+        await assert.rejects(privateMutation('outsider', body), /INSTANCE_PREPARING/);
+      assert.equal(
+        (
+          await tx
+            .select()
+            .from(schema.questionSubmissions)
+            .where(eq(schema.questionSubmissions.instanceId, privateId))
+        ).length,
+        0,
+      );
+      await privateMutation('admin', portable);
+      await tx
+        .insert(schema.instanceGrants)
+        .values({ instanceId: privateId, actorId: actors[2], permission: 'questions' });
+      await privateMutation('reviewer', { ...portable, requestId: crypto.randomUUID() });
+      assert.equal(
+        (
+          await tx
+            .select()
+            .from(schema.questionSubmissions)
+            .where(eq(schema.questionSubmissions.instanceId, privateId))
+        ).length,
+        2,
+      );
+      throw reviewRollback;
+    }),
+    (error) => error === reviewRollback,
+  );
+  console.log(
+    'PASS: private import permission boundary and unpublished fixed difficulty survives publication',
+  );
+  await verifyProfiles(db, {
+    address,
+    organizationId,
+    instanceId,
+    owner,
+    actorId: actors[0],
+  });
   console.log(
     '作問DB検証成功：実ロール認可・インスタンス分離・提出/差戻し/取下げ/承認・自己承認禁止・旧版保持・停止維持・審査なし切替・JSON再送/全件取消・審査者非公開',
   );
+  await verifyModeration(db, { organizationId, instanceId, otherId, actors });
+  await verifyWorkflows(db, { organizationId, instanceId, otherId, actors });
 } finally {
   await client?.end({ timeout: 5 });
   await cluster.end({ timeout: 5 });

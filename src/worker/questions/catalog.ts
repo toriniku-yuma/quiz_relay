@@ -35,7 +35,7 @@ export async function publishQuestionCatalog(
     .select({
       question: questions.payload,
       availability,
-      authorName: submissions.authorName,
+      authorName: sql<string>`coalesce(${submissions.provenance}->>'author', ${submissions.authorName})`,
     })
     .from(submissions)
     .innerJoin(

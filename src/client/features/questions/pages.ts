@@ -3,6 +3,7 @@ import {
   questionPageSizes,
   statusLabels,
 } from '../../../shared/questions';
+import { questionSortKeys, type SortDirection } from '../../../shared/sorting';
 
 export function questionListState(search: string) {
   const params = new URLSearchParams(search);
@@ -11,8 +12,22 @@ export function questionListState(search: string) {
   const status = params.get('status') ?? '';
   const category = params.get('category') ?? '';
   return {
+    sort: questionSortKeys.includes(
+      params.get('sort') as (typeof questionSortKeys)[number],
+    )
+      ? (params.get('sort') as string)
+      : 'updatedAt',
+    direction: (params.get('direction') === 'asc' ? 'asc' : 'desc') as SortDirection,
+    band: (['0', '1', '2'].includes(params.get('band') ?? '')
+      ? Number(params.get('band'))
+      : 'all') as 'all' | number,
+    players: (['2', '3', '4'].includes(params.get('players') ?? '')
+      ? Number(params.get('players'))
+      : 'all') as 'all' | number,
     query: (params.get('q') ?? '').slice(0, 150),
-    status: ['', 'stopped', ...Object.keys(statusLabels)].includes(status) ? status : '',
+    status: ['', 'stopped', 'deleted', ...Object.keys(statusLabels)].includes(status)
+      ? status
+      : '',
     category: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       category,
     )
@@ -32,6 +47,10 @@ export function questionListHref(
     page: String(state.page),
     size: String(state.pageSize),
   });
+  if (state.band !== undefined) params.set('band', String(state.band));
+  if (state.players !== undefined) params.set('players', String(state.players));
+  if (state.sort) params.set('sort', state.sort);
+  if (state.direction) params.set('direction', state.direction);
   if (state.query) params.set('q', state.query);
   if (state.status && page !== 'pending') params.set('status', state.status);
   if (state.category) params.set('category', state.category);
@@ -67,12 +86,6 @@ export const questionPages = {
     path: '/question-review/category-requests/',
     title: 'カテゴリ変更申請の審査',
   },
-  classify: { path: '/question-review/classify/', title: 'カテゴリの一括変更' },
-  classificationJson: {
-    path: '/question-review/classification-json/',
-    title: '分類用JSON',
-  },
-  difficulty: { path: '/question-review/difficulty/', title: '難易度の変更' },
   tags: { path: '/question-review/tags/', title: 'タグ統合' },
   authors: { path: '/question-review/authors/', title: '作問者資格の管理' },
   categories: { path: '/question-review/categories/', title: 'カテゴリ管理' },
@@ -81,10 +94,10 @@ export const questionPages = {
 } as const;
 export type QuestionPage = keyof typeof questionPages;
 export const questionManagementGroups = [
-  { title: '問題', pages: ['review', 'difficulty'] },
+  { title: '問題', pages: ['review'] },
   {
     title: '分類・整理',
-    pages: ['categories', 'classify', 'classificationJson', 'tags'],
+    pages: ['categories', 'tags'],
   },
   { title: '作問者', pages: ['authors'] },
 ] as const;
@@ -95,7 +108,7 @@ export function canOpenQuestionPage(
   if (permissions.administrator) return true;
   if (page === 'management') return permissions.review || permissions.manageAuthors;
   if (page === 'authors') return permissions.manageAuthors;
-  if (['categories', 'settings', 'selection', 'difficulty'].includes(page)) return false;
+  if (['categories', 'settings', 'selection'].includes(page)) return false;
   return !questionPages[page].path.startsWith('/question-review/') || permissions.review;
 }
 export function questionHref(page: QuestionPage, instance: string, id?: string) {

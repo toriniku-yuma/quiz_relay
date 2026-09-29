@@ -169,6 +169,62 @@
       "when": 1790327816055,
       "tag": "0023_notification_targets",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790407608307,
+      "tag": "0024_profile_display_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790407818300,
+      "tag": "0025_profile_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790410044621,
+      "tag": "0026_moderation",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790410071996,
+      "tag": "0027_moderation_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790562635436,
+      "tag": "0028_user_moderation_workflows",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790562651449,
+      "tag": "0029_moderation_workflow_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1790563678726,
+      "tag": "0030_moderation_workflow_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790574670371,
+      "tag": "0031_question_management",
+      "breakpoints": true
     }
   ]
 }

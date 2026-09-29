@@ -2,6 +2,9 @@ import { API_PATHS, instanceApiPath } from '../../../shared/api-paths';
 import { setupAuth } from '../auth/client';
 
 const errors: Record<string, string> = {
+  PROFILE_REQUIRED: 'マイページで表示名を登録してから参加してください。',
+  PARTICIPATION_RESTRICTED:
+    '利用が制限されています。マイページで理由・期限を確認してください。',
   LOGOUT_PENDING: 'ログアウト処理を確認しています。ログアウトを再実行してください。',
   RANKED_NOT_CONFIGURED: '出題設定が未登録です。運営者による設定をお待ちください。',
   STALE_RESERVATION:

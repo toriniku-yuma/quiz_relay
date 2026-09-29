@@ -5,6 +5,7 @@ import { useOrganization } from '../features/organization/useOrganization';
 import NotificationBell from '../features/questions/NotificationBell';
 import MatchPage from '../pages/MatchPage';
 import NotFoundPage from '../pages/NotFoundPage';
+import ProfilePage from '../pages/ProfilePage';
 import Navigation from './AppNavigation';
 import { AppContext, type MatchStatus } from './context';
 import { gameHref, handleNavigation, useLocation } from './navigation';
@@ -24,12 +25,15 @@ export default function Application({ auth }: { auth: Auth }) {
     url.searchParams.get('instance'),
     url.searchParams.get('view'),
     url.searchParams.get('id'),
+    url.searchParams.get('actor'),
   ].join(':');
   const menu = useMobileMenu(href);
   const path = `${url.pathname.replace(/\/$/, '')}/`;
   const route = routes.find((candidate) => candidate.path === path);
   const Page = route && 'component' in route ? route.component : NotFoundPage;
   const active = matchStatus?.roomId && !matchStatus.finished ? matchStatus : null;
+  const needsProfile =
+    !!organization.data?.account && !organization.data.account.displayName && !active;
   const activeName =
     organization.data?.instances.find((instance) => instance.id === active?.instanceId)
       ?.name ?? '参加中のインスタンス';
@@ -40,7 +44,7 @@ export default function Application({ auth }: { auth: Auth }) {
   }, []);
 
   useEffect(() => {
-    if (!pageLocation) return;
+    if (!pageLocation && !needsProfile) return;
     window.scrollTo(0, 0);
     if (menu.dialog.current?.open || document.querySelector('[popover]:popover-open'))
       return;
@@ -48,7 +52,7 @@ export default function Application({ auth }: { auth: Auth }) {
       '[data-page]:not([hidden]) h1',
     );
     heading?.focus({ preventScroll: true });
-  }, [pageLocation, menu.dialog]);
+  }, [pageLocation, needsProfile, menu.dialog]);
 
   return (
     <AppContext.Provider value={{ auth, organization, url, matchStatus, setMatchStatus }}>
@@ -91,10 +95,15 @@ export default function Application({ auth }: { auth: Auth }) {
           </p>
         )}
         <div ref={content} id="page-content" tabIndex={-1}>
-          <div data-page hidden={path !== GAME_PATH}>
+          <div data-page hidden={path !== GAME_PATH || needsProfile}>
             <MatchPage />
           </div>
-          {path !== GAME_PATH && (
+          {needsProfile && (
+            <div data-page>
+              <ProfilePage />
+            </div>
+          )}
+          {path !== GAME_PATH && !needsProfile && (
             <div data-page>
               {(path === DEBUG_PATH || path === LOCAL_GAME_PATH) &&
               !organization.data?.account?.administrator ? (

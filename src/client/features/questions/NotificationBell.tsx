@@ -1,3 +1,4 @@
+import { PROFILE_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import { questionHref } from './pages';
 import { useNotifications } from './useNotifications';
@@ -61,11 +62,15 @@ export default function NotificationBell() {
                 <li key={row.id} className="border-b border-line pb-3">
                   <a
                     className="block rounded p-2 hover:bg-key focus:bg-key"
-                    href={questionHref(
-                      row.target?.page ?? 'mine',
-                      row.instanceId,
-                      row.target?.id,
-                    )}
+                    href={
+                      row.target?.page === 'profile'
+                        ? PROFILE_PATH
+                        : questionHref(
+                            row.target?.page ?? 'mine',
+                            row.instanceId,
+                            row.target?.id,
+                          )
+                    }
                     onClick={model.close}
                   >
                     <span className="block text-sm text-muted">
