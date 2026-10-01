@@ -28,6 +28,7 @@ const messages: Record<string, string> = {
   CATEGORY_REQUIRED: '有効なカテゴリを選んでください。',
   AUTHOR_REQUEST_UNAVAILABLE: '申請中・資格取得済み、または再申請の待機期間中です。',
   INSTANCE_PREPARING: 'このインスタンスは準備中です。',
+  INSTANCE_ARCHIVED: 'アーカイブ済みです。問題のエクスポートを利用できます。',
 };
 
 export class QuestionRequestError extends Error {

@@ -21,7 +21,11 @@ export async function currentProfileNames(
 ) {
   if (!actorIds.length) return new Map<string, string>();
   const rows = await db
-    .select({ actorId: accounts.actorId, displayName: accounts.displayName })
+    .select({
+      actorId: accounts.actorId,
+      displayName: accounts.displayName,
+      withdrawnAt: accounts.withdrawnAt,
+    })
     .from(accounts)
     .where(
       and(
@@ -29,7 +33,12 @@ export async function currentProfileNames(
         inArray(accounts.actorId, actorIds),
       ),
     );
-  return new Map(rows.map((row) => [row.actorId, row.displayName ?? '表示名未登録']));
+  return new Map(
+    rows.map((row) => [
+      row.actorId,
+      row.withdrawnAt ? '退会ユーザー' : (row.displayName ?? '表示名未登録'),
+    ]),
+  );
 }
 
 export async function saveProfile(
@@ -64,6 +73,7 @@ export async function saveProfile(
       .select()
       .from(accounts)
       .where(eq(accounts.actorId, account.actorId));
+    if (current.withdrawnAt) throw new OrganizationError('ACCOUNT_WITHDRAWN', 403);
     if (current.displayName === displayName)
       return { displayName, revision: current.profileRevision };
     if (current.profileRevision !== input.revision)

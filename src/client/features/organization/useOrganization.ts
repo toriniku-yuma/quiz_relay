@@ -5,6 +5,24 @@ import { setupAuth } from '../auth/client';
 import { creationRequest } from './creationRequest';
 
 const errors: Record<string, string> = {
+  ROOM_INVENTORY_REQUIRED:
+    '過去の対戦部屋の確認が完了していません。設置者による確認が必要です。',
+  RESULT_OR_MATCH_PENDING:
+    '進行中の試合、または未保存の結果があります。保存完了後に再試行してください。',
+  DELETION_PENDING: '削除の完了を確認できませんでした。同じ内容で再試行してください。',
+  INSTANCE_DELETING: 'このインスタンスは完全削除の処理中です。',
+  ACCOUNT_WITHDRAWN: 'このアカウントは退会済みです。',
+  WITHDRAWAL_CONFIRMATION: '確認欄に「退会」と入力してください。',
+  WITHDRAWAL_ACCOUNT_CHANGED:
+    'ログイン中のアカウントが変わりました。マイページから手続きを開き直してください。',
+  LAST_ADMINISTRATOR: '先に別のユーザーへの管理者引き継ぎを完了してください。',
+  CANCEL_WAITING_FIRST: '先に対戦待機を取り消してください。',
+  MATCH_STARTED: '試合が終了してから退会手続きをしてください。',
+  WITHDRAWAL_PENDING:
+    '別の退会手続きの処理中です。最初に開いた画面で再試行してください。',
+  ERASURE_UNAVAILABLE: '現在、消去処理を利用できません。時間を置いて再試行してください。',
+  INVALID_OPERATION: '操作内容を確認してください。',
+  RANKED_PAUSED: 'このインスタンスはランクの受付を停止しています。',
   BAN_REQUIRES_REVOKE:
     'BANを別の種類に変更するには、先に理由を付けて取り消してください。',
   REPORT_NOT_ALLOWED: 'この試合の参加者だけが、対戦相手を通報できます。',

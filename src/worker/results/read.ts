@@ -44,7 +44,9 @@ export async function readResults(
           reason: sql<string>`${r.payload}->'result'->>'reason'`,
           winnerId: sql<string | null>`${r.payload}->'result'->>'winnerId'`,
           ratingDelta: p.ratingDelta,
-          payload: r.payload,
+          payload: sql<
+            typeof r.$inferSelect.payload
+          >`quiz_game.private_result(${r.payload})`,
         })
         .from(p)
         .innerJoin(r, eq(r.resultId, p.resultId))

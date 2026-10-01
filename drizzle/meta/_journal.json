@@ -225,6 +225,118 @@
       "when": 1790574670371,
       "tag": "0031_question_management",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790657452185,
+      "tag": "0032_instance_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790657563149,
+      "tag": "0033_instance_operation_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790657761853,
+      "tag": "0034_instance_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790658565900,
+      "tag": "0035_account_withdrawal",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790658566952,
+      "tag": "0036_withdrawal_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790659417469,
+      "tag": "0037_result_privacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1790659874739,
+      "tag": "0038_record_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1790660269568,
+      "tag": "0039_instance_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790660270573,
+      "tag": "0040_instance_lifecycle_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790660428400,
+      "tag": "0041_instance_erasure",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790661149466,
+      "tag": "0042_withdrawal_anonymization",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790661497085,
+      "tag": "0043_withdrawal_audit_privacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1790732640833,
+      "tag": "0044_question_report_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1790732655564,
+      "tag": "0045_question_report_expiry",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1790745964799,
+      "tag": "0046_erasure_batch_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790746001921,
+      "tag": "0047_erasure_batch_permissions",
+      "breakpoints": true
     }
   ]
 }

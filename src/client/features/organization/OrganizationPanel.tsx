@@ -5,6 +5,7 @@ import { USERS_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
+import InstanceOperations from './InstanceOperations';
 import type { useOrganization } from './useOrganization';
 
 export default function OrganizationPanel({
@@ -89,12 +90,20 @@ export default function OrganizationPanel({
             {data.instances.length === 0 && <p>公開中のインスタンスはありません。</p>}
             <ul className="grid gap-4">
               {data.instances
-                .filter((instance) => !instanceId || instance.id === instanceId)
+                .filter(
+                  (instance) =>
+                    (!instanceId || instance.id === instanceId) &&
+                    (management || instance.state !== 'archived'),
+                )
                 .map((instance) => (
                   <li key={instance.id} className="border border-line p-4">
                     <h3 className="font-bold">{instance.name}</h3>
                     <p className="my-2">
-                      {instance.state === 'published' ? '公開中' : '準備中'}
+                      {instance.state === 'published'
+                        ? '公開中'
+                        : instance.state === 'archived'
+                          ? 'アーカイブ済み'
+                          : '準備中'}
                     </p>
                     {canAccessInstance(instance, data.account?.administrator) && (
                       <a
@@ -105,21 +114,9 @@ export default function OrganizationPanel({
                       </a>
                     )}
                     {instance.state === 'preparing' && (
-                      <>
-                        <p className="my-2">
-                          公開前に問題の登録・停止状態・出題設定を確認してください。問題と戦績は他のインスタンスから自動コピーされません。
-                        </p>
-                        {management && data.account?.administrator && (
-                          <Button
-                            disabled={busy}
-                            onClick={() =>
-                              mutate(API_PATHS.organizationPublish, { id: instance.id })
-                            }
-                          >
-                            公開開始
-                          </Button>
-                        )}
-                      </>
+                      <p className="my-2">
+                        公開前に問題の登録・停止状態・出題設定を確認してください。問題と戦績は他のインスタンスから自動コピーされません。
+                      </p>
                     )}
                     {management &&
                       (data.account?.administrator ||
@@ -129,9 +126,15 @@ export default function OrganizationPanel({
                           <code className="break-all">{instance.id}</code>
                         </p>
                       )}
+                    {management &&
+                      data.account?.administrator &&
+                      instance.state !== 'archived' && (
+                        <InstanceOperations instance={instance} refresh={refresh} />
+                      )}
                     {management && data.account?.administrator && (
                       <form
                         key={instance.name}
+                        className="grid gap-4"
                         onSubmit={(event) => {
                           event.preventDefault();
                           const name = new FormData(event.currentTarget).get('name');
@@ -151,7 +154,11 @@ export default function OrganizationPanel({
                           required
                           maxLength={80}
                         />
-                        <Button type="submit" disabled={busy}>
+                        <Button
+                          type="submit"
+                          className="justify-self-start"
+                          disabled={busy}
+                        >
                           名前を保存
                         </Button>
                       </form>
@@ -162,6 +169,16 @@ export default function OrganizationPanel({
                         href={`${USERS_PATH}?instance=${instance.id}`}
                       >
                         ユーザー管理で権限を設定
+                      </a>
+                    )}
+                    {management && data.account?.administrator && (
+                      <a
+                        className="mt-4 block underline"
+                        href={`/game/?view=closure&instance=${instance.id}`}
+                      >
+                        {instance.state === 'archived'
+                          ? 'アーカイブ後の手続き'
+                          : '運営を終了する'}
                       </a>
                     )}
                   </li>

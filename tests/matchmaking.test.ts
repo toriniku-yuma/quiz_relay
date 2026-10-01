@@ -16,6 +16,7 @@ import app from '../src/worker/index';
 import { questionProvenance, questions } from './fixtures/questions';
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), user: vi.fn() }));
+vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({ auth: { getUser: mocks.user } }),

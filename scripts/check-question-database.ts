@@ -19,9 +19,15 @@ import { rules } from '../src/worker/game/rules.ts';
 import { actorForSubject } from '../src/worker/organization/access.ts';
 import { questionMutation, questionOverview } from '../src/worker/questions/database.ts';
 import type { ResultRecord } from '../src/worker/results/record.ts';
+import { verifyErasureBatches } from './check-erasure-batches.ts';
+import { verifyInstanceDeletion } from './check-instance-deletion.ts';
+import { verifyInstanceOperations } from './check-instance-operations.ts';
 import { verifyModeration } from './check-moderation-database.ts';
 import { verifyWorkflows } from './check-moderation-workflows.ts';
 import { verifyProfiles } from './check-profile-database.ts';
+import { verifyResultPrivacyRaces } from './check-result-privacy.ts';
+import { verifyRetention } from './check-retention.ts';
+import { verifyWithdrawal } from './check-withdrawal.ts';
 import { verifyLocalDifficultyUpdate } from './question-local-difficulty.ts';
 import { provisionLocalQuestionPermissions } from './question-local-permissions.ts';
 
@@ -1095,7 +1101,17 @@ try {
     '作問DB検証成功：実ロール認可・インスタンス分離・提出/差戻し/取下げ/承認・自己承認禁止・旧版保持・停止維持・審査なし切替・JSON再送/全件取消・審査者非公開',
   );
   await verifyModeration(db, { organizationId, instanceId, otherId, actors });
+  await verifyInstanceOperations(db, instanceId, otherId);
   await verifyWorkflows(db, { organizationId, instanceId, otherId, actors });
+  await verifyWithdrawal(db, organizationId, instanceId, actors);
+  await verifyResultPrivacyRaces(db);
+  await verifyRetention(db, organizationId, instanceId, actors);
+  await verifyErasureBatches(db);
+  await verifyInstanceDeletion(db, instanceId, otherId);
+  if (process.env.OPERATIONS_SERVICE_QA === '1') {
+    const { verifyErasureService } = await import('./check-erasure-service.ts');
+    await verifyErasureService(db, address, directory, organizationId);
+  }
 } finally {
   await client?.end({ timeout: 5 });
   await cluster.end({ timeout: 5 });

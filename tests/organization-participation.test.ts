@@ -25,6 +25,7 @@ vi.mock('../src/worker/organization/database', () => ({
   allowedInstanceActors: mocks.allowed,
 }));
 vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
+vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/organization/moderation', () => ({
   requireUnrestricted: vi.fn(),
 }));
@@ -184,4 +185,106 @@ it('受付後に権限が変わった遅延reserveを拒否する', async () => 
     'generation',
   );
   expect(result).toEqual({ ok: false, code: 'INSTANCE_NOT_FOUND' });
+});
+
+it('インスタンス全体の再確認で一般待機だけを解除し、許可された運営者は残す', async () => {
+  const a = await join('a');
+  const b = await join('b');
+  mocks.blocked.add('a');
+  await runtime.MATCHMAKER.getByName(org).refreshInstanceWaiting(id);
+  expect((await state(a.room)).players.map((p) => p.id)).toEqual(['b']);
+  actor = 'b';
+  expect((await post('resume', {})).status).toBe(200);
+  expect(b.room).toBe(a.room);
+});
+
+it('アーカイブの全体再確認でも開始済み試合・再接続を維持する', async () => {
+  const a = await join('a');
+  const b = await join('b');
+  await socket(a);
+  await socket(b);
+  mocks.blocked.add('a');
+  mocks.blocked.add('b');
+  await runtime.MATCHMAKER.getByName(org).refreshInstanceWaiting(id);
+  expect((await state(a.room)).players).toHaveLength(2);
+  actor = 'a';
+  expect((await post('resume', {})).status).toBe(200);
+  expect((await socket(a)).status).toBe(101);
+});
+
+it('退会の受付停止は待機・試合中を拒否し、同じ操作IDだけが解除できる', async () => {
+  const maker = runtime.MATCHMAKER.getByName(org);
+  const operationId = crypto.randomUUID();
+  const a = await join('a');
+  expect(await maker.beginWithdrawal('a', operationId)).toEqual({
+    ok: false,
+    code: 'CANCEL_WAITING_FIRST',
+  });
+  await maker.cancelWithdrawal('a', operationId);
+  const b = await join('b');
+  await socket(a);
+  await socket(b);
+  expect(await maker.beginWithdrawal('a', operationId)).toEqual({
+    ok: false,
+    code: 'MATCH_STARTED',
+  });
+  await maker.cancelWithdrawal('a', operationId);
+  expect(await maker.beginWithdrawal('unused', operationId)).toEqual({ ok: true });
+  await maker.cancelWithdrawal('unused', crypto.randomUUID());
+  expect(
+    await maker.enter('unused', 'unused', undefined, false, { id, owner }),
+  ).toMatchObject({ ok: false, code: 'WITHDRAWAL_PENDING' });
+  await maker.cancelWithdrawal('unused', operationId);
+  expect(
+    await maker.enter('unused', 'unused', undefined, false, { id, owner }),
+  ).toMatchObject({ ok: true });
+});
+
+it('完全削除は進行中・未保存結果を拒否し、保存済み部屋だけを消去する', async () => {
+  const a = await join('a'),
+    b = await join('b');
+  const room = runtime.GAME_ROOM.getByName(`1c:${a.room}`);
+  await socket(a);
+  await socket(b);
+  await runInDurableObject(room, async (_instance, ctx) => {
+    const saved = await ctx.storage.get<{ state: State }>('room');
+    if (!saved) throw new Error('MISSING_ROOM');
+    saved.state.phase = 'REVEALING';
+    await ctx.storage.put('room', saved);
+  });
+  expect((await room.deletionStatus(id)).safe).toBe(false);
+  expect(await room.eraseInstance(id)).toEqual({ ok: false, code: 'MATCH_STARTED' });
+  await runInDurableObject(room, async (_instance, ctx) => {
+    const saved = await ctx.storage.get<{ state: State }>('room');
+    if (!saved) throw new Error('MISSING_ROOM');
+    saved.state.phase = 'FINISHED';
+    saved.state.result = {
+      id: crypto.randomUUID(),
+      winnerId: 'a',
+      reason: 'exhausted',
+      finishedAt: Date.now(),
+      storage: 'pending',
+    };
+    saved.state.completed = { result: saved.state.result } as State['completed'];
+    await ctx.storage.put('room', saved);
+  });
+  expect((await room.deletionStatus(id)).safe).toBe(false);
+  expect(await room.eraseInstance(id)).toEqual({ ok: false, code: 'RESULT_PENDING' });
+  await runInDurableObject(room, async (_instance, ctx) => {
+    const saved = await ctx.storage.get<{ state: State }>('room');
+    if (!saved?.state.result) throw new Error('MISSING_RESULT');
+    saved.state.result.storage = 'confirmed';
+    await ctx.storage.put('room', saved);
+  });
+  expect(await room.eraseInstance(crypto.randomUUID())).toEqual({
+    ok: false,
+    code: 'INSTANCE_MISMATCH',
+  });
+  expect((await room.deletionStatus(id)).safe).toBe(true);
+  await room.eraseInstance(id);
+  await room.eraseInstance(id);
+  expect(await room.inventoryScope()).toBeNull();
+  expect(
+    await room.reserve('a', '再入室', 'token', undefined, { id, owner }),
+  ).toMatchObject({ ok: false });
 });

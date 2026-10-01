@@ -1,5 +1,6 @@
 import { restrictionLabels, sanctionLabels } from '../../../shared/moderation';
 import { useApp } from '../../app/context';
+import DataTable from '../../components/DataTable';
 import ReasonAction from './ReasonAction';
 import TransferInvitation from './TransferInvitation';
 import { usePersonalModeration } from './usePersonalModeration';
@@ -8,7 +9,7 @@ export default function PersonalRestrictions() {
   const model = usePersonalModeration();
   return (
     <section className="mt-8">
-      <h2 className="text-xl font-bold">現在の利用制限</h2>
+      <h2 className="mb-4 text-xl font-bold">現在の利用制限</h2>
       {model.error && <p role="alert">{model.error}</p>}
       {model.loading && <p role="status">利用制限を読み込んでいます。</p>}
       {!model.loading && !model.error && !model.rows.length && (
@@ -65,10 +66,15 @@ export default function PersonalRestrictions() {
           )}
         </div>
       ))}
-      <h3 className="mt-6 font-bold">管理者引き継ぎ</h3>
-      {model.details?.transfers.map((invite) => (
-        <TransferInvitation key={invite.id} invite={invite} />
-      ))}
+      <h3 className="mt-6 mb-4 font-bold">管理者引き継ぎ</h3>
+      <DataTable
+        label="管理者引き継ぎ"
+        columns={['依頼者→引き継ぎ先', '状態', '引き継ぎ後の依頼者権限', '期限', '操作']}
+      >
+        {model.details?.transfers.map((invite) => (
+          <TransferInvitation key={invite.id} invite={invite} />
+        ))}
+      </DataTable>
     </section>
   );
 }

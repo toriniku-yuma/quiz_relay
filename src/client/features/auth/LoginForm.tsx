@@ -16,6 +16,7 @@ export default function LoginForm({ auth }: { auth: Auth }) {
         </p>
       )}
       <form
+        className="mt-4 grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           void auth.email(email);

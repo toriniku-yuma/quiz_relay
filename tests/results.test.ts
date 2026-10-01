@@ -18,6 +18,7 @@ import { makeResultRecord } from '../src/worker/results/record';
 import { resultFixture } from './fixtures/result';
 
 const mocks = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/results/database', async (original) => ({
   ...(await original<typeof import('../src/worker/results/database')>()),
   saveResult: mocks.save,

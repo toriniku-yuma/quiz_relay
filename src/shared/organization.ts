@@ -14,7 +14,12 @@ export type OrganizationOverview = {
   instances: {
     id: string;
     name: string;
-    state: 'preparing' | 'published';
+    state: 'preparing' | 'published' | 'archived';
+    operationRevision?: number;
+    pauseReason?: string | null;
+    rankedPauseReason?: string | null;
+    casualPauseReason?: string | null;
+    hasOwnQuestions?: boolean;
     permissions: InstancePermission[];
   }[];
   grants?: { instanceId: string; actorId: string; permission: InstancePermission }[];
@@ -28,6 +33,7 @@ export function canAccessInstance(
 ) {
   return (
     !!instance &&
+    instance.state !== 'archived' &&
     (instance.state === 'published' || administrator || instance.permissions.length > 0)
   );
 }

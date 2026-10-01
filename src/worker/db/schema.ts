@@ -648,6 +648,7 @@ export const organizationAccounts = quizGame
       administrator: boolean().notNull().default(false),
       displayName: text('display_name'),
       profileRevision: integer('profile_revision').notNull().default(0),
+      withdrawnAt: timestamp('withdrawn_at', { withTimezone: true, mode: 'string' }),
     },
     (t) => [
       unique().on(t.organizationId, t.subject),
@@ -662,6 +663,36 @@ export const organizationAccounts = quizGame
     ],
   )
   .enableRLS();
+export const accountWithdrawals = quizGame
+  .table(
+    'account_withdrawals',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      actorId: text('actor_id')
+        .notNull()
+        .unique()
+        .references(() => organizationAccounts.actorId),
+      requestedAt: timestamp('requested_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      authDeletedAt: timestamp('auth_deleted_at', { withTimezone: true, mode: 'string' }),
+      erasedAt: timestamp('erased_at', { withTimezone: true, mode: 'string' }),
+      retryAt: timestamp('retry_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      attempts: integer().notNull().default(0),
+      roomCursor: text('room_cursor'),
+      lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .default(sql`'epoch'::timestamptz`),
+    },
+    () => [organizationAccess()],
+  )
+  .enableRLS();
+
 export const instances = quizGame
   .table(
     'instances',
@@ -672,7 +703,15 @@ export const instances = quizGame
         .references(() => organizations.id),
       owner: text().notNull().unique(),
       name: text().notNull(),
-      state: text().$type<'preparing' | 'published'>().notNull().default('preparing'),
+      state: text()
+        .$type<'preparing' | 'published' | 'archived'>()
+        .notNull()
+        .default('preparing'),
+      operationRevision: integer('operation_revision').notNull().default(0),
+      pauseReason: text('pause_reason'),
+      rankedPauseReason: text('ranked_pause_reason'),
+      casualPauseReason: text('casual_pause_reason'),
+      roomInventoryComplete: boolean('room_inventory_complete').notNull().default(false),
     },
     (t) => [
       check('instance_name_length', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 80`),
@@ -681,11 +720,68 @@ export const instances = quizGame
         sql`char_length(btrim(${t.owner})) BETWEEN 1 AND 256`,
       ),
       index().on(t.organizationId),
-      check('instance_state', sql`${t.state} IN ('preparing', 'published')`),
+      check('instance_state', sql`${t.state} IN ('preparing', 'published', 'archived')`),
       organizationAccess(),
     ],
   )
   .enableRLS();
+export const instanceRooms = quizGame
+  .table(
+    'instance_rooms',
+    {
+      roomId: text('room_id').primaryKey(),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      reviewAttemptedAt: timestamp('review_attempted_at', {
+        withTimezone: true,
+        mode: 'string',
+      })
+        .notNull()
+        .default(sql`'epoch'::timestamptz`),
+    },
+    (t) => [index().on(t.reviewAttemptedAt, t.roomId), organizationAccess()],
+  )
+  .enableRLS();
+
+export const instanceDeletions = quizGame
+  .table(
+    'instance_deletions',
+    {
+      id: uuid().primaryKey(),
+      instanceId: uuid('instance_id').notNull().unique(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      owner: text().notNull(),
+      name: text().notNull(),
+      operatorId: text('operator_id').notNull(),
+      requestedAt: timestamp('requested_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
+      acceptedAt: timestamp('accepted_at', { withTimezone: true, mode: 'string' }),
+      checkCursor: text('check_cursor'),
+      roomCursor: text('room_cursor'),
+      inventoryPending: boolean('inventory_pending').notNull().default(false),
+      lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .default(sql`'epoch'::timestamptz`),
+    },
+    () => [organizationAccess()],
+  )
+  .enableRLS();
+
+export const roomInventoryScans = quizGame
+  .table('room_inventory_scans', {
+    id: text().primaryKey(),
+    scopeIds: jsonb('scope_ids').$type<string[]>().notNull(),
+    cursor: text(),
+    complete: boolean().notNull().default(false),
+    localHash: text('local_hash'),
+  })
+  .enableRLS();
+
 export const instanceGrants = quizGame
   .table(
     'instance_grants',
@@ -944,6 +1040,10 @@ export const questionReviewCases = quizGame
       count: integer().notNull().default(0),
       resolved: boolean().notNull().default(false),
       reason: text().notNull().default(''),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+      resolvedAt: timestamp('resolved_at', { withTimezone: true, mode: 'string' }),
     },
     (t) => [
       primaryKey({ columns: [t.instanceId, t.questionId, t.kind, t.round] }),
@@ -969,6 +1069,9 @@ export const questionReports = quizGame
         .references(() => organizationAccounts.actorId),
       reason: text().notNull(),
       suggestedCategory: text('suggested_category').notNull().default(''),
+      createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
     },
     (t) => [
       unique().on(t.instanceId, t.questionId, t.kind, t.round, t.actorId),

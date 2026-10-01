@@ -108,7 +108,12 @@ export async function requireUnrestricted(
   )
     fail('PARTICIPATION_RESTRICTED', 409);
 }
-export async function targetUser(db: Database, organizationId: string, actorId: string) {
+export async function targetUser(
+  db: Database,
+  organizationId: string,
+  actorId: string,
+  allowWithdrawn = false,
+) {
   const [target] = await db
     .select()
     .from(accounts)
@@ -116,6 +121,7 @@ export async function targetUser(db: Database, organizationId: string, actorId: 
       and(eq(accounts.organizationId, organizationId), eq(accounts.actorId, actorId)),
     );
   if (!target) fail('ACCOUNT_NOT_FOUND', 404);
+  if (target.withdrawnAt && !allowWithdrawn) fail('ACCOUNT_WITHDRAWN', 409);
   return target;
 }
 export async function canAct(
@@ -124,6 +130,7 @@ export async function canAct(
   target: typeof accounts.$inferSelect,
 ) {
   if (operator.actorId === target.actorId) return false;
+  if (target.withdrawnAt) return false;
   if (operator.administrator) return true;
   if (target.administrator) return false;
   return !(
@@ -146,11 +153,11 @@ export async function moderationOverview(
     const view = (
       row: Pick<
         typeof accounts.$inferSelect,
-        'actorId' | 'displayName' | 'administrator'
+        'actorId' | 'displayName' | 'administrator' | 'withdrawnAt'
       >,
     ) => ({
       actorId: row.actorId,
-      name: row.displayName ?? '表示名未登録',
+      name: row.withdrawnAt ? '退会ユーザー' : (row.displayName ?? '表示名未登録'),
       origin,
       administrator: row.administrator,
     });
@@ -164,7 +171,12 @@ export async function moderationOverview(
       administrator: ctx.account.administrator,
     };
     if (input.actorId) {
-      const target = await targetUser(tx, ctx.organization.id, actor(input.actorId));
+      const target = await targetUser(
+        tx,
+        ctx.organization.id,
+        actor(input.actorId),
+        true,
+      );
       const rows = await actorSanctions(
         tx,
         ctx.organization.id,
@@ -348,6 +360,7 @@ export async function moderationOverview(
       .select({
         actorId: accounts.actorId,
         displayName: accounts.displayName,
+        withdrawnAt: accounts.withdrawnAt,
         administrator: accounts.administrator,
         reportCount,
         appealCount,
@@ -614,7 +627,10 @@ export async function personalModeration(
   const names = Object.fromEntries(
     (
       await db
-        .select({ id: accounts.actorId, name: accounts.displayName })
+        .select({
+          id: accounts.actorId,
+          name: sql<string>`case when ${accounts.withdrawnAt} is not null then '退会ユーザー' else ${accounts.displayName} end`,
+        })
         .from(accounts)
         .where(eq(accounts.organizationId, organization.id))
     ).map((a) => [a.id, a.name ?? '表示名未登録']),
@@ -631,7 +647,9 @@ export async function personalModeration(
     ),
     notifications: [
       ...personalAppeals
-        .filter((a) => a.resolvedAt)
+        .filter(
+          (a) => a.resolvedAt && Date.parse(a.resolvedAt) > Date.now() - 90 * 86400000,
+        )
         .map((a) => ({
           id: a.id,
           instanceId: '',
@@ -684,5 +702,19 @@ export async function rankingExclusions(
         or(eq(sanctions.instanceId, instanceId), isNull(sanctions.instanceId)),
       ),
     );
-  return rows.filter((row) => activeSanction(row)).map((row) => row.actorId);
+  const retired = await db
+    .select({ actorId: accounts.actorId })
+    .from(accounts)
+    .where(
+      and(
+        eq(accounts.organizationId, organizationId),
+        sql`${accounts.withdrawnAt} IS NOT NULL`,
+      ),
+    );
+  return [
+    ...new Set([
+      ...rows.filter((row) => activeSanction(row)).map((row) => row.actorId),
+      ...retired.map((row) => row.actorId),
+    ]),
+  ];
 }

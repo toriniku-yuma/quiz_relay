@@ -3,6 +3,7 @@ import { settings } from '../../shared/settings';
 import { loadMatchDefinition } from '../catalog/database';
 import type { MatchDefinition, VersionRef } from '../catalog/definition';
 import type { Env } from '../env';
+import { anonymizeDefinition } from '../game/privacy';
 
 export type InstanceScope = { id: string; owner: string };
 type Entry = {
@@ -19,6 +20,7 @@ type Entry = {
 };
 type Queue = {
   actors: Record<string, Entry>;
+  withdrawals?: Record<string, string>;
   loggingOut?: Record<string, boolean>;
   rates: Record<string, { at: number; count: number; admissionId?: string }>;
 };
@@ -46,6 +48,8 @@ export class Matchmaker extends DurableObject<Env> {
     const initial = await this.ctx.blockConcurrencyWhile<Admission | null>(async () => {
       const queue = await this.read();
       const entry = queue.actors[actorId];
+      if (queue.withdrawals?.[actorId])
+        return { ok: false as const, code: 'WITHDRAWAL_PENDING' };
       if (this.logouts.has(actorId) || queue.loggingOut?.[actorId])
         return { ok: false as const, code: 'LOGOUT_PENDING' };
       if (entry) {
@@ -117,6 +121,8 @@ export class Matchmaker extends DurableObject<Env> {
     );
     const allocated = await this.ctx.blockConcurrencyWhile<Admission>(async () => {
       const queue = await this.read();
+      if (queue.withdrawals?.[actorId])
+        return { ok: false as const, code: 'WITHDRAWAL_PENDING' };
       if (this.logouts.has(actorId) || queue.loggingOut?.[actorId])
         return { ok: false as const, code: 'LOGOUT_PENDING' };
       if (Object.keys(queue.actors).length >= settings.lobby.maxRateActors)
@@ -340,6 +346,52 @@ export class Matchmaker extends DurableObject<Env> {
 
   async refreshWaiting(actor: string, instanceId: string) {
     await this.clean(actor, instanceId);
+  }
+
+  async refreshInstanceWaiting(instanceId: string) {
+    await this.clean(undefined, instanceId);
+  }
+
+  async beginWithdrawal(actor: string, operationId: string) {
+    const blocked = await this.ctx.blockConcurrencyWhile(async () => {
+      const queue = await this.read();
+      if (queue.withdrawals?.[actor] && queue.withdrawals[actor] !== operationId)
+        return true;
+      queue.withdrawals ??= {};
+      queue.withdrawals[actor] = operationId;
+      if (queue.rates[actor]) delete queue.rates[actor].admissionId;
+      await this.write(queue);
+      return false;
+    });
+    if (blocked) return { ok: false as const, code: 'WITHDRAWAL_PENDING' };
+    await this.clean(actor);
+    const entry = (await this.read()).actors[actor];
+    if (!entry) return { ok: true as const };
+    const status = await this.status(entry.room);
+    return {
+      ok: false as const,
+      code: status?.phase === 'WAITING' ? 'CANCEL_WAITING_FIRST' : 'MATCH_STARTED',
+    };
+  }
+
+  async cancelWithdrawal(actor: string, operationId: string) {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const queue = await this.read();
+      if (queue.withdrawals?.[actor] === operationId) delete queue.withdrawals[actor];
+      await this.write(queue);
+    });
+  }
+
+  async anonymizeAccount(actorId: string, questionIds: string[]) {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const queue = await this.read();
+      for (const [id, entry] of Object.entries(queue.actors)) {
+        if (id === actorId) entry.name = '退会ユーザー';
+        if (entry.pending && entry.pending !== true)
+          anonymizeDefinition(entry.pending, new Set(questionIds));
+      }
+      await this.write(queue);
+    });
   }
 
   private async status(room: string) {

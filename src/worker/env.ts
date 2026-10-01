@@ -3,6 +3,7 @@ import type { Matchmaker } from './matchmaking/Matchmaker';
 import type { Probe } from './probes/Probe';
 
 export interface Env {
+  ACCOUNT_ERASURE?: Fetcher;
   API_LIMITER?: RateLimit;
   PROBE: DurableObjectNamespace<Probe>;
   MATCHMAKER: DurableObjectNamespace<Matchmaker>;

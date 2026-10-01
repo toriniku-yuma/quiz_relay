@@ -14,6 +14,7 @@ const errors: Record<string, string> = {
   GAME_DATABASE_UNAVAILABLE:
     '大会設定を読み込めませんでした。しばらく待って再試行してください。',
   INSTANCE_PREPARING: 'このインスタンスは準備中です。',
+  RANKED_PAUSED: 'このインスタンスはランクの受付を停止しています。',
   INSTANCE_NOT_FOUND: 'このインスタンスを利用できません。',
   OTHER_INSTANCE_ACTIVE:
     '別のインスタンスで参加中です。元のインスタンスへ戻ってください。',

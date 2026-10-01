@@ -4,37 +4,63 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { localOperationsConfig } from './scripts/local-operations-config.ts';
 
 const devVars = existsSync('.dev.vars')
   ? parseEnv(readFileSync('.dev.vars', 'utf8'))
   : {};
 
 const probeOrigin = devVars.PROBE_ORIGIN;
-export default defineConfig(({ command }) => ({
-  plugins: [
-    react(),
-    tailwindcss(),
-    cloudflare({
-      config:
-        command === 'build'
+export default defineConfig(({ command }) => {
+  const operations = command === 'serve' ? localOperationsConfig(devVars) : undefined;
+  return {
+    plugins: [
+      react(),
+      tailwindcss(),
+      cloudflare({
+        persistState: { path: '.wrangler/state' },
+        config:
+          command === 'build'
+            ? {
+                hyperdrive: [
+                  { binding: 'HYPERDRIVE', id: '49ed9c4348e1429d8f04cc6a47755e21' },
+                  { binding: 'GAME_HYPERDRIVE', id: '4e4a5dbafb8540a1aa13241013dc90c6' },
+                ],
+              }
+            : {
+                vars: { LOCAL_GAME_ENABLED: 'true' },
+                services: operations
+                  ? [
+                      {
+                        binding: 'ACCOUNT_ERASURE',
+                        service: 'quiz-relay-account-erasure',
+                      },
+                    ]
+                  : [],
+              },
+        auxiliaryWorkers: operations
+          ? [
+              {
+                configPath: 'wrangler.erasure.jsonc',
+                devOnly: true,
+                config: { vars: operations },
+              },
+            ]
+          : [],
+      }),
+    ],
+    server: {
+      // Local PostgreSQL clusters, backups, and DO state are not application sources.
+      watch: { ignored: ['**/.wrangler/**'] },
+      https:
+        command === 'serve' && devVars.DEV_TLS_CERT && devVars.DEV_TLS_KEY
           ? {
-              hyperdrive: [
-                { binding: 'HYPERDRIVE', id: '49ed9c4348e1429d8f04cc6a47755e21' },
-                { binding: 'GAME_HYPERDRIVE', id: '4e4a5dbafb8540a1aa13241013dc90c6' },
-              ],
+              cert: readFileSync(devVars.DEV_TLS_CERT),
+              key: readFileSync(devVars.DEV_TLS_KEY),
             }
-          : { vars: { LOCAL_GAME_ENABLED: 'true' } },
-    }),
-  ],
-  server: {
-    https:
-      command === 'serve' && devVars.DEV_TLS_CERT && devVars.DEV_TLS_KEY
-        ? {
-            cert: readFileSync(devVars.DEV_TLS_CERT),
-            key: readFileSync(devVars.DEV_TLS_KEY),
-          }
-        : undefined,
-    strictPort: true,
-    allowedHosts: probeOrigin ? [new URL(probeOrigin).hostname] : [],
-  },
-}));
+          : undefined,
+      strictPort: true,
+      allowedHosts: probeOrigin ? [new URL(probeOrigin).hostname] : [],
+    },
+  };
+});

@@ -10,10 +10,12 @@ import { connectDatabase } from '../db/connection.ts';
 import {
   organizationAccounts as accounts,
   instanceGrants as grants,
+  instanceDeletions,
   instances,
   moderationSanctions,
   organizationEvents,
   organizations,
+  questionSubmissions,
 } from '../db/schema.ts';
 import type { Env } from '../env';
 import {
@@ -53,6 +55,7 @@ export async function organizationIdentity(
   db: Database,
   subject: string,
   known?: typeof organizations.$inferSelect,
+  allowWithdrawn = false,
 ) {
   const organization = known ?? (await db.select().from(organizations))[0];
   if (!organization) throw new OrganizationError('SETUP_REQUIRED', 409);
@@ -77,6 +80,8 @@ export async function organizationIdentity(
   }
   if (!account || account.actorId !== actorId)
     throw new OrganizationError('IDENTITY_CONFLICT', 409);
+  if (account.withdrawnAt && !allowWithdrawn)
+    throw new OrganizationError('ACCOUNT_WITHDRAWN', 403);
   return { organization, account };
 }
 
@@ -99,6 +104,15 @@ export async function overview(
       instances: [],
     };
   const { organization, account } = await organizationIdentity(db, subject, existing);
+  const authored = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select set_config('quiz.organization_id', ${organization.id}, true)`,
+    );
+    return tx
+      .selectDistinct({ id: questionSubmissions.instanceId })
+      .from(questionSubmissions)
+      .where(eq(questionSubmissions.authorId, account.actorId));
+  });
   const all = await db
     .select()
     .from(instances)
@@ -109,6 +123,15 @@ export async function overview(
           ? undefined
           : or(
               eq(instances.state, 'published'),
+              authored.length
+                ? and(
+                    eq(instances.state, 'archived'),
+                    inArray(
+                      instances.id,
+                      authored.map((row) => row.id),
+                    ),
+                  )
+                : undefined,
               exists(
                 db
                   .select()
@@ -156,12 +179,19 @@ export async function overview(
         id: instance.id,
         name: instance.name,
         state: instance.state,
+        operationRevision: instance.operationRevision,
+        pauseReason: instance.pauseReason,
+        rankedPauseReason: instance.rankedPauseReason,
+        casualPauseReason: instance.casualPauseReason,
+        hasOwnQuestions: authored.some((row) => row.id === instance.id),
         permissions: permissions
           .filter((p) => p.instanceId === instance.id)
           .map((p) => p.permission),
       }))
-      .filter((instance) =>
-        canViewInstance(instance.state, account.administrator, instance.permissions),
+      .filter(
+        (instance) =>
+          instance.state === 'archived' ||
+          canViewInstance(instance.state, account.administrator, instance.permissions),
       ),
     ...(account.administrator
       ? {
@@ -203,6 +233,7 @@ export async function setupOrganization(
       organizationId: id,
       owner: `urn:uuid:${instanceId}`,
       name: instanceName,
+      roomInventoryComplete: true,
     });
     await audit(tx, actorId, 'setup', instanceId, {
       name,
@@ -223,7 +254,13 @@ export async function addInstance(
   await db.transaction(async (tx) => {
     const inserted = await tx
       .insert(instances)
-      .values({ id, organizationId: organization.id, owner: `urn:uuid:${id}`, name })
+      .values({
+        id,
+        organizationId: organization.id,
+        owner: `urn:uuid:${id}`,
+        name,
+        roomInventoryComplete: true,
+      })
       .onConflictDoNothing()
       .returning({ id: instances.id });
     const [instance] = await tx.select().from(instances).where(eq(instances.id, id));
@@ -242,16 +279,24 @@ export async function publishInstance(
   subject: string,
   input: Record<string, unknown>,
 ) {
-  const { organization, account } = await organizationIdentity(db, subject);
-  requireAdministrator(account);
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${validId(input.id)}`}, 0))`,
+    );
+    const { organization, account } = await organizationIdentity(tx, subject);
+    requireAdministrator(account);
     const rows = await tx
       .update(instances)
-      .set({ state: 'published' })
+      .set({
+        state: 'published',
+        pauseReason: null,
+        operationRevision: sql`${instances.operationRevision} + 1`,
+      })
       .where(
         and(
           eq(instances.id, validId(input.id)),
           eq(instances.organizationId, organization.id),
+          sql`${instances.state} <> 'archived'`,
         ),
       )
       .returning({ id: instances.id });
@@ -331,6 +376,7 @@ export async function setInstanceGrants(
         and(eq(accounts.actorId, actorId), eq(accounts.organizationId, organization.id)),
       );
     if (!instance || !target) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
+    if (target.withdrawnAt) throw new OrganizationError('ACCOUNT_WITHDRAWN', 409);
     requireAdministrator((await organizationIdentity(tx, subject)).account);
     const previous = await tx
       .select({ permission: grants.permission })
@@ -363,7 +409,20 @@ export async function renameInstance(
   const { organization, account } = await organizationIdentity(db, subject);
   requireAdministrator(account);
   const expected = validName(input.expectedName);
+  const id = validId(input.id);
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${id}`}, 0))`,
+    );
+    if (
+      (
+        await tx
+          .select()
+          .from(instanceDeletions)
+          .where(eq(instanceDeletions.instanceId, id))
+      ).length
+    )
+      throw new OrganizationError('INSTANCE_DELETING', 409);
     const rows = await tx
       .update(instances)
       .set({ name: validName(input.name) })
@@ -437,8 +496,13 @@ export async function allowedInstanceActors(
           eq(instances.id, scope.id),
           eq(instances.owner, scope.owner),
           inArray(accounts.actorId, actors),
+          sql`${accounts.withdrawnAt} IS NULL`,
+          sql`${instances.state} <> 'archived'`,
           or(
-            eq(instances.state, 'published'),
+            and(
+              eq(instances.state, 'published'),
+              sql`${instances.rankedPauseReason} IS NULL`,
+            ),
             eq(accounts.administrator, true),
             exists(
               db

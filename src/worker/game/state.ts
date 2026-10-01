@@ -24,6 +24,7 @@ import { type Rules, rules } from './rules';
 export { rules } from './rules';
 
 export type State = {
+  reviewExpired?: boolean;
   answerStats?: {
     actorId: string;
     result: 'correct' | 'wrong' | 'timeout';

@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { contentHash } from '../catalog/hash.ts';
 import { connectDatabase } from '../db/connection.ts';
 import { matchResults, resultOutbox, resultPlayers } from '../db/schema.ts';
@@ -13,10 +13,13 @@ export class ResultConflict extends Error {
 
 export async function commitResult(
   db: Pick<ReturnType<typeof connectDatabase>['db'], 'transaction'>,
-  record: ResultRecord,
+  source: ResultRecord,
 ) {
-  const hash = await contentHash(record);
   await db.transaction(async (tx) => {
+    const [{ record }] = await tx.execute<{ record: ResultRecord }>(
+      sql`select quiz_game.private_result(${JSON.stringify(source)}::jsonb) as record`,
+    );
+    const hash = await contentHash(record);
     const inserted = await tx
       .insert(matchResults)
       .values({
@@ -31,32 +34,48 @@ export async function commitResult(
       .returning({ id: matchResults.resultId });
     if (!inserted.length) {
       const [existing] = await tx
-        .select({ hash: matchResults.payloadHash })
-        .from(matchResults)
-        .where(eq(matchResults.resultId, record.result.id));
-      const [outbox] = await tx
-        .select({ hash: resultOutbox.payloadHash })
-        .from(resultOutbox)
-        .where(eq(resultOutbox.resultId, record.result.id));
-      if (existing?.hash !== hash || outbox?.hash !== hash) throw new ResultConflict();
-      const players = await tx
         .select({
-          actorId: resultPlayers.actorId,
-          name: resultPlayers.name,
-          ratingDelta: resultPlayers.ratingDelta,
+          hash: matchResults.payloadHash,
+          payload: matchResults.payload,
+          normalized: sql<ResultRecord>`quiz_game.private_result(${matchResults.payload})`,
+          source: sql<ResultRecord>`quiz_game.private_result(${JSON.stringify(source)}::jsonb)`,
+          outboxHash: resultOutbox.payloadHash,
+          outboxPayload: resultOutbox.payload,
+          outboxNormalized: sql<ResultRecord>`quiz_game.private_result(${resultOutbox.payload})`,
+          players: sql<
+            { actorId: string; name: string; ratingDelta: number }[]
+          >`coalesce((
+            select jsonb_agg(jsonb_build_object('actorId', ${resultPlayers.actorId}, 'name', ${resultPlayers.name}, 'ratingDelta', ${resultPlayers.ratingDelta}))
+            from ${resultPlayers} where ${resultPlayers.resultId} = ${matchResults.resultId}
+          ), '[]'::jsonb)`,
         })
-        .from(resultPlayers)
-        .where(eq(resultPlayers.resultId, record.result.id));
-      const expected = record.players.map((player) => ({
-        actorId: player.id,
-        name: player.name,
-        ratingDelta: player.ratingDelta,
-      }));
+        .from(matchResults)
+        .leftJoin(resultOutbox, eq(resultOutbox.resultId, matchResults.resultId))
+        .where(eq(matchResults.resultId, record.result.id));
+      // One statement keeps withdrawal/physical anonymization from mixing snapshots.
+      if (
+        !existing?.outboxPayload ||
+        existing.hash !== (await contentHash(existing.payload)) ||
+        existing.outboxHash !== (await contentHash(existing.outboxPayload)) ||
+        (await contentHash(existing.normalized)) !==
+          (await contentHash(existing.source)) ||
+        (await contentHash(existing.outboxNormalized)) !==
+          (await contentHash(existing.source))
+      )
+        throw new ResultConflict();
       const byActor = (a: { actorId: string }, b: { actorId: string }) =>
         a.actorId.localeCompare(b.actorId);
       if (
-        (await contentHash(players.sort(byActor))) !==
-        (await contentHash(expected.sort(byActor)))
+        (await contentHash(existing.players.sort(byActor))) !==
+        (await contentHash(
+          existing.payload.players
+            .map((player) => ({
+              actorId: player.id,
+              name: player.name,
+              ratingDelta: player.ratingDelta,
+            }))
+            .sort(byActor),
+        ))
       )
         throw new ResultConflict();
       return;

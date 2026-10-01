@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "quiz-relay-account-erasure",
+  "main": "src/erasure/index.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "triggers": { "crons": ["* * * * *"] },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GAME_ROOM",
+        "class_name": "GameRoom",
+        "script_name": "quiz-relay-probe"
+      },
+      {
+        "name": "MATCHMAKER",
+        "class_name": "Matchmaker",
+        "script_name": "quiz-relay-probe"
+      }
+    ]
+  },
+  "routes": []
+}

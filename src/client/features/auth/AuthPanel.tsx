@@ -20,6 +20,7 @@ export default function AuthPanel({ debug }: { debug: DebugController }) {
       )}
 
       <form
+        className="mt-4 grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           if (!debug.busy && secure) void debug.sendEmail();

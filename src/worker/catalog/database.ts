@@ -34,6 +34,9 @@ export async function loadMatchDefinition(
         competition: c,
         ruleset: r,
         questionSet: s,
+        privateSelection: sql<
+          typeof s.$inferSelect.selection
+        >`quiz_game.private_selection(${s.owner},${s.selection})`,
         question: q.payload,
         availability: a,
       })
@@ -131,7 +134,7 @@ export async function loadMatchDefinition(
       throw new Error('QUESTION_UNAVAILABLE');
     const { competition, ruleset, questionSet } = rows[0];
     return await validateDefinition({
-      ...(questionSet.selection ? { selection: questionSet.selection } : {}),
+      ...(rows[0].privateSelection ? { selection: rows[0].privateSelection } : {}),
       competition: {
         owner: competition.owner,
         id: competition.competitionId,

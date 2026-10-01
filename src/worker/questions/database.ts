@@ -390,7 +390,7 @@ async function readQuestionOverview(
         ? await db
             .select({
               id: organizationAccounts.actorId,
-              name: organizationAccounts.displayName,
+              name: sql<string>`case when ${organizationAccounts.withdrawnAt} is not null then '退会ユーザー' else ${organizationAccounts.displayName} end`,
             })
             .from(organizationAccounts)
             .where(
@@ -463,6 +463,7 @@ async function readQuestionOverview(
               and(
                 eq(notifications.instanceId, instanceId),
                 eq(notifications.actorId, ctx.account.actorId),
+                sql`${notifications.createdAt} > now() - interval '90 days'`,
               ),
             )
             .orderBy(desc(notifications.createdAt))
@@ -693,6 +694,17 @@ export async function questionMutation(
     );
     const actorId = ctx.account.actorId;
     const operation = input.operation;
+    if (
+      ctx.instance.state === 'archived' &&
+      ![
+        'export',
+        'export-managed',
+        'notifications',
+        'read-notifications',
+        'history',
+      ].includes(String(operation))
+    )
+      fail('INSTANCE_ARCHIVED', 409);
     if (operation === 'submit' && !ctx.account.displayName) fail('PROFILE_REQUIRED', 409);
     if (operation === 'submit')
       await requireUnrestricted(tx, ctx.organization.id, actorId, instanceId, 'submit');
@@ -779,7 +791,7 @@ export async function questionMutation(
       const reason = reasonFor(input);
       const updated = await tx
         .update(cases)
-        .set({ resolved: true, reason })
+        .set({ resolved: true, reason, resolvedAt: new Date().toISOString() })
         .where(
           and(
             eq(cases.instanceId, instanceId),
@@ -825,6 +837,7 @@ export async function questionMutation(
             and(
               eq(notifications.instanceId, instanceId),
               eq(notifications.actorId, actorId),
+              sql`${notifications.createdAt} > now() - interval '90 days'`,
             ),
           )
           .orderBy(desc(notifications.createdAt))

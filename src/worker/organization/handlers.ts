@@ -12,6 +12,8 @@ import {
   setInstanceGrants,
   setupOrganization,
 } from './database';
+import { requestInstanceDeletion } from './deletion';
+import { changeInstanceOperation } from './operations';
 import { saveProfile } from './profile';
 
 export const organizationOverview: Handler<AuthEnv> = async (c) => {
@@ -39,6 +41,15 @@ export const mutateOrganization: Handler<AuthEnv> = async (c) => {
   const { db, close } = organizationDatabase(c.env);
   try {
     const value = input as Record<string, unknown>;
+    if (c.req.path.endsWith('/delete'))
+      return c.json(await requestInstanceDeletion(db, c.env, c.get('subject'), value));
+    if (c.req.path.endsWith('/operation')) {
+      const result = await changeInstanceOperation(db, c.get('subject'), value);
+      await c.env.MATCHMAKER.getByName(result.organizationId)
+        .refreshInstanceWaiting(String(value.id))
+        .catch(() => undefined);
+      return c.json({ ok: true });
+    }
     if (c.req.path.endsWith('/profile'))
       return c.json(
         await saveProfile(db, c.get('subject'), value, c.env.GAME_CONFIG_PROFILE),
@@ -91,6 +102,14 @@ const contextFor =
           !canViewInstance(instance.state, account.administrator, permissions ?? [])
         )
           throw new OrganizationError('INSTANCE_PREPARING', 409);
+        if (
+          !existingParticipation &&
+          c.req.path.startsWith('/api/matchmaking/') &&
+          instance.rankedPauseReason &&
+          !account.administrator &&
+          !permissions.length
+        )
+          throw new OrganizationError('RANKED_PAUSED', 409);
         c.set('actorId', account.actorId);
         c.set('profileName', account.displayName ?? null);
         c.set('organizationId', organization.id);

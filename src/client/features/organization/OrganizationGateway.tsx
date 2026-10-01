@@ -5,6 +5,8 @@ import { gameHref } from '../../app/navigation';
 import { GAME_PATH } from '../../app/paths';
 import MatchLobby from '../matchmaking/MatchLobby';
 import ResultsPanel from '../results/ResultsPanel';
+import InstanceClosure from './InstanceClosure';
+import InstanceDeletion from './InstanceDeletion';
 import OrganizationPanel from './OrganizationPanel';
 
 export default function OrganizationGateway() {
@@ -20,23 +22,31 @@ export default function OrganizationGateway() {
     url.pathname.replace(/\/$/, '') === GAME_PATH.replace(/\/$/, '') && !view;
   const available =
     legacy || canAccessInstance(selected, organization.data?.account?.administrator);
+  const canResume = !!organization.data?.account && /^[0-9a-f-]{36}$/.test(instanceId);
   const canSwitch =
     sessionId === null ||
     (matchStatus?.instanceId === sessionId && !matchStatus.retained);
 
   useEffect(() => {
-    if (matchingPage && available && canSwitch) setSessionId(instanceId);
-  }, [matchingPage, available, canSwitch, instanceId]);
+    if (matchingPage && (available || canResume) && canSwitch) setSessionId(instanceId);
+  }, [matchingPage, available, canResume, canSwitch, instanceId]);
 
   return (
     <>
       {selected?.state === 'preparing' && available && !view && (
         <p role="status" className="my-3">
           準備中：このインスタンスの運営者のみ参加できます。通常の戦績・レートに反映されます。
+          {selected.pauseReason && <span> 理由：{selected.pauseReason}</span>}
+        </p>
+      )}
+      {selected?.rankedPauseReason && !view && (
+        <p role="status" className="my-3">
+          ランク停止中：{selected.rankedPauseReason}
+          。このインスタンスの運営者は通常参加できます。
         </p>
       )}
       {sessionId !== null && (
-        <div hidden={!matchingPage || !available || sessionId !== instanceId}>
+        <div hidden={!matchingPage || sessionId !== instanceId}>
           <MatchLobby
             key={sessionId}
             auth={auth}
@@ -64,7 +74,19 @@ export default function OrganizationGateway() {
           refreshKey={auth.user?.id ?? ''}
         />
       )}
-      {view === 'settings' && selected && organization.data?.account?.administrator ? (
+      {view === 'delete' && selected ? (
+        <InstanceDeletion
+          key={selected.id}
+          instance={selected}
+          organization={organization}
+        />
+      ) : view === 'closure' && selected ? (
+        <InstanceClosure
+          key={selected.id}
+          instance={selected}
+          organization={organization}
+        />
+      ) : view === 'settings' && selected && organization.data?.account?.administrator ? (
         <OrganizationPanel
           key={selected.id}
           organization={organization}
