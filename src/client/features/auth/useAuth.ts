@@ -1,8 +1,15 @@
 import type { User } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
+import { navigate } from '../../app/navigation';
 import { GAME_PATH } from '../../app/paths';
 import { hasAuthCallback } from './callback';
-import { sendLoginEmail, setupAuth, signInWithGoogle, signOut } from './client';
+import {
+  redirectSignedOut,
+  sendLoginEmail,
+  setupAuth,
+  signInWithGoogle,
+  signOut,
+} from './client';
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -11,21 +18,32 @@ export function useAuth() {
   const [message, setMessage] = useState('');
   useEffect(() => {
     let active = true;
+    let revision = 0;
+    let subject: string | undefined;
     let unsubscribe: (() => void) | undefined;
     void setupAuth()
       .then(async (client) => {
-        const { error } = await client.auth.initialize();
-        if (error) throw error;
-        const subscription = client.auth.onAuthStateChange((_event, session) => {
-          if (active) setUser(session?.user ?? null);
+        if (!active) return;
+        const subscription = client.auth.onAuthStateChange((event, session) => {
+          if (!active) return;
+          revision++;
+          if (session?.user) subject = session.user.id;
+          setUser(session?.user ?? null);
+          if (!session && (event === 'SIGNED_OUT' || event === 'INITIAL_SESSION'))
+            redirectSignedOut(subject);
         });
         unsubscribe = () => subscription.data.subscription.unsubscribe();
-        if (!active) {
-          unsubscribe();
-          return;
+        const { error } = await client.auth.initialize();
+        if (error) throw error;
+        if (!active) return;
+        const checkedRevision = revision;
+        const { data, error: identityError } = await client.auth.getUser();
+        if (active && revision === checkedRevision) {
+          if (identityError) throw identityError;
+          if (data.user) subject = data.user.id;
+          setUser(data.user);
+          if (!data.user) redirectSignedOut(subject);
         }
-        const { data } = await client.auth.getUser();
-        if (active) setUser(data.user);
       })
       .catch(() => {
         if (active)
@@ -36,10 +54,7 @@ export function useAuth() {
       .finally(() => {
         if (active) {
           setReady(true);
-          if (hasAuthCallback(new URL(location.href))) {
-            history.replaceState(null, '', GAME_PATH);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }
+          if (hasAuthCallback(new URL(location.href))) navigate(GAME_PATH, true);
         }
       });
     return () => {

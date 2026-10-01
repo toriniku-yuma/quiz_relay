@@ -5,22 +5,10 @@ import {
   OrganizationRequestError,
   organizationRequest,
 } from '../organization/useOrganization';
+import { readWithdrawalReceipt, withdrawalReceiptKey } from './withdrawalReceipt';
 
-const receiptKey = 'quiz-relay-withdrawal';
 export function useWithdrawal(subject?: string) {
-  const [receipt, setReceipt] = useState<{ id: string; subject: string } | null>(() => {
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(receiptKey) ?? 'null');
-      return saved &&
-        typeof saved.id === 'string' &&
-        typeof saved.subject === 'string' &&
-        (!subject || saved.subject === subject)
-        ? saved
-        : null;
-    } catch {
-      return null;
-    }
-  });
+  const [receipt, setReceipt] = useState(() => readWithdrawalReceipt(subject));
   const [confirmation, setConfirmation] = useState(receipt ? '退会' : '');
   const [accepted, setAccepted] = useState(false),
     [ready, setReady] = useState(false);
@@ -83,7 +71,7 @@ export function useWithdrawal(subject?: string) {
     const request = receipt ?? { id: crypto.randomUUID(), subject: subject ?? '' };
     try {
       try {
-        sessionStorage.setItem(receiptKey, JSON.stringify(request));
+        sessionStorage.setItem(withdrawalReceiptKey, JSON.stringify(request));
       } catch {
         throw new Error(
           '退会手続きの保存に失敗しました。ブラウザーの保存領域を確認して再試行してください。',
@@ -107,7 +95,7 @@ export function useWithdrawal(subject?: string) {
       ) {
         setReceipt(null);
         try {
-          sessionStorage.removeItem(receiptKey);
+          sessionStorage.removeItem(withdrawalReceiptKey);
         } catch {
           // The server rejected this request; keep the error visible even when storage is unavailable.
         }

@@ -1,6 +1,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { API_PATHS } from '../../../shared/api-paths';
+import { navigate } from '../../app/navigation';
+import { GAME_PATH, PROFILE_PATH } from '../../app/paths';
 import { probeRequest } from '../debug/api';
+import { readWithdrawalReceipt } from '../profile/withdrawalReceipt';
 
 type AuthConfig = { url: string; publishableKey: string };
 
@@ -148,6 +151,17 @@ export async function signInWithGoogle(token?: string) {
   return { redirecting: true };
 }
 
+export function redirectSignedOut(subject?: string) {
+  const url = new URL(location.href);
+  if (
+    url.pathname === PROFILE_PATH &&
+    url.searchParams.get('view') === 'withdrawal' &&
+    readWithdrawalReceipt(subject)
+  )
+    return;
+  navigate(GAME_PATH, true);
+}
+
 export async function signOut() {
   const client = getAuth();
   if (client) {
@@ -167,7 +181,12 @@ export async function signOut() {
     }
   }
   const response = await client?.auth.signOut();
-  if (response?.error) throw response.error;
+  if (response?.error) {
+    const session = await client?.auth.getSession();
+    if (session && !session.error && !session.data.session) navigate(GAME_PATH, true);
+    throw response.error;
+  }
 
+  navigate(GAME_PATH, true);
   return { signedOut: true };
 }
