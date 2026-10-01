@@ -4,6 +4,7 @@ import {
   accountWithdrawals,
   instanceGrants,
   instances,
+  personalQuestionSets,
   questionSubmissions,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
@@ -79,6 +80,9 @@ export async function recordWithdrawal(
       .set({ withdrawnAt: job.requestedAt, displayName: null, administrator: false })
       .where(eq(accounts.actorId, account.actorId));
     await tx.delete(instanceGrants).where(eq(instanceGrants.actorId, account.actorId));
+    await tx
+      .delete(personalQuestionSets)
+      .where(eq(personalQuestionSets.authorId, account.actorId));
     const authored = await tx
       .update(questionSubmissions)
       .set({ authorName: '退会ユーザー' })

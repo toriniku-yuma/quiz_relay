@@ -2,6 +2,7 @@ import { useApp } from '../app/context';
 import PageHeader from '../components/PageHeader';
 import LoginForm from '../features/auth/LoginForm';
 import OrganizationGateway from '../features/organization/OrganizationGateway';
+import GuestInstances from '../features/rooms/GuestInstances';
 
 export default function MatchPage() {
   const { auth, organization, url } = useApp();
@@ -32,10 +33,17 @@ export default function MatchPage() {
       />
       {!auth.ready ? (
         <p role="status">ログイン状態を確認しています。</p>
+      ) : !auth.user && url.searchParams.get('guest') === '1' ? (
+        <GuestInstances />
       ) : auth.user ? (
         <OrganizationGateway />
       ) : (
-        <LoginForm auth={auth} />
+        <>
+          <LoginForm auth={auth} />
+          <a className="mt-4 block underline" href="/game/?guest=1">
+            ゲストで遊ぶ
+          </a>
+        </>
       )}
     </main>
   );

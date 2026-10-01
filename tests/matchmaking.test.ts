@@ -69,15 +69,84 @@ async function state(
 async function socket(
   stub: DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>,
   token: string,
+  instanceId = '',
 ) {
   const response = await stub.fetch('https://game.test', {
-    headers: { Upgrade: 'websocket', 'X-Game-Session': token },
+    headers: {
+      Upgrade: 'websocket',
+      'X-Game-Session': token,
+      ...(instanceId ? { 'X-Game-Instance': instanceId } : {}),
+    },
   });
   if (!response.webSocket) throw new Error(`Upgrade failed ${response.status}`);
   response.webSocket.accept();
   return response.webSocket;
 }
 
+it('カジュアルは実力帯なしで自動開始し、部屋・ランクへの同時参加を拒否する', async () => {
+  definition.kind = 'casual';
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const scope = { id: crypto.randomUUID(), owner, mode: 'casual' as const };
+  const sockets: WebSocket[] = [];
+  const admissions = [];
+  try {
+    for (let i = 0; i < 4; i++) {
+      const entered = await queue.enter(
+        `casual-${i}`,
+        `参加者${i}`,
+        undefined,
+        false,
+        scope,
+        i >= 2,
+      );
+      if (!entered.ok) throw new Error(entered.code);
+      admissions.push(entered);
+      sockets.push(
+        await socket(
+          runtime.GAME_ROOM.getByName(`1c:${entered.room}`),
+          entered.token,
+          scope.id,
+        ),
+      );
+    }
+    expect(new Set(admissions.map((a) => a.room)).size).toBe(1);
+    const saved = await state(runtime.GAME_ROOM.getByName(`1c:${admissions[0].room}`));
+    expect(saved?.phase).toBe('REVEALING');
+    expect(saved?.matchKind).toBe('casual');
+    expect(saved?.players.filter((p) => p.guest)).toHaveLength(2);
+    expect(
+      mocks.load.mock.calls
+        .filter(([, reference]) => !reference)
+        .every(([settings]) => settings.GAME_CONFIG_PROFILE.endsWith('-casual')),
+    ).toBe(true);
+    expect(
+      await queue.enter('casual-0', '参加者0', undefined, false, {
+        ...scope,
+        mode: undefined,
+      }),
+    ).toMatchObject({ ok: false, code: 'OTHER_INSTANCE_ACTIVE' });
+    const roomId = crypto.randomUUID();
+    expect(
+      await queue.enterRoom(
+        { id: 'casual-0', name: '参加者0', guest: false },
+        roomId,
+        { ...scope, mode: 'room' },
+        { operationId: crypto.randomUUID(), password: '', invite: '' },
+      ),
+    ).toMatchObject({ ok: false, code: 'OTHER_INSTANCE_ACTIVE' });
+    expect(
+      await runInDurableObject(
+        runtime.GAME_ROOM.getByName(`room:${roomId}`),
+        async (_instance, ctx) => ctx.storage.get('user-room'),
+      ),
+    ).toBeUndefined();
+    expect(
+      await queue.cancel('casual-0', admissions[0].room, false, scope.id),
+    ).toMatchObject({ ok: false });
+  } finally {
+    for (const socket of sockets) socket.close();
+  }
+}, 20000);
 it.each([2, 3, 4])(
   'M01/M03: %i distinct connected actors start once; duplicate tabs and reservations do not start',
   async (count) => {

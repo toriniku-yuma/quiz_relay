@@ -10,6 +10,7 @@ import { connectDatabase } from '../db/connection.ts';
 import {
   organizationAccounts as accounts,
   instanceGrants as grants,
+  guestSessions,
   instanceDeletions,
   instances,
   moderationSanctions,
@@ -183,6 +184,7 @@ export async function overview(
         pauseReason: instance.pauseReason,
         rankedPauseReason: instance.rankedPauseReason,
         casualPauseReason: instance.casualPauseReason,
+        casualConfig: instance.casualConfig,
         hasOwnQuestions: authored.some((row) => row.id === instance.id),
         permissions: permissions
           .filter((p) => p.instanceId === instance.id)
@@ -481,7 +483,7 @@ export async function accountPermissions(
 // Called with server-owned room scope and participant IDs, never browser-supplied actor IDs.
 export async function allowedInstanceActors(
   env: Env,
-  scope: { id: string; owner: string },
+  scope: { id: string; owner: string; mode?: 'casual' | 'room' },
   actors: string[],
 ): Promise<string[]> {
   if (!actors.length) return [];
@@ -501,7 +503,9 @@ export async function allowedInstanceActors(
           or(
             and(
               eq(instances.state, 'published'),
-              sql`${instances.rankedPauseReason} IS NULL`,
+              scope.mode
+                ? sql`${instances.casualPauseReason} IS NULL`
+                : sql`${instances.rankedPauseReason} IS NULL`,
             ),
             eq(accounts.administrator, true),
             exists(
@@ -530,11 +534,41 @@ export async function allowedInstanceActors(
           ),
         ),
       );
-    return rows
+    const allowed = rows
       .map((row) => row.actorId)
       .filter(
-        (id) => !restrictions.some((row) => row.actorId === id && blocks(row, 'ranked')),
+        (id) =>
+          !restrictions.some(
+            (row) => row.actorId === id && blocks(row, scope.mode ? 'casual' : 'ranked'),
+          ),
       );
+    if (!scope.mode) return allowed;
+    const [instance] = await db
+      .select()
+      .from(instances)
+      .where(and(eq(instances.id, scope.id), eq(instances.owner, scope.owner)));
+    if (!instance || (scope.mode === 'casual' && !instance.casualConfig.enabled))
+      return [];
+    if (
+      instance.state === 'published' &&
+      !instance.casualPauseReason &&
+      (scope.mode === 'casual'
+        ? instance.casualConfig.casualGuests
+        : instance.casualConfig.roomGuests)
+    ) {
+      const guests = await db
+        .select()
+        .from(guestSessions)
+        .where(
+          and(
+            inArray(guestSessions.actorId, actors),
+            eq(guestSessions.organizationId, instance.organizationId),
+            gt(guestSessions.expiresAt, new Date().toISOString()),
+          ),
+        );
+      allowed.push(...guests.map((g) => g.actorId));
+    }
+    return allowed;
   } finally {
     await close();
   }

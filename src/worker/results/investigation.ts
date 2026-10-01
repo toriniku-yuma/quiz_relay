@@ -19,13 +19,16 @@ export function resultStatistics(record: ResultRecord, actorId: string): MatchSt
   return {
     resultId: record.result.id,
     finishedAt: new Date(record.result.finishedAt).toISOString(),
-    outcome: ['connections', 'disqualifications'].includes(record.result.reason)
-      ? '無効'
-      : !record.result.winnerId
-        ? '引き分け'
-        : record.result.winnerId === actorId
-          ? '勝利'
-          : '敗北',
+    outcome:
+      player.role === 'presenter'
+        ? '出題専任'
+        : ['connections', 'disqualifications'].includes(record.result.reason)
+          ? '無効'
+          : !record.result.winnerId
+            ? '引き分け'
+            : record.result.winnerId === actorId
+              ? '勝利'
+              : '敗北',
     correct: player.correct,
     mistakes: player.mistakes,
     wrong: stats?.filter((s) => s.result === 'wrong').length ?? null,

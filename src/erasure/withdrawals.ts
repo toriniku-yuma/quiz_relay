@@ -36,6 +36,7 @@ export async function anonymizeWithdrawal(
       .from(instances)
       .where(eq(instances.organizationId, job.organizationId));
     await eraseResultNames(tx);
+    await tx.execute(sql`select quiz_game.erase_personal_sets()`);
     await tx.execute(sql`select quiz_game.erase_author_catalogs()`);
     await tx.execute(sql`select quiz_game.erase_withdrawal_audit(${job.id}::uuid)`);
     // A restored/legacy inventory must finish before a cursor can cover all old rooms.

@@ -9,8 +9,8 @@ import type { Env } from '../env';
 export class OrganizationError extends Error {
   target?: string;
   readonly code: string;
-  readonly status: 400 | 403 | 404 | 409 | 503;
-  constructor(code: string, status: 400 | 403 | 404 | 409 | 503 = 403) {
+  readonly status: 400 | 401 | 403 | 404 | 409 | 429 | 503;
+  constructor(code: string, status: 400 | 401 | 403 | 404 | 409 | 429 | 503 = 403) {
     super(code);
     this.code = code;
     this.status = status;

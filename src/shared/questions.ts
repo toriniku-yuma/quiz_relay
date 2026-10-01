@@ -234,6 +234,10 @@ export const defaultQuestionSettings: QuestionSettings = {
   categoryReportThreshold: 5,
 };
 export type QuestionOverview = {
+  reportedOriginals?: Record<
+    string,
+    { text: string; displayAnswer?: string; answer: string; explanation: string }
+  >;
   authorNames?: Record<string, string>;
   pagination?: { page: number; pageSize: number; total: number };
   categoryRequests: { submissionId: string; categoryId: string; reason: string }[];

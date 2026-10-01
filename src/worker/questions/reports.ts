@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { connectDatabase } from '../db/connection.ts';
 import { matchResults, resultPlayers } from '../db/schema.ts';
 import type { Env } from '../env';
@@ -31,7 +31,11 @@ export async function verifiedReportedQuestion(
   const { db, close } = connectDatabase(address, env.DATABASE_CA_CERT, !!binding);
   try {
     const [row] = await db
-      .select({ payload: matchResults.payload })
+      .select({
+        payload: sql<
+          typeof matchResults.$inferSelect.payload
+        >`quiz_game.private_result(${matchResults.payload})`,
+      })
       .from(matchResults)
       .innerJoin(resultPlayers, eq(resultPlayers.resultId, matchResults.resultId))
       .where(

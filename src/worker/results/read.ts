@@ -58,6 +58,7 @@ export async function readResults(
         ranking,
         history: history.map(({ payload, ...entry }) => ({
           ...entry,
+          kind: payload.kind,
           questions: payload.completedQuestions?.map(
             ({ id, text, displayAnswer, readings, explanation, source, authorName }) => ({
               id,
@@ -70,20 +71,24 @@ export async function readResults(
             }),
           ),
           outcome:
-            entry.reason === 'connections' || entry.reason === 'disqualifications'
-              ? 'invalid'
-              : !entry.winnerId
-                ? 'draw'
-                : entry.winnerId === actorId
-                  ? 'win'
-                  : 'loss',
+            payload.players.find((p) => p.id === actorId)?.role === 'presenter'
+              ? 'presenter'
+              : entry.reason === 'connections' || entry.reason === 'disqualifications'
+                ? 'invalid'
+                : !entry.winnerId
+                  ? 'draw'
+                  : entry.winnerId === actorId
+                    ? 'win'
+                    : 'loss',
           players: payload.players.map(
-            ({ id, name, correct, mistakes, ratingDelta }) => ({
+            ({ id, name, correct, mistakes, ratingDelta, guest, role }) => ({
               id,
               name,
               correct,
               mistakes,
               ratingDelta,
+              ...(guest ? { guest } : {}),
+              ...(role ? { role } : {}),
             }),
           ),
         })),

@@ -1,7 +1,8 @@
-import { eq, isNull, sql } from 'drizzle-orm';
+import { eq, isNull, lte, sql } from 'drizzle-orm';
 import { connectDatabase } from '../worker/db/connection.ts';
 import {
   accountWithdrawals,
+  guestSessions,
   instanceDeletions,
   instanceRooms,
   instances,
@@ -11,6 +12,7 @@ import { eraseInstance, retryInstanceDeletions } from './instances.ts';
 import { type InventoryEnv, reconcileRoomInventory } from './inventory.ts';
 import { authDeletion, eraseAuthentication, retryAuthentication } from './jobs.ts';
 import { erasureBatch } from './limits.ts';
+import { eraseResultNames } from './results.ts';
 import { anonymizeWithdrawal } from './withdrawals.ts';
 
 export async function expireRoomReviews(
@@ -92,6 +94,10 @@ async function run(env: ErasureEnv, id?: string, instance = false, inventory = f
       })(),
       retryInstanceDeletions(db, env.GAME_ROOM),
       expireRoomReviews(db, env.GAME_ROOM),
+      eraseResultNames(db),
+      db
+        .delete(guestSessions)
+        .where(lte(guestSessions.expiresAt, new Date().toISOString())),
     ]);
     if (results.some((result) => result.status === 'rejected'))
       throw new Error('MAINTENANCE_INCOMPLETE');

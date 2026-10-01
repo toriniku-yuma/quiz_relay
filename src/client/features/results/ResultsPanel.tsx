@@ -62,30 +62,37 @@ export default function ResultsPanel({
           <li key={entry.resultId} className="py-2">
             {new Date(entry.finishedAt).toLocaleString()}：
             {
-              { win: '勝利', loss: '敗北', draw: '引き分け', invalid: '無効試合' }[
-                entry.outcome
-              ]
+              {
+                win: '勝利',
+                loss: '敗北',
+                draw: '引き分け',
+                invalid: '無効試合',
+                presenter: '出題専任',
+              }[entry.outcome]
             }
-            ／ レート {entry.ratingDelta > 0 ? '+' : ''}
-            {entry.ratingDelta}（確定）
+            {entry.kind === 'casual' || entry.kind === 'room'
+              ? ' ／ レート変動なし'
+              : ` ／ レート ${entry.ratingDelta > 0 ? '+' : ''}${entry.ratingDelta}（確定）`}
             <ul className="mt-1 text-sm">
               {entry.players.map((player) => (
                 <li key={player.id} className="flex items-center gap-2">
                   <span>
                     {player.name}：正解{player.correct}・お手つき{player.mistakes}
                   </span>
-                  {instanceId && player.id !== organization.data?.account?.actorId && (
-                    <ReasonAction
-                      report
-                      title={`${player.name}を通報`}
-                      input={{
-                        action: 'report',
-                        instanceId,
-                        actorId: player.id,
-                        resultId: entry.resultId,
-                      }}
-                    />
-                  )}
+                  {instanceId &&
+                    !player.guest &&
+                    player.id !== organization.data?.account?.actorId && (
+                      <ReasonAction
+                        report
+                        title={`${player.name}を通報`}
+                        input={{
+                          action: 'report',
+                          instanceId,
+                          actorId: player.id,
+                          resultId: entry.resultId,
+                        }}
+                      />
+                    )}
                 </li>
               ))}
             </ul>

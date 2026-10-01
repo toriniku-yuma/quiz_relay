@@ -7,6 +7,8 @@ export type Phase =
   | 'INVALID';
 
 export type Player = {
+  role?: 'presenter';
+  guest?: boolean;
   id: string;
   name: string;
   correct: number;
@@ -29,6 +31,8 @@ export type Result = {
     | 'target_reached'
     | 'seven_correct'
     | 'exhausted'
+    | 'question_limit'
+    | 'last_remaining'
     | 'connections'
     | 'disqualifications';
   finishedAt: number;
@@ -36,6 +40,8 @@ export type Result = {
   ratingChanges?: { actorId: string; delta: number }[];
 };
 export type Snapshot = {
+  kind?: 'ranked' | 'casual' | 'room' | 'development';
+  roomRules?: { winMode: 'target' | 'questions'; count: number; mistakes: number | null };
   revealedAnswer?: {
     authorName?: string;
     displayAnswer: string;
@@ -68,7 +74,7 @@ export type Command = {
   commandId: string;
   matchId: string;
   questionId: string;
-  type: 'buzz' | 'choose';
+  type: 'buzz' | 'choose' | 'next';
   payload: { attemptId?: string; panelId?: string; choiceId?: string };
 };
 export type Reply = { commandId: string; ok: boolean; code: string; roomSeq: number };

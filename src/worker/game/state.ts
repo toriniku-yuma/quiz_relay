@@ -25,6 +25,7 @@ export { rules } from './rules';
 
 export type State = {
   reviewExpired?: boolean;
+  guestNamesExpired?: boolean;
   answerStats?: {
     actorId: string;
     result: 'correct' | 'wrong' | 'timeout';
@@ -91,19 +92,28 @@ export function createState(
         ? { authorName: definition.selection.authorNames[question.id] }
         : {}),
     }));
-  if (definition && /^authored-band-[0-2]$/.test(definition.competition.id))
+  if (definition && /^authored-(band-[0-2]|casual)$/.test(definition.competition.id))
     source = orderQuestions(
       source,
-      Number(definition.competition.id.slice(-1)),
+      definition.kind === 'casual' ? 2 : Number(definition.competition.id.slice(-1)),
       definition.selection?.weights,
       definition.selection?.categories,
     );
+  if (definition?.kind === 'room') {
+    source = [...source];
+    for (let i = source.length - 1; i > 0; i--) {
+      const j = Math.floor(
+        (crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32) * (i + 1),
+      );
+      [source[i], source[j]] = [source[j], source[i]];
+    }
+  }
   const question = source[questionIndex];
   if (
     !question ||
     !Number.isInteger(playersRequired) ||
     playersRequired < 2 ||
-    playersRequired > 4 ||
+    playersRequired > (definition?.kind === 'room' ? 8 : 4) ||
     (definition &&
       (questionIndex !== 0 || playersRequired !== definition.playersPerMatch))
   )
@@ -116,11 +126,13 @@ export function createState(
 
   return {
     answerStats: [],
-    matchKind: definition ? 'ranked' : 'development',
+    matchKind: definition ? (definition.kind ?? 'ranked') : 'development',
     rules: structuredClone(fixedRules),
     ...(definition
       ? {
           definition: {
+            ...(definition.kind ? { kind: definition.kind } : {}),
+            ...(definition.original ? { original: true } : {}),
             ...(definition.selection
               ? { selection: structuredClone(definition.selection) }
               : {}),
@@ -164,6 +176,20 @@ export function snapshot(state: State): Snapshot {
     (q) => q.id === state.question.id,
   );
   return {
+    ...(state.matchKind === 'room'
+      ? {
+          roomRules: {
+            winMode: state.rules.winMode ?? 'target',
+            count:
+              state.rules.winMode === 'questions'
+                ? (state.rules.questionLimit ?? 7)
+                : state.rules.correctAnswersToWin,
+            mistakes: state.rules.noDisqualification
+              ? null
+              : state.rules.mistakesToDisqualify,
+          },
+        }
+      : {}),
     ...(completedQuestion
       ? {
           revealedAnswer: {
@@ -180,6 +206,7 @@ export function snapshot(state: State): Snapshot {
     matchId: state.matchId,
     questionId: state.question.id,
     questionNumber: state.questionIndex + 1,
+    kind: state.matchKind,
     questionCount: state.questions.length,
     result: state.result ? { ...state.result } : null,
     roomSeq: state.roomSeq,
@@ -221,7 +248,7 @@ function judge(
 ) {
   const player = state.players.find(({ id }) => id === state.holder);
   state.questionParticipants ??= state.players
-    .filter((p) => !p.disqualified)
+    .filter((p) => !p.disqualified && p.role !== 'presenter')
     .map((p) => p.id);
   if (player && result !== 'unanswered' && state.answerStats)
     state.answerStats.push({
@@ -234,16 +261,21 @@ function judge(
     else {
       player.mistakes++;
       player.locked = true;
-      player.disqualified = player.mistakes >= state.rules.mistakesToDisqualify;
+      player.disqualified =
+        !state.rules.noDisqualification &&
+        player.mistakes >= state.rules.mistakesToDisqualify;
     }
   }
 
   state.judgment = { actorId: state.holder, result };
   if (
-    state.players.filter((player) => !player.disqualified).length >= 2 &&
+    answeringPlayers(state).filter((player) => !player.disqualified).length >=
+      (state.matchKind === 'room' ? 1 : 2) &&
     (result === 'correct' ||
       result === 'unanswered' ||
-      state.players.every((player) => player.locked || player.disqualified))
+      answeringPlayers(state).every((player) => player.locked || player.disqualified) ||
+      (state.matchKind === 'room' &&
+        answeringPlayers(state).filter((p) => !p.disqualified).length === 1))
   ) {
     const question = state.question;
     state.completedQuestions ??= [];
@@ -274,17 +306,25 @@ function judge(
   if (
     !checkInvalid(state, now) &&
     player &&
+    state.rules.winMode !== 'questions' &&
     player.correct >= state.rules.correctAnswersToWin
   )
     finish(state, 'target_reached', player.id, now);
 }
 
-export function advance(state: State, now: number) {
+export function advance(state: State, now: number, nextByPresenter = false) {
   if (checkInvalid(state, now)) {
     changed(state, now);
     return true;
   }
   if (state.reconnect || state.deadline === null || now < state.deadline) return false;
+  if (
+    state.phase === 'JUDGED' &&
+    questionEnded(state) &&
+    !nextByPresenter &&
+    state.players.some((p) => p.role === 'presenter' && p.connected)
+  )
+    return false;
 
   if (state.phase === 'ANSWERING') judge(state, 'timeout', now);
   else if (state.phase === 'REVEALING') {
@@ -298,18 +338,29 @@ export function advance(state: State, now: number) {
         (state.revealed === length ? state.waitRemaining : state.rules.revealIntervalMs);
     }
   } else if (state.phase === 'JUDGED') {
-    if (
-      state.judgment?.result === 'correct' ||
-      state.judgment?.result === 'unanswered' ||
-      state.players.every(({ locked, disqualified }) => locked || disqualified)
-    ) {
-      if (state.questionIndex + 1 >= state.questions.length) {
-        const eligible = state.players.filter(({ disqualified }) => !disqualified);
+    if (questionEnded(state)) {
+      if (
+        state.questionIndex + 1 >= state.questions.length ||
+        (state.rules.winMode === 'questions' &&
+          state.questionIndex + 1 >= (state.rules.questionLimit ?? 7))
+      ) {
+        const eligible = answeringPlayers(state).filter(
+          ({ disqualified }) => !disqualified,
+        );
         const best = Math.max(...eligible.map(({ correct }) => correct));
         const leaders = eligible.filter(({ correct }) => correct === best);
-        finish(state, 'exhausted', leaders.length === 1 ? leaders[0].id : null, now);
+        finish(
+          state,
+          state.rules.winMode === 'questions' &&
+            state.questionIndex + 1 >= (state.rules.questionLimit ?? 7)
+            ? 'question_limit'
+            : 'exhausted',
+          leaders.length === 1 ? leaders[0].id : null,
+          now,
+        );
       } else {
         state.questionIndex++;
+        if (state.matchKind === 'room') state.commands = {};
         state.questionParticipants = undefined;
         state.question = state.questions[state.questionIndex];
         state.revealed = 0;
@@ -341,14 +392,7 @@ export function adjudicate(
   now: number,
 ): Reply {
   const key = `${actorId}:${command.commandId}`;
-  const fingerprint = JSON.stringify([
-    command.matchId,
-    command.questionId,
-    command.type,
-    command.payload.attemptId,
-    command.payload.panelId,
-    command.payload.choiceId,
-  ]);
+  const fingerprint = commandFingerprint(command);
   const previous = state.commands[key];
   if (previous)
     return previous.fingerprint === fingerprint
@@ -363,7 +407,7 @@ export function adjudicate(
   advance(state, now);
   const player = state.players.find(({ id }) => id === actorId);
   let code = 'OK';
-  // ponytail: ローカル12問は参加者ごとに256件まで保持。問題数拡張時は保存方式と上限を再評価する。
+  // Room receipts are stored separately by GameRoom; this bound covers only the current question.
   if (
     Object.keys(state.commands).filter((key) => key.startsWith(`${actorId}:`)).length >=
     settings.game.maxCommandsPerActor
@@ -381,6 +425,15 @@ export function adjudicate(
   )
     code = 'STALE_COMMAND';
   else if (state.reconnect) code = 'RECONNECT_WAIT';
+  else if (command.type === 'next') {
+    if (
+      player.role !== 'presenter' ||
+      state.phase !== 'JUDGED' ||
+      !questionEnded(state) ||
+      !advance(state, now, true)
+    )
+      code = 'NEXT_REJECTED';
+  } else if (player.role === 'presenter') code = 'PRESENTER_CANNOT_ANSWER';
   else if (command.type === 'buzz') {
     if (state.phase !== 'REVEALING' || player.locked || player.disqualified)
       code = 'BUZZ_REJECTED';
@@ -434,6 +487,17 @@ export function adjudicate(
   return reply;
 }
 
+export function commandFingerprint(command: Command) {
+  return JSON.stringify([
+    command.matchId,
+    command.questionId,
+    command.type,
+    command.payload.attemptId,
+    command.payload.panelId,
+    command.payload.choiceId,
+  ]);
+}
+
 export function isActive(state: State) {
   return (
     state.phase === 'REVEALING' || state.phase === 'ANSWERING' || state.phase === 'JUDGED'
@@ -469,8 +533,16 @@ function checkInvalid(state: State, now: number) {
     finish(state, 'connections', null, now);
     return true;
   }
-  if (state.players.filter(({ disqualified }) => !disqualified).length <= 1) {
-    finish(state, 'disqualifications', null, now);
+  const eligible = answeringPlayers(state).filter(({ disqualified }) => !disqualified);
+  if (eligible.length <= 1) {
+    finish(
+      state,
+      state.matchKind === 'room' && eligible.length === 1
+        ? 'last_remaining'
+        : 'disqualifications',
+      state.matchKind === 'room' && eligible.length === 1 ? eligible[0].id : null,
+      now,
+    );
     return true;
   }
   return false;
@@ -501,13 +573,16 @@ export function updateConnections(state: State, connected: Set<string>, now: num
   }
   updated = checkInvalid(state, now) || updated;
   if (isActive(state)) {
-    if (connected.size <= 1 && !state.reconnect) {
+    const answerersConnected = answeringPlayers(state).filter((p) =>
+      connected.has(p.id),
+    ).length;
+    if (answerersConnected <= 1 && !state.reconnect) {
       state.reconnect = {
         deadline: now + (state.rules.reconnectGraceMs ?? rules.reconnectGraceMs),
         remaining: state.deadline === null ? null : Math.max(0, state.deadline - now),
       };
       updated = true;
-    } else if (connected.size >= 2 && state.reconnect) {
+    } else if (answerersConnected >= 2 && state.reconnect) {
       state.deadline =
         state.reconnect.remaining === null ? null : now + state.reconnect.remaining;
       if (state.panel && state.deadline !== null) state.panel.deadline = state.deadline;
@@ -517,4 +592,14 @@ export function updateConnections(state: State, connected: Set<string>, now: num
   }
   if (updated) changed(state, now);
   return updated;
+}
+
+export const answeringPlayers = (state: State) =>
+  state.players.filter((p) => p.role !== 'presenter');
+export function questionEnded(state: State) {
+  return (
+    state.judgment?.result === 'correct' ||
+    state.judgment?.result === 'unanswered' ||
+    answeringPlayers(state).every((p) => p.locked || p.disqualified)
+  );
 }

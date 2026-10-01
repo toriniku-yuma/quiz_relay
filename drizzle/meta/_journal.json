@@ -337,6 +337,20 @@
       "when": 1790746001921,
       "tag": "0047_erasure_batch_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1790836257486,
+      "tag": "0048_lazy_roland_deschain",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1790836341715,
+      "tag": "0049_casual_room_permissions",
+      "breakpoints": true
     }
   ]
 }

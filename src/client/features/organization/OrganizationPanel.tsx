@@ -5,6 +5,7 @@ import { USERS_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
+import CasualSettings from '../rooms/CasualSettings';
 import InstanceOperations from './InstanceOperations';
 import type { useOrganization } from './useOrganization';
 
@@ -129,7 +130,10 @@ export default function OrganizationPanel({
                     {management &&
                       data.account?.administrator &&
                       instance.state !== 'archived' && (
-                        <InstanceOperations instance={instance} refresh={refresh} />
+                        <>
+                          <CasualSettings instance={instance} refresh={refresh} />
+                          <InstanceOperations instance={instance} refresh={refresh} />
+                        </>
                       )}
                     {management && data.account?.administrator && (
                       <form

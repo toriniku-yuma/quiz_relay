@@ -19,6 +19,7 @@ export type OrganizationOverview = {
     pauseReason?: string | null;
     rankedPauseReason?: string | null;
     casualPauseReason?: string | null;
+    casualConfig?: import('./rooms').CasualSettings;
     hasOwnQuestions?: boolean;
     permissions: InstancePermission[];
   }[];

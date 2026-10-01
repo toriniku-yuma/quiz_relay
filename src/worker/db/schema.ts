@@ -26,6 +26,11 @@ import type {
   QuestionSettings,
   SubmissionStatus,
 } from '../../shared/questions';
+import {
+  type BroughtQuestion,
+  type CasualSettings,
+  defaultCasualSettings,
+} from '../../shared/rooms.ts';
 import type { FixedQuestion } from '../catalog/definition.ts';
 import type { Rules } from '../game/rules.ts';
 import type { ResultRecord } from '../results/record';
@@ -711,6 +716,10 @@ export const instances = quizGame
       pauseReason: text('pause_reason'),
       rankedPauseReason: text('ranked_pause_reason'),
       casualPauseReason: text('casual_pause_reason'),
+      casualConfig: jsonb('casual_config')
+        .$type<CasualSettings>()
+        .notNull()
+        .default(defaultCasualSettings),
       roomInventoryComplete: boolean('room_inventory_complete').notNull().default(false),
     },
     (t) => [
@@ -1064,9 +1073,7 @@ export const questionReports = quizGame
       questionId: text('question_id').notNull(),
       kind: text().$type<'defect' | 'category'>().notNull(),
       round: integer().notNull(),
-      actorId: text('actor_id')
-        .notNull()
-        .references(() => organizationAccounts.actorId),
+      actorId: text('actor_id').notNull(),
       reason: text().notNull(),
       suggestedCategory: text('suggested_category').notNull().default(''),
       createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
@@ -1135,9 +1142,7 @@ export const userReports = quizGame
       actorId: text('actor_id')
         .notNull()
         .references(() => organizationAccounts.actorId),
-      reporterId: text('reporter_id')
-        .notNull()
-        .references(() => organizationAccounts.actorId),
+      reporterId: text('reporter_id').notNull(),
       resultId: uuid('result_id').notNull(),
       reason: text().notNull(),
       createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })
@@ -1256,5 +1261,68 @@ export const administratorTransfers = quizGame
       check('transfer_state', sql`${t.state} IN ('pending','accepted','cancelled')`),
       check('transfer_target', sql`${t.senderId} <> ${t.targetId}`),
     ],
+  )
+  .enableRLS();
+
+export const guestSessions = quizGame
+  .table(
+    'guest_sessions',
+    {
+      actorId: text('actor_id').primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      name: text().notNull(),
+      expiresAt: timestamp('expires_at', {
+        withTimezone: true,
+        mode: 'string',
+      }).notNull(),
+    },
+    (t) => [
+      organizationAccess(),
+      index().on(t.expiresAt),
+      check('guest_actor_hash', sql`${t.actorId} ~ '^[0-9a-f]{64}$'`),
+    ],
+  )
+  .enableRLS();
+
+export const personalQuestionSets = quizGame
+  .table(
+    'personal_question_sets',
+    {
+      id: uuid().primaryKey(),
+      organizationId: uuid('organization_id')
+        .notNull()
+        .references(() => organizations.id),
+      authorId: text('author_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId),
+      name: text().notNull(),
+      revision: integer().notNull().default(1),
+      questions: jsonb().$type<BroughtQuestion[]>().notNull(),
+      updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' })
+        .notNull()
+        .defaultNow(),
+    },
+    (t) => [
+      organizationAccess(),
+      index().on(t.organizationId, t.authorId),
+      check('personal_set_revision', sql`${t.revision} >= 1`),
+    ],
+  )
+  .enableRLS();
+
+export const roomDirectory = quizGame
+  .table(
+    'room_directory',
+    {
+      id: uuid().primaryKey(),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id),
+      public: boolean().notNull(),
+      closed: boolean().notNull().default(false),
+    },
+    (t) => [organizationAccess(), index().on(t.instanceId, t.public, t.closed)],
   )
   .enableRLS();

@@ -1,8 +1,8 @@
 import type { User } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
 import { navigate } from '../../app/navigation';
-import { GAME_PATH } from '../../app/paths';
-import { hasAuthCallback } from './callback';
+import { CASUAL_PATH, GAME_PATH, ROOMS_PATH } from '../../app/paths';
+import { hasAuthCallback, readAuthReturn } from './callback';
 import {
   redirectSignedOut,
   sendLoginEmail,
@@ -17,6 +17,18 @@ export function useAuth() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   useEffect(() => {
+    const initialUrl = new URL(location.href);
+    const publicEntry =
+      (initialUrl.pathname === ROOMS_PATH && initialUrl.searchParams.has('room')) ||
+      (initialUrl.searchParams.get('guest') === '1' &&
+        [GAME_PATH, ROOMS_PATH, CASUAL_PATH].includes(initialUrl.pathname));
+    const storedAuthentication =
+      typeof localStorage !== 'undefined' &&
+      Object.keys(localStorage).some((key) => /^sb-.*-auth-token$/.test(key));
+    const signedOut = (actualLogout = false) => {
+      if (actualLogout || subject || storedAuthentication || !publicEntry)
+        redirectSignedOut(subject);
+    };
     let active = true;
     let revision = 0;
     let subject: string | undefined;
@@ -30,7 +42,7 @@ export function useAuth() {
           if (session?.user) subject = session.user.id;
           setUser(session?.user ?? null);
           if (!session && (event === 'SIGNED_OUT' || event === 'INITIAL_SESSION'))
-            redirectSignedOut(subject);
+            signedOut(event === 'SIGNED_OUT');
         });
         unsubscribe = () => subscription.data.subscription.unsubscribe();
         const { error } = await client.auth.initialize();
@@ -42,7 +54,7 @@ export function useAuth() {
           if (identityError) throw identityError;
           if (data.user) subject = data.user.id;
           setUser(data.user);
-          if (!data.user) redirectSignedOut(subject);
+          if (!data.user) signedOut();
         }
       })
       .catch(() => {
@@ -54,7 +66,13 @@ export function useAuth() {
       .finally(() => {
         if (active) {
           setReady(true);
-          if (hasAuthCallback(new URL(location.href))) navigate(GAME_PATH, true);
+          if (hasAuthCallback(new URL(location.href))) {
+            const target = readAuthReturn();
+            navigate(
+              subject && target?.startsWith(`${ROOMS_PATH}?`) ? target : GAME_PATH,
+              true,
+            );
+          }
         }
       });
     return () => {

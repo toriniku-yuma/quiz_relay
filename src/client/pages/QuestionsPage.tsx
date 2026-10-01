@@ -1,4 +1,5 @@
 import { useApp } from '../app/context';
+import { ROOMS_PATH } from '../app/paths';
 import Button from '../components/Button';
 import { questionPage, questionPages } from '../features/questions/pages';
 import QuestionManagementMenu from '../features/questions/QuestionManagementMenu';
@@ -17,6 +18,14 @@ export default function QuestionsPage() {
         {questionPages[page].title}
       </h1>
       {instance && <p className="mb-6">{instance.name}</p>}
+      {auth.user && (
+        <a
+          className="mb-4 block text-sm underline"
+          href={`${ROOMS_PATH}?instance=${instanceId}&view=sets`}
+        >
+          部屋用の自分の問題セット
+        </a>
+      )}
       {loading ? (
         <p role="status">ログイン状態とインスタンスを確認しています。</p>
       ) : organization.error && !organization.data ? (

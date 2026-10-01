@@ -95,11 +95,10 @@ export function parseQuestionJson(source: string): QuestionInput[] {
   });
 }
 
-export function exportQuestionJson(questions: QuestionInput[]): string[] {
+export function exportQuestionJson<T>(questions: T[]): string[] {
   const files: string[] = [];
-  let current: QuestionInput[] = [];
-  const encode = (values: QuestionInput[]) =>
-    JSON.stringify({ version: 1, questions: values });
+  let current: T[] = [];
+  const encode = (values: T[]) => JSON.stringify({ version: 1, questions: values });
   const bytes = (value: string) => new TextEncoder().encode(value).length;
   for (const question of questions) {
     if (bytes(encode([question])) > 2000000)

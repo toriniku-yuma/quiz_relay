@@ -96,6 +96,14 @@ it('旧試合の未記録値をゼロ扱いせず、解答回数で重み付け�
     timeouts: 1,
   });
 });
+it('出題専任者には勝敗を付けない', () => {
+  const { record } = resultFixture();
+  record.players[0].role = 'presenter';
+  for (const winnerId of [record.players[1].id, null]) {
+    record.result.winnerId = winnerId;
+    expect(resultStatistics(record, record.players[0].id).outcome).toBe('出題専任');
+  }
+});
 it('新しい試合の詳細だけを結果原本へ固定し、旧試合は未記録のまま保持する', () => {
   const { state, record } = resultFixture();
   state.answerStats = [{ actorId: 'a', result: 'correct', elapsedMs: 1000 }];

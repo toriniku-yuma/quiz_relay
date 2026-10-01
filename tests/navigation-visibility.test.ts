@@ -46,14 +46,14 @@ it('一般ユーザーには組織管理・開発ツールを表示せず、管�
 it('準備中の通常対戦・履歴は対象の運営者だけに表示する', () => {
   state.administrator = false;
   state.permissions = [];
-  expect(renderToStaticMarkup(createElement(Navigation))).not.toContain('対戦する');
+  expect(renderToStaticMarkup(createElement(Navigation))).not.toContain('ランクマッチ');
   for (const permission of ['questions', 'authors', 'users'] as const) {
     state.permissions = [permission];
     const markup = renderToStaticMarkup(createElement(Navigation));
-    expect(markup).toContain('対戦する');
+    expect(markup).toContain('ランクマッチ');
     expect(markup).toContain('対戦履歴・ランキング');
   }
   state.permissions = [];
   state.administrator = true;
-  expect(renderToStaticMarkup(createElement(Navigation))).toContain('対戦する');
+  expect(renderToStaticMarkup(createElement(Navigation))).toContain('ランクマッチ');
 });

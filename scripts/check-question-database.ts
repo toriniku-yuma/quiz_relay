@@ -27,6 +27,7 @@ import { verifyWorkflows } from './check-moderation-workflows.ts';
 import { verifyProfiles } from './check-profile-database.ts';
 import { verifyResultPrivacyRaces } from './check-result-privacy.ts';
 import { verifyRetention } from './check-retention.ts';
+import { verifyRooms } from './check-room-database.ts';
 import { verifyWithdrawal } from './check-withdrawal.ts';
 import { verifyLocalDifficultyUpdate } from './question-local-difficulty.ts';
 import { provisionLocalQuestionPermissions } from './question-local-permissions.ts';
@@ -1108,6 +1109,7 @@ try {
   await verifyRetention(db, organizationId, instanceId, actors);
   await verifyErasureBatches(db);
   await verifyInstanceDeletion(db, instanceId, otherId);
+  await verifyRooms(db, address, otherId, actors);
   if (process.env.OPERATIONS_SERVICE_QA === '1') {
     const { verifyErasureService } = await import('./check-erasure-service.ts');
     await verifyErasureService(db, address, directory, organizationId);

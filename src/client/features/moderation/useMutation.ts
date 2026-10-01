@@ -6,6 +6,7 @@ import {
 export function useMutation(
   path: string,
   onSaved: (request: Record<string, unknown>) => void | Promise<void>,
+  send: (path: string, body: object) => Promise<unknown> = organizationRequest,
 ) {
   const pending = useRef<Record<string, unknown> | null>(null);
   const sending = useRef(false);
@@ -20,7 +21,7 @@ export function useMutation(
     setBusy(true);
     setError('');
     try {
-      await organizationRequest(path, request);
+      await send(path, request);
       pending.current = null;
       setUncertain(false);
       window.dispatchEvent(new Event('notifications:refresh'));
@@ -34,7 +35,8 @@ export function useMutation(
         e instanceof OrganizationRequestError &&
         e.status >= 400 &&
         e.status < 500 &&
-        e.status !== 408;
+        e.status !== 408 &&
+        !uncertain;
       if (rejected) pending.current = null;
       setUncertain(!rejected);
       setError(e instanceof Error ? e.message : '保存結果を確認できませんでした。');

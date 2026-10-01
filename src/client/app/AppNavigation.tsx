@@ -1,21 +1,26 @@
 import { canAccessInstance } from '../../shared/organization';
 import { type QuestionPage, questionHref } from '../features/questions/pages';
 import '../styles/menu-scrollbar.css';
+import { useState } from 'react';
 import Button from '../components/Button';
 import MenuPopover from '../components/MenuPopover';
+import GuestName from '../features/rooms/GuestName';
 import { useApp } from './context';
 import { gameHref } from './navigation';
 import {
+  CASUAL_PATH,
   DEBUG_PATH,
   GAME_PATH,
   LOCAL_GAME_PATH,
   PROFILE_PATH,
+  ROOMS_PATH,
   USERS_PATH,
 } from './paths';
 import { useSidebarScroll } from './useSidebarScroll';
 
 export default function Navigation({ mobile = false }: { mobile?: boolean }) {
-  const { auth, organization, url } = useApp();
+  const { auth, organization, url, guest } = useApp();
+  const [guestOptions, setGuestOptions] = useState(false);
   const nav = useSidebarScroll();
   const data = organization.data;
   const instanceId = url.searchParams.get('instance') ?? '';
@@ -33,10 +38,25 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
   const linkClass = (href: string) =>
     `block rounded px-3 py-2.5 break-words ${current(href) ? 'bg-paper font-bold text-ink' : 'hover:bg-paper'}`;
   const items =
-    canAccessInstance(selected, data?.account?.administrator) || data?.enabled === false
+    canAccessInstance(selected, data?.account?.administrator) ||
+    data?.enabled === false ||
+    guest?.data?.id
       ? [
-          { label: '対戦する', href: gameHref(instanceId) },
-          { label: '対戦履歴・ランキング', href: gameHref(instanceId, 'history') },
+          ...(auth.user ? [{ label: 'ランクマッチ', href: gameHref(instanceId) }] : []),
+          {
+            label: 'カジュアル',
+            href: `${CASUAL_PATH}?instance=${instanceId}${auth.user ? '' : '&guest=1'}`,
+          },
+          {
+            label: '部屋',
+            href: `${ROOMS_PATH}?instance=${instanceId}${auth.user ? '' : '&guest=1'}`,
+          },
+          {
+            label: '対戦履歴・ランキング',
+            href: auth.user
+              ? gameHref(instanceId, 'history')
+              : `${CASUAL_PATH}?instance=${instanceId}&guest=1&view=history`,
+          },
         ]
       : [];
   const administrator = data?.account?.administrator === true;
@@ -100,7 +120,9 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
     },
   ].filter((section) => section.items.length > 0);
   const name =
-    data?.account?.displayName ?? (auth.user ? '表示名未登録' : 'ログインしていません');
+    data?.account?.displayName ??
+    guest?.data?.name ??
+    (auth.user ? '表示名未登録' : 'ログインしていません');
   const debugQuery = instanceId ? `?instance=${encodeURIComponent(instanceId)}` : '';
 
   return (
@@ -229,6 +251,24 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
               ログアウト
             </Button>
           </MenuPopover>
+        )}
+        {!auth.user && guest?.data?.name && (
+          <MenuPopover title="オプション" upward>
+            <Button onClick={() => setGuestOptions(true)}>ゲスト名を変更</Button>
+            <a className="block p-3 underline" href="/game/?guest=1">
+              インスタンス一覧
+            </a>
+          </MenuPopover>
+        )}
+        {guestOptions && guest && (
+          <GuestName
+            name={guest.data?.name ?? ''}
+            onClose={() => setGuestOptions(false)}
+            onSaved={async () => {
+              await guest.refresh();
+              setGuestOptions(false);
+            }}
+          />
         )}
       </div>
     </nav>

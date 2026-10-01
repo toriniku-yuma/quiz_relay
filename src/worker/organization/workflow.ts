@@ -72,7 +72,7 @@ export async function moderationWorkflow(
         evidence.owner !== scope.owner ||
         evidence.result.id !== input.resultId ||
         !evidence.players.some((p) => p.id === account.actorId) ||
-        !evidence.players.some((p) => p.id === actorId) ||
+        !evidence.players.some((p) => p.id === actorId && !p.guest) ||
         actorId === account.actorId
       )
         fail('REPORT_NOT_ALLOWED', 403);

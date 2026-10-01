@@ -25,7 +25,10 @@ export function parseCommand(message: string | ArrayBuffer): Command | null {
     return null;
   if (Object.keys(value).sort().join(',') !== 'commandId,matchId,payload,questionId,type')
     return null;
-  if (value.type === 'buzz' && Object.keys(value.payload).length === 0)
+  if (
+    (value.type === 'buzz' || value.type === 'next') &&
+    Object.keys(value.payload).length === 0
+  )
     return value as Command;
   if (
     value.type !== 'choose' ||

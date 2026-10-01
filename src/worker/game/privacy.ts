@@ -2,14 +2,36 @@ import type { MatchDefinition } from '../catalog/definition';
 import type { State } from './state';
 
 export function reviewDeadline(state: State) {
-  if (state.reviewExpired || !state.completed || state.result?.storage !== 'confirmed')
-    return;
-  return state.result.finishedAt + 365 * 86400000;
+  if (!state.completed || state.result?.storage !== 'confirmed') return;
+  const deadlines: number[] = [];
+  if (!state.reviewExpired)
+    deadlines.push(
+      state.result.finishedAt + (state.definition?.original ? 30 : 365) * 86400000,
+    );
+  if (!state.guestNamesExpired && state.players.some((p) => p.guest))
+    deadlines.push(state.result.finishedAt + 30 * 86400000);
+  return deadlines.length ? Math.min(...deadlines) : undefined;
 }
 
 export function expireReview(state: State, now: number) {
   const deadline = reviewDeadline(state);
-  if (deadline === undefined || now < deadline) return false;
+  if (deadline === undefined || now < deadline || !state.result) return false;
+  if (
+    !state.guestNamesExpired &&
+    state.players.some((p) => p.guest) &&
+    now >= state.result.finishedAt + 30 * 86400000
+  ) {
+    for (const player of [...state.players, ...(state.completed?.players ?? [])])
+      if (player.guest) player.name = 'ゲスト';
+    state.guestNamesExpired = true;
+    state.events = [];
+    state.publicState = null;
+  }
+  if (
+    state.reviewExpired ||
+    now < state.result.finishedAt + (state.definition?.original ? 30 : 365) * 86400000
+  )
+    return true;
   state.reviewExpired = true;
   state.questions = [];
   state.question = { id: state.question.id, text: '', answer: '', explanation: '' };

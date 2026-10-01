@@ -8,9 +8,11 @@ const mocks = vi.hoisted(() => ({
   attach: vi.fn(),
   leave: vi.fn(),
   resume: vi.fn(),
+  request: vi.fn(),
 }));
 vi.mock('react', () => ({
   useState: (initial: unknown) => [initial, vi.fn()],
+  useRef: (initial: unknown) => ({ current: initial }),
   useEffect: (effect: () => () => void) => mocks.effects.push(effect),
 }));
 vi.mock('../src/client/features/game/useGame', () => ({
@@ -18,12 +20,13 @@ vi.mock('../src/client/features/game/useGame', () => ({
 }));
 vi.mock('../src/client/features/matchmaking/api', async (original) => ({
   ...(await original<typeof import('../src/client/features/matchmaking/api')>()),
-  matchRequest: vi.fn().mockResolvedValue({ playersPerMatch: 2 }),
+  matchRequest: mocks.request,
   resumeMatch: mocks.resume,
 }));
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.effects.length = 0;
+  mocks.request.mockReset().mockResolvedValue({ playersPerMatch: 2 });
 });
 
 it('clears the saved room only when the server confirms there is no active match', async () => {
@@ -53,4 +56,38 @@ it('ignores a delayed no-match response after unmount', async () => {
   reject(new MatchError('NO_ACTIVE_MATCH'));
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(mocks.leave).not.toHaveBeenCalled();
+});
+it('keeps a new match when an earlier resume arrives late', async () => {
+  let resolve!: (value: { room: string }) => void;
+  mocks.resume.mockReturnValue(
+    new Promise<{ room: string }>((done) => {
+      resolve = done;
+    }),
+  );
+  mocks.request.mockImplementation(async (path: string) =>
+    path.endsWith('/join') ? { room: 'new-room' } : { playersPerMatch: 2 },
+  );
+  const match = useMatchmaking('user-a');
+  const cleanup = mocks.effects[0]();
+  await match.join('user-a');
+  resolve({ room: 'old-room' });
+  await new Promise((done) => setTimeout(done, 0));
+  expect(mocks.attach).toHaveBeenCalledExactlyOnceWith('new-room');
+  cleanup();
+});
+it('ignores an earlier no-match response after a successful cancellation', async () => {
+  let reject!: (error: Error) => void;
+  mocks.resume.mockReturnValue(
+    new Promise<{ room: string }>((_resolve, fail) => {
+      reject = fail;
+    }),
+  );
+  const match = useMatchmaking('user-a');
+  const cleanup = mocks.effects[0]();
+  await match.cancel();
+  reject(new MatchError('NO_ACTIVE_MATCH'));
+  await new Promise((done) => setTimeout(done, 0));
+  expect(mocks.leave).toHaveBeenCalledOnce();
+  expect(mocks.attach).not.toHaveBeenCalled();
+  cleanup();
 });

@@ -1,14 +1,18 @@
 import { useSyncExternalStore } from 'react';
 import { questionPages } from '../features/questions/pages';
 import {
+  CASUAL_PATH,
   DEBUG_PATH,
   GAME_PATH,
   LOCAL_GAME_PATH,
   PROFILE_PATH,
+  ROOMS_PATH,
   USERS_PATH,
 } from './paths';
 
 const paths: readonly string[] = [
+  CASUAL_PATH,
+  ROOMS_PATH,
   USERS_PATH,
   PROFILE_PATH,
   GAME_PATH,

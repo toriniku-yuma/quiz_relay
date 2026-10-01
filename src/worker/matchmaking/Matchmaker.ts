@@ -2,10 +2,12 @@ import { DurableObject } from 'cloudflare:workers';
 import { settings } from '../../shared/settings';
 import { loadMatchDefinition } from '../catalog/database';
 import type { MatchDefinition, VersionRef } from '../catalog/definition';
+import { contentHash } from '../catalog/hash';
 import type { Env } from '../env';
 import { anonymizeDefinition } from '../game/privacy';
+import type { Participant } from '../rooms/database';
 
-export type InstanceScope = { id: string; owner: string };
+export type InstanceScope = { id: string; owner: string; mode?: 'casual' | 'room' };
 type Entry = {
   band?: number;
   created: number;
@@ -17,6 +19,9 @@ type Entry = {
   revoking?: string;
   scope?: InstanceScope;
   generation?: string;
+  userRoom?: boolean;
+  guest?: boolean;
+  requestHash?: string;
 };
 type Queue = {
   actors: Record<string, Entry>;
@@ -35,6 +40,7 @@ export class Matchmaker extends DurableObject<Env> {
     reference?: VersionRef,
     resume = false,
     scope?: InstanceScope,
+    guest = false,
   ) {
     const allowed = await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
@@ -54,7 +60,7 @@ export class Matchmaker extends DurableObject<Env> {
         return { ok: false as const, code: 'LOGOUT_PENDING' };
       if (entry) {
         await this.write(queue);
-        if (entry.scope?.id !== scope?.id)
+        if (entry.scope?.id !== scope?.id || entry.scope?.mode !== scope?.mode)
           return {
             ok: false as const,
             code: 'OTHER_INSTANCE_ACTIVE',
@@ -77,7 +83,16 @@ export class Matchmaker extends DurableObject<Env> {
     let definition: MatchDefinition;
     try {
       definition = await loadMatchDefinition(
-        scope ? { ...this.env, GAME_OWNER: scope.owner } : this.env,
+        scope
+          ? {
+              ...this.env,
+              GAME_OWNER: scope.owner,
+              GAME_CONFIG_PROFILE:
+                scope.mode === 'casual'
+                  ? `${this.env.GAME_CONFIG_PROFILE}-casual`
+                  : this.env.GAME_CONFIG_PROFILE,
+            }
+          : this.env,
         reference,
         actorId,
       );
@@ -95,7 +110,9 @@ export class Matchmaker extends DurableObject<Env> {
     if (scope && definition.competition.owner !== scope.owner)
       return { ok: false as const, code: 'INSTANCE_MISMATCH' };
     const key = JSON.stringify(
-      scope ? [scope.id, definition.competition] : definition.competition,
+      scope
+        ? [scope.id, scope.mode ?? 'ranked', definition.competition]
+        : definition.competition,
     );
     if (
       new Set(
@@ -155,6 +172,7 @@ export class Matchmaker extends DurableObject<Env> {
         room: available ?? crypto.randomUUID(),
         key,
         name,
+        guest,
         token: crypto.randomUUID() + crypto.randomUUID(),
         generation: crypto.randomUUID(),
         pending: true,
@@ -174,7 +192,80 @@ export class Matchmaker extends DurableObject<Env> {
     return 'entry' in allocated ? this.reserve(actorId, allocated.entry) : allocated;
   }
 
-  private async reserve(actor: string, entry: Entry) {
+  async enterRoom(
+    actor: Participant,
+    room: string,
+    scope: InstanceScope,
+    input: { operationId: string; password: string; invite: string },
+    creation?: Record<string, unknown>,
+  ) {
+    const hash = await contentHash({
+      room,
+      scope,
+      input,
+      ...(creation ? { creation } : {}),
+    });
+    await this.clean(actor.id);
+    const admission = await this.ctx.blockConcurrencyWhile<Admission>(async () => {
+      const queue = await this.read();
+      if (!this.rate(queue, actor.id)) {
+        await this.write(queue);
+        return { ok: false, code: 'RATE_LIMIT' };
+      }
+      if (queue.withdrawals?.[actor.id]) return { ok: false, code: 'WITHDRAWAL_PENDING' };
+      if (this.logouts.has(actor.id) || queue.loggingOut?.[actor.id])
+        return { ok: false, code: 'LOGOUT_PENDING' };
+      const existing = queue.actors[actor.id];
+      if (existing) {
+        if (
+          !existing.userRoom ||
+          existing.room !== room ||
+          existing.scope?.id !== scope.id
+        )
+          return {
+            ok: false,
+            code: 'OTHER_INSTANCE_ACTIVE',
+            instanceId: existing.scope?.id,
+          };
+        if (existing.pending && existing.requestHash !== hash)
+          return { ok: false, code: 'OPERATION_CONFLICT' };
+        return { entry: existing };
+      }
+      const entry: Entry = {
+        room,
+        key: `room:${room}`,
+        created: Date.now(),
+        token: crypto.randomUUID() + crypto.randomUUID(),
+        name: actor.name,
+        generation: crypto.randomUUID(),
+        scope,
+        userRoom: true,
+        guest: actor.guest,
+        pending: true,
+        requestHash: hash,
+      };
+      queue.actors[actor.id] = entry;
+      await this.write(queue);
+      return { entry };
+    });
+    if (!('entry' in admission)) return admission;
+    if (creation) {
+      const lobby = this.room(room, true);
+      const created = await lobby.createUserRoom(room, scope, actor, creation);
+      if (!created.ok) {
+        await this.cancel(actor.id, room, false, scope.id);
+        return { ok: false as const, code: created.code, status: created.status };
+      }
+      input = { ...input, invite: await lobby.createdRoomInvite(actor.id) };
+    }
+    return this.reserve(actor.id, admission.entry, input);
+  }
+
+  private async reserve(
+    actor: string,
+    entry: Entry,
+    credentials?: { password: string; invite: string },
+  ) {
     if (entry.revoking) {
       await this.finishRevocation(actor, entry);
       const current = (await this.read()).actors[actor];
@@ -186,14 +277,31 @@ export class Matchmaker extends DurableObject<Env> {
       entry.pending === true
         ? await this.ctx.storage.get<MatchDefinition>(`definition:${generation(entry)}`)
         : entry.pending;
-    const result = await this.room(entry.room).reserve(
-      actor,
-      entry.name,
-      entry.token,
-      definition,
-      entry.scope,
-      generation(entry),
-    );
+    const result = entry.userRoom
+      ? await this.room(entry.room, true).joinUserRoom(
+          { id: actor, name: entry.name, guest: !!entry.guest },
+          entry.token,
+          generation(entry),
+          credentials?.password ?? '',
+          credentials?.invite ?? '',
+          entry.scope,
+        )
+      : await this.room(entry.room).reserve(
+          actor,
+          entry.name,
+          entry.token,
+          definition,
+          entry.scope,
+          generation(entry),
+          entry.guest,
+        );
+    if (!result.ok && entry.userRoom)
+      await this.room(entry.room, true).cancelReservation(
+        actor,
+        false,
+        generation(entry),
+        entry.token,
+      );
     return this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
       const current = queue.actors[actor];
@@ -204,8 +312,17 @@ export class Matchmaker extends DurableObject<Env> {
       )
         return { ok: false as const, code: 'STALE_REQUEST' };
       // A rejected token does not prove the actor has left an active match.
-      delete current.pending;
-      await this.ctx.storage.delete(`definition:${generation(entry)}`);
+      if (result.ok || !entry.userRoom) {
+        delete current.pending;
+        await this.ctx.storage.delete(`definition:${generation(entry)}`);
+      }
+      if (result.ok && entry.userRoom) {
+        const receipts =
+          (await this.ctx.storage.get<Record<string, number>>(`sessions:${actor}`)) ?? {};
+        receipts[`room:${entry.room}`] = result.expires;
+        await this.ctx.storage.put(`sessions:${actor}`, receipts);
+      }
+      if (!result.ok && entry.userRoom) delete queue.actors[actor];
       await this.write(queue);
       return result.ok
         ? {
@@ -247,7 +364,7 @@ export class Matchmaker extends DurableObject<Env> {
       await this.finishRevocation(actorId, entry);
       return { ok: true as const };
     }
-    const accepted = await this.room(entry.room).cancelReservation(
+    const accepted = await this.room(entry.room, entry.userRoom).cancelReservation(
       actorId,
       revoke,
       generation(entry),
@@ -268,7 +385,7 @@ export class Matchmaker extends DurableObject<Env> {
 
   private async finishRevocation(actor: string, entry: Entry) {
     if (!entry.revoking) return;
-    const accepted = await this.room(entry.room).cancelReservation(
+    const accepted = await this.room(entry.room, entry.userRoom).cancelReservation(
       actor,
       true,
       generation(entry),
@@ -326,9 +443,14 @@ export class Matchmaker extends DurableObject<Env> {
       ...cookieRooms,
       ...Object.keys(receipts).filter((room) => receipts[room] > Date.now()),
     ]);
-    if (entry) rooms.delete(entry.room);
+    if (entry) rooms.delete(entry.userRoom ? `room:${entry.room}` : entry.room);
     await Promise.all(
-      [...rooms].map((room) => this.room(room).cancelReservation(actor, true)),
+      [...rooms].map((room) =>
+        this.room(
+          room.startsWith('room:') ? room.slice(5) : room,
+          room.startsWith('room:'),
+        ).cancelReservation(actor, true),
+      ),
     );
     await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
@@ -337,7 +459,8 @@ export class Matchmaker extends DurableObject<Env> {
       // Retain the active room for later logout, even if no cookie reached the browser.
       if (entry)
         await this.ctx.storage.put(`sessions:${actor}`, {
-          [entry.room]: Date.now() + settings.lobby.sessionLifetimeMs,
+          [entry.userRoom ? `room:${entry.room}` : entry.room]:
+            Date.now() + settings.lobby.sessionLifetimeMs,
         });
       await this.write(queue);
     });
@@ -367,7 +490,7 @@ export class Matchmaker extends DurableObject<Env> {
     await this.clean(actor);
     const entry = (await this.read()).actors[actor];
     if (!entry) return { ok: true as const };
-    const status = await this.status(entry.room);
+    const status = await this.status(entry.room, entry.userRoom);
     return {
       ok: false as const,
       code: status?.phase === 'WAITING' ? 'CANCEL_WAITING_FIRST' : 'MATCH_STARTED',
@@ -394,11 +517,11 @@ export class Matchmaker extends DurableObject<Env> {
     });
   }
 
-  private async status(room: string) {
+  private async status(room: string, userRoom = false) {
     let timer: number | undefined;
     try {
       return await Promise.race([
-        this.room(room).lobbyStatus(),
+        this.room(room, userRoom).lobbyStatus(),
         new Promise<undefined>((resolve) => {
           timer = setTimeout(resolve, 3000);
         }),
@@ -414,10 +537,10 @@ export class Matchmaker extends DurableObject<Env> {
     const queue = await this.read();
     const scopes = new Map(
       Object.values(queue.actors).flatMap((entry) =>
-        entry.scope
+        entry.scope && !entry.userRoom
           ? [
               [
-                `${entry.scope.id}:${entry.band ?? ''}`,
+                `${entry.scope.id}:${entry.scope.mode ?? ''}:${entry.band ?? ''}`,
                 { scope: entry.scope, band: entry.band },
               ] as const,
             ]
@@ -431,9 +554,11 @@ export class Matchmaker extends DurableObject<Env> {
             ...this.env,
             GAME_OWNER: scope.owner,
             GAME_CONFIG_PROFILE:
-              band === undefined
-                ? this.env.GAME_CONFIG_PROFILE
-                : `${this.env.GAME_CONFIG_PROFILE}-band-${band}`,
+              scope.mode === 'casual'
+                ? `${this.env.GAME_CONFIG_PROFILE}-casual`
+                : band === undefined
+                  ? this.env.GAME_CONFIG_PROFILE
+                  : `${this.env.GAME_CONFIG_PROFILE}-band-${band}`,
           });
         } catch (error) {
           if (
@@ -450,7 +575,10 @@ export class Matchmaker extends DurableObject<Env> {
     const queue = await this.read();
     const entries = Object.entries(queue.actors).filter(
       ([, entry]) =>
-        entry.scope?.id === scope.id && (band === undefined || entry.band === band),
+        entry.scope?.id === scope.id &&
+        entry.scope?.mode === scope.mode &&
+        !entry.userRoom &&
+        (band === undefined || entry.band === band),
     );
     const rooms = [...new Set(entries.map(([, entry]) => entry.room))];
     await Promise.allSettled(rooms.map((id) => this.room(id).stopWaiting(scope.id)));
@@ -478,8 +606,8 @@ export class Matchmaker extends DurableObject<Env> {
       }),
     );
   }
-  private room(id: string) {
-    return this.env.GAME_ROOM.getByName(`1c:${id}`);
+  private room(id: string, userRoom = false) {
+    return this.env.GAME_ROOM.getByName(`${userRoom ? 'room' : '1c'}:${id}`);
   }
   private async read(): Promise<Queue> {
     return (await this.ctx.storage.get<Queue>('queue')) ?? { actors: {}, rates: {} };
@@ -519,7 +647,13 @@ export class Matchmaker extends DurableObject<Env> {
       await Promise.all(
         rooms.map(async (room) => {
           try {
-            return [room, await this.status(room)] as const;
+            return [
+              room,
+              await this.status(
+                room,
+                Object.values(snapshot.actors).find((e) => e.room === room)?.userRoom,
+              ),
+            ] as const;
           } catch {
             return [room, undefined] as const;
           }
@@ -547,7 +681,7 @@ export class Matchmaker extends DurableObject<Env> {
           try {
             // Fence the generation before releasing the actor, including delayed reserve RPCs.
             if (
-              await this.room(entry.room).cancelReservation(
+              await this.room(entry.room, entry.userRoom).cancelReservation(
                 actor,
                 false,
                 generation(entry),

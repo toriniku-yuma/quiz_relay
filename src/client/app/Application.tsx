@@ -3,19 +3,28 @@ import MenuToggle from '../components/MenuToggle';
 import type { Auth } from '../features/auth/useAuth';
 import { useOrganization } from '../features/organization/useOrganization';
 import NotificationBell from '../features/questions/NotificationBell';
+import { useGuest } from '../features/rooms/useGuest';
+import CasualPage from '../pages/CasualPage';
 import MatchPage from '../pages/MatchPage';
 import NotFoundPage from '../pages/NotFoundPage';
 import ProfilePage from '../pages/ProfilePage';
+import RoomsPage from '../pages/RoomsPage';
 import Navigation from './AppNavigation';
 import { AppContext, type MatchStatus } from './context';
 import { gameHref, handleNavigation, useLocation } from './navigation';
-import { DEBUG_PATH, GAME_PATH, LOCAL_GAME_PATH } from './paths';
+import { CASUAL_PATH, DEBUG_PATH, GAME_PATH, LOCAL_GAME_PATH, ROOMS_PATH } from './paths';
 import { routes } from './routes';
 import { useMobileMenu } from './useMobileMenu';
 
 export default function Application({ auth }: { auth: Auth }) {
   const organization = useOrganization(!!auth.user);
   const url = useLocation();
+  const guest = useGuest(
+    auth.ready &&
+      !auth.user &&
+      (url.searchParams.get('guest') === '1' ||
+        (url.pathname === ROOMS_PATH && url.searchParams.has('room'))),
+  );
   const [matchStatus, setMatchStatus] = useState<MatchStatus | null>(null);
 
   const content = useRef<HTMLDivElement>(null);
@@ -55,7 +64,9 @@ export default function Application({ auth }: { auth: Auth }) {
   }, [pageLocation, needsProfile, menu.dialog]);
 
   return (
-    <AppContext.Provider value={{ auth, organization, url, matchStatus, setMatchStatus }}>
+    <AppContext.Provider
+      value={{ auth, organization, url, matchStatus, setMatchStatus, guest }}
+    >
       <a
         href="#page-content"
         className="sr-only focus:not-sr-only focus:fixed focus:z-50 focus:bg-paper focus:p-4"
@@ -82,7 +93,7 @@ export default function Application({ auth }: { auth: Auth }) {
               <span className="min-w-0 break-words font-bold">対戦中：{activeName}</span>
               <a
                 className="shrink-0 font-bold underline"
-                href={gameHref(active.instanceId)}
+                href={active.href ?? gameHref(active.instanceId)}
               >
                 対戦に戻る
               </a>
@@ -98,12 +109,18 @@ export default function Application({ auth }: { auth: Auth }) {
           <div data-page hidden={path !== GAME_PATH || needsProfile}>
             <MatchPage />
           </div>
+          <div data-page hidden={path !== CASUAL_PATH || needsProfile}>
+            <CasualPage />
+          </div>
+          <div data-page hidden={path !== ROOMS_PATH || needsProfile}>
+            <RoomsPage />
+          </div>
           {needsProfile && (
             <div data-page>
               <ProfilePage />
             </div>
           )}
-          {path !== GAME_PATH && !needsProfile && (
+          {![GAME_PATH, ROOMS_PATH, CASUAL_PATH].includes(path) && !needsProfile && (
             <div data-page>
               {(path === DEBUG_PATH || path === LOCAL_GAME_PATH) &&
               !organization.data?.account?.administrator ? (

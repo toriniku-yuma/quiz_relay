@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { API_PATHS } from '../../../shared/api-paths';
 import { navigate } from '../../app/navigation';
-import { GAME_PATH, PROFILE_PATH } from '../../app/paths';
+import { GAME_PATH, PROFILE_PATH, ROOMS_PATH } from '../../app/paths';
 import { probeRequest } from '../debug/api';
 import { readWithdrawalReceipt } from '../profile/withdrawalReceipt';
 
@@ -123,7 +123,15 @@ export async function checkIdentity() {
 
 export async function sendLoginEmail(token: string | undefined, email: string) {
   const client = await setupAuth(token);
-  localStorage.setItem('quiz-relay-auth-return', token ? '/debug/' : '/game/');
+  localStorage.setItem(
+    'quiz-relay-auth-return',
+    token
+      ? '/debug/'
+      : location.pathname === ROOMS_PATH &&
+          new URL(location.href).searchParams.has('room')
+        ? `${location.pathname}${location.search}`
+        : '/game/',
+  );
 
   // Keep the registered root callback; the entry redirect preserves code/hash.
   const { error } = await client.auth.signInWithOtp({
@@ -141,7 +149,15 @@ export async function sendLoginEmail(token: string | undefined, email: string) {
 
 export async function signInWithGoogle(token?: string) {
   const client = await setupAuth(token);
-  localStorage.setItem('quiz-relay-auth-return', token ? '/debug/' : '/game/');
+  localStorage.setItem(
+    'quiz-relay-auth-return',
+    token
+      ? '/debug/'
+      : location.pathname === ROOMS_PATH &&
+          new URL(location.href).searchParams.has('room')
+        ? `${location.pathname}${location.search}`
+        : '/game/',
+  );
   const { error } = await client.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: `${location.origin}/` },

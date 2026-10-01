@@ -90,6 +90,59 @@ const reasonFor = (input: Record<string, unknown>, required = true) => {
   return (input.reason as string).trim();
 };
 
+export async function recordQuestionReport(
+  tx: Pick<Database, 'select' | 'insert'>,
+  instanceId: string,
+  actorId: string,
+  input: Record<string, unknown>,
+  observedQuestion?: { id: string },
+) {
+  if (!observedQuestion || observedQuestion.id !== input.questionId)
+    throw new QuestionError('QUESTION_NOT_FOUND', 404);
+  if (input.kind !== 'defect' && input.kind !== 'category') fail('INVALID_REPORT', 400);
+  const kind = input.kind as 'defect' | 'category',
+    reason = reasonFor(input);
+  const suggestedCategory =
+    typeof input.suggestedCategory === 'string' ? input.suggestedCategory.trim() : '';
+  if (suggestedCategory.length > 80) fail('INVALID_REPORT', 400);
+  const [latest] = await tx
+    .select()
+    .from(cases)
+    .where(
+      and(
+        eq(cases.instanceId, instanceId),
+        eq(cases.questionId, observedQuestion.id),
+        eq(cases.kind, kind),
+      ),
+    )
+    .orderBy(desc(cases.round))
+    .limit(1);
+  const round = latest ? latest.round + (latest.resolved ? 1 : 0) : 1;
+  const inserted = await tx
+    .insert(reports)
+    .values({
+      id: crypto.randomUUID(),
+      instanceId,
+      questionId: observedQuestion.id,
+      kind,
+      round,
+      actorId,
+      reason,
+      suggestedCategory,
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (!inserted.length) fail('ALREADY_REPORTED', 409);
+  await tx
+    .insert(cases)
+    .values({ instanceId, questionId: observedQuestion.id, kind, round, count: 1 })
+    .onConflictDoUpdate({
+      target: [cases.instanceId, cases.questionId, cases.kind, cases.round],
+      set: { count: sql`${cases.count} + 1` },
+    });
+  return { ok: true };
+}
+
 async function notify(
   db: Database,
   instanceId: string,
@@ -297,6 +350,30 @@ async function readQuestionOverview(
     ctx.review && (list || needs('reports'))
       ? await db.select().from(cases).where(eq(cases.instanceId, instanceId))
       : [];
+  const reportedOriginals: NonNullable<QuestionOverview['reportedOriginals']> = {};
+  if (
+    ctx.review &&
+    needs('reports') &&
+    readRecords &&
+    reviewCases.some((c) => c.questionId.startsWith('original-'))
+  ) {
+    const reported = new Set(reviewCases.map((c) => c.questionId));
+    for (const record of await readRecords(ctx.instance.owner)) {
+      if (
+        !record.definition.original ||
+        Date.now() - record.result.finishedAt >= 30 * 86400000
+      )
+        continue;
+      for (const q of record.completedQuestions ?? [])
+        if (reported.has(q.id))
+          reportedOriginals[q.id] = {
+            text: q.text,
+            answer: q.readings[0],
+            displayAnswer: q.displayAnswer,
+            explanation: q.explanation,
+          };
+    }
+  }
   const metrics = new Map<
     string,
     NonNullable<QuestionOverview['submissions'][number]['metrics']>
@@ -418,6 +495,7 @@ async function readQuestionOverview(
     settings: ctx.config,
     settingsRevision: ctx.configuration?.revision ?? 0,
     reviewCases,
+    ...(ctx.review && needs('reports') ? { reportedOriginals } : {}),
     reports:
       ctx.review && needs('reports')
         ? await db.select().from(reports).where(eq(reports.instanceId, instanceId))
@@ -741,50 +819,7 @@ export async function questionMutation(
       return { questions };
     }
     if (operation === 'report') {
-      if (!observedQuestion || observedQuestion.id !== input.questionId)
-        throw new QuestionError('QUESTION_NOT_FOUND', 404);
-      if (!['defect', 'category'].includes(String(input.kind)))
-        fail('INVALID_REPORT', 400);
-      const kind = input.kind as 'defect' | 'category';
-      const reason = reasonFor(input);
-      const suggestedCategory =
-        typeof input.suggestedCategory === 'string' ? input.suggestedCategory.trim() : '';
-      if (suggestedCategory.length > 80) fail('INVALID_REPORT', 400);
-      const caseScope = and(
-        eq(cases.instanceId, instanceId),
-        eq(cases.questionId, observedQuestion.id),
-        eq(cases.kind, kind),
-      );
-      const [latest] = await tx
-        .select()
-        .from(cases)
-        .where(caseScope)
-        .orderBy(desc(cases.round))
-        .limit(1);
-      const round = latest ? latest.round + (latest.resolved ? 1 : 0) : 1;
-      const inserted = await tx
-        .insert(reports)
-        .values({
-          id: crypto.randomUUID(),
-          instanceId,
-          questionId: observedQuestion.id,
-          kind,
-          round,
-          actorId,
-          reason,
-          suggestedCategory,
-        })
-        .onConflictDoNothing()
-        .returning();
-      if (!inserted.length) fail('ALREADY_REPORTED', 409);
-      await tx
-        .insert(cases)
-        .values({ instanceId, questionId: observedQuestion.id, kind, round, count: 1 })
-        .onConflictDoUpdate({
-          target: [cases.instanceId, cases.questionId, cases.kind, cases.round],
-          set: { count: sql`${cases.count} + 1` },
-        });
-      return { ok: true };
+      return recordQuestionReport(tx, instanceId, actorId, input, observedQuestion);
     }
     if (operation === 'resolve-report') {
       if (!ctx.review) fail('REVIEW_FORBIDDEN');

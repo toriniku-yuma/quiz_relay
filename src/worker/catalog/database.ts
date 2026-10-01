@@ -60,7 +60,7 @@ export async function loadMatchDefinition(
           or(
             eq(i.setId, s.setId),
             and(
-              sql`${s.setId} ~ '^authored-band-[0-2]$'`,
+              sql`${s.setId} ~ '^authored-(band-[0-2]|casual)$'`,
               sql`${i.setId} LIKE ${s.setId} || '-chunk-%'`,
             ),
           ),
@@ -134,6 +134,9 @@ export async function loadMatchDefinition(
       throw new Error('QUESTION_UNAVAILABLE');
     const { competition, ruleset, questionSet } = rows[0];
     return await validateDefinition({
+      ...(competition.competitionId === 'authored-casual'
+        ? { kind: 'casual' as const }
+        : {}),
       ...(rows[0].privateSelection ? { selection: rows[0].privateSelection } : {}),
       competition: {
         owner: competition.owner,

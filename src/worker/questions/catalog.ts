@@ -4,6 +4,7 @@ import { contentHash } from '../catalog/hash.ts';
 import {
   questionAvailability as availability,
   competitions,
+  instances,
   matchmakingSettings,
   questionSetItems,
   questionSets,
@@ -91,19 +92,29 @@ export async function publishQuestionCatalog(
   await db
     .insert(rulesetVersions)
     .values({ owner, rulesetId: ruleId, version: ruleVersion, rulesHash, config });
-  for (const band of [0, 1, 2]) {
-    const id = `authored-band-${band}`;
-    const profiles =
-      band === 0 ? [profile, `${profile}-band-0`] : [`${profile}-band-${band}`];
+  const [instance] = await db
+    .select()
+    .from(instances)
+    .where(eq(instances.id, instanceId));
+  for (const band of [0, 1, 2, 3]) {
+    const casual = band === 3;
+    const id = casual ? 'authored-casual' : `authored-band-${band}`;
+    const profiles = casual
+      ? [`${profile}-casual`]
+      : band === 0
+        ? [profile, `${profile}-band-0`]
+        : [`${profile}-band-${band}`];
     const available = current
       .filter(
         (q) =>
           q.availability.retiredAt === null &&
           q.question.difficulty !== undefined &&
-          q.question.difficulty <= band &&
-          (configuration?.config.difficultyWeights?.[band]?.[q.question.difficulty] ??
-            1) > 0 &&
-          (configuration?.config.categoryWeights?.[q.question.categoryId ?? ''] ?? 1) > 0,
+          (casual ||
+            (q.question.difficulty <= band &&
+              (configuration?.config.difficultyWeights?.[band]?.[q.question.difficulty] ??
+                1) > 0 &&
+              (configuration?.config.categoryWeights?.[q.question.categoryId ?? ''] ??
+                1) > 0)),
       )
       .map((q) => q.question);
     const [latest] = await db
@@ -120,16 +131,17 @@ export async function publishQuestionCatalog(
         authorNames: configuration?.config.showAuthor
           ? Object.fromEntries(current.map((row) => [row.question.id, row.authorName]))
           : {},
-        band,
+        band: casual ? 2 : band,
         boundaries: configuration?.config.rankBoundaries ?? [1200, 1600],
-        weights:
-          configuration?.config.difficultyWeights?.[band] ??
-          [
-            [1, 0, 0],
-            [0.3, 0.7, 0],
-            [0.1, 0.3, 0.6],
-          ][band],
-        categories: configuration?.config.categoryWeights ?? {},
+        weights: casual
+          ? [1, 1, 1]
+          : (configuration?.config.difficultyWeights?.[band] ??
+            [
+              [1, 0, 0],
+              [0.3, 0.7, 0],
+              [0.1, 0.3, 0.6],
+            ][band]),
+        categories: casual ? {} : (configuration?.config.categoryWeights ?? {}),
         revision: configuration?.revision ?? 0,
       },
     });
@@ -156,7 +168,9 @@ export async function publishQuestionCatalog(
       owner,
       competitionId: id,
       version,
-      playersPerMatch: old?.players ?? 4,
+      playersPerMatch: casual
+        ? (instance?.casualConfig.players ?? 4)
+        : (old?.players ?? 4),
       rulesetId: ruleId,
       rulesetVersion: ruleVersion,
       setId: id,

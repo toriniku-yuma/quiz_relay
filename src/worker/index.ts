@@ -9,6 +9,7 @@ import probes from './probes/routes';
 import questions from './questions/routes';
 import { scheduledQuestions } from './questions/scheduled';
 import results from './results/routes';
+import rooms from './rooms/routes';
 
 export { GameRoom } from './game/GameRoom';
 export { Matchmaker } from './matchmaking/Matchmaker';
@@ -24,6 +25,7 @@ app.route('/', matchmaking);
 app.route('/', results);
 app.route('/', organization);
 app.route('/', questions);
+app.route('/', rooms);
 
 app.notFound(notFound);
 

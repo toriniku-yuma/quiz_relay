@@ -1,5 +1,6 @@
 import { normalizeDisplayName } from '../../shared/profile.ts';
 import { type QuestionSelection, readingIssues } from '../../shared/questions.ts';
+import { validateBroughtQuestion } from '../../shared/rooms.ts';
 import { graphemes, type Question } from '../game/questions.ts';
 import { type Rules, validateRules } from '../game/rules.ts';
 import { contentHash } from './hash.ts';
@@ -13,6 +14,8 @@ export type FixedQuestion = Question & {
   demoAllowed: true;
 };
 export type MatchDefinition = {
+  kind?: 'ranked' | 'casual' | 'room';
+  original?: boolean;
   selection?: QuestionSelection;
   competition: VersionRef;
   ruleset: VersionRef;
@@ -53,6 +56,14 @@ export function validateRef(value: unknown): VersionRef {
 
 export async function validateDefinition(value: unknown): Promise<MatchDefinition> {
   if (!record(value)) throw new Error('INVALID_DEFINITION');
+  if (
+    (value.kind !== undefined &&
+      (typeof value.kind !== 'string' ||
+        !['ranked', 'casual', 'room'].includes(value.kind))) ||
+    (value.original !== undefined &&
+      (typeof value.original !== 'boolean' || value.kind !== 'room'))
+  )
+    throw new Error('INVALID_DEFINITION');
   const selection = value.selection;
   if (selection !== undefined) {
     if (
@@ -92,19 +103,32 @@ export async function validateDefinition(value: unknown): Promise<MatchDefinitio
   const questionSet = validateRef(value.questionSet);
   const rules = validateRules(value.rules);
   if (
+    value.kind !== 'room' &&
+    ['winMode', 'questionLimit', 'noDisqualification'].some((key) =>
+      Object.hasOwn(rules, key),
+    )
+  )
+    throw new Error('INVALID_DEFINITION');
+  if (
     competition.owner !== ruleset.owner ||
     competition.owner !== questionSet.owner ||
     !Number.isInteger(value.playersPerMatch) ||
     Number(value.playersPerMatch) < 2 ||
-    Number(value.playersPerMatch) > 4 ||
+    Number(value.playersPerMatch) > (value.kind === 'room' ? 8 : 4) ||
     !Array.isArray(value.questions) ||
     value.questions.length < 1 ||
-    (value.questions.length > 100 && !/^authored-band-[0-2]$/.test(competition.id))
+    (value.questions.length > 100 &&
+      !/^authored-(band-[0-2]|casual)$/.test(competition.id) &&
+      value.kind !== 'room')
   )
     throw new Error('INVALID_DEFINITION');
 
   const questions = value.questions.map((item) =>
-    validateQuestion(item, rules.choiceCount),
+    validateQuestion(
+      item,
+      rules.choiceCount,
+      value.kind === 'room' && value.original === true,
+    ),
   );
   if (new Set(questions.map((question) => question.id)).size !== questions.length)
     throw new Error('INVALID_QUESTION');
@@ -116,6 +140,8 @@ export async function validateDefinition(value: unknown): Promise<MatchDefinitio
     throw new Error('DEFINITION_HASH_MISMATCH');
 
   return {
+    ...(value.kind !== undefined ? { kind: value.kind as MatchDefinition['kind'] } : {}),
+    ...(value.original === true ? { original: true } : {}),
     ...(value.selection ? { selection: value.selection as QuestionSelection } : {}),
     competition,
     ruleset,
@@ -128,22 +154,38 @@ export async function validateDefinition(value: unknown): Promise<MatchDefinitio
   };
 }
 
-export function validateQuestion(item: unknown, choiceCount: number): FixedQuestion {
+export function validateQuestion(
+  item: unknown,
+  choiceCount: number,
+  original = false,
+): FixedQuestion {
   if (
     !record(item) ||
     !text(item.id, 64) ||
     !/^[a-zA-Z0-9_-]+$/.test(item.id) ||
     item.version !== 1 ||
-    !text(item.text, 2000) ||
+    !(original ? typeof item.text === 'string' : text(item.text, 2000)) ||
     !text(item.answer, 64) ||
-    !text(item.explanation, 2000) ||
-    !text(item.source, 1000) ||
+    !(original ? typeof item.explanation === 'string' : text(item.explanation, 2000)) ||
+    !(original ? item.source === '' : text(item.source, 1000)) ||
     !text(item.permission, 1000) ||
     item.demoAllowed !== true ||
     !Array.isArray(item.distractors) ||
     item.distractors.length > 128
   )
     throw new Error('INVALID_QUESTION');
+  if (original) {
+    try {
+      validateBroughtQuestion({
+        text: item.text,
+        displayAnswer: item.displayAnswer,
+        readings: item.readings,
+        explanation: item.explanation,
+      });
+    } catch {
+      throw new Error('INVALID_QUESTION');
+    }
+  }
   const answer = item.answer.normalize('NFKC').trim();
   if (
     item.readings !== undefined &&
@@ -155,7 +197,7 @@ export function validateQuestion(item: unknown, choiceCount: number): FixedQuest
       readingIssues(item.readings).length)
   )
     throw new Error('INVALID_CHOICES');
-  if (item.displayAnswer !== undefined && !text(item.displayAnswer, 80))
+  if (!original && item.displayAnswer !== undefined && !text(item.displayAnswer, 80))
     throw new Error('INVALID_QUESTION');
   if (
     item.traps !== undefined &&
@@ -194,7 +236,7 @@ export function validateQuestion(item: unknown, choiceCount: number): FixedQuest
   return {
     id: item.id,
     version: 1,
-    text: item.text,
+    text: item.text as string,
     answer,
     ...(item.readings ? { readings: item.readings as string[] } : {}),
     ...(item.displayAnswer ? { displayAnswer: item.displayAnswer as string } : {}),
@@ -203,9 +245,9 @@ export function validateQuestion(item: unknown, choiceCount: number): FixedQuest
     ...(typeof item.difficulty === 'number' ? { difficulty: item.difficulty } : {}),
     ...(typeof item.seriesId === 'string' ? { seriesId: item.seriesId } : {}),
     ...(typeof item.generation === 'string' ? { generation: item.generation } : {}),
-    explanation: item.explanation,
+    explanation: item.explanation as string,
     distractors,
-    source: item.source,
+    source: item.source as string,
     permission: item.permission,
     demoAllowed: true,
   };

@@ -52,7 +52,11 @@ export default function QuestionReports({
             >
               <p>
                 {data.submissions.find((q) => q.publishedId === review.questionId)?.input
-                  .text ?? '過去版の問題'}
+                  .text ??
+                  data.reportedOriginals?.[review.questionId]?.text ??
+                  (review.questionId.startsWith('original-')
+                    ? '持込問題（振り返り期間終了）'
+                    : '過去版の問題')}
                 ：{review.kind === 'defect' ? '問題不備' : 'カテゴリ違い'} 第
                 {review.round}
                 回・{review.count}件
@@ -75,6 +79,12 @@ export default function QuestionReports({
                 >
                   この通報を確認する
                 </a>
+              )}
+              {selectedId && (
+                <p>
+                  {data.reportedOriginals?.[review.questionId] &&
+                    `答え：${data.reportedOriginals[review.questionId].displayAnswer ?? data.reportedOriginals[review.questionId].answer} ／ ${data.reportedOriginals[review.questionId].explanation}`}
+                </p>
               )}
               {selectedId && (
                 <ul>
@@ -106,7 +116,9 @@ export default function QuestionReports({
                     });
                   }}
                 >
-                  解決して作問者へ通知
+                  {review.questionId.startsWith('original-')
+                    ? '対応を記録して解決する'
+                    : '解決して作問者へ通知'}
                 </Button>
               )}
             </div>
