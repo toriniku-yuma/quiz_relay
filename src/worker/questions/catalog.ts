@@ -26,6 +26,7 @@ export async function publishQuestionCatalog(
   instanceId: string,
   owner: string,
   profile: string,
+  rankedPlayers?: number,
 ) {
   const [configuration] = await db
     .select()
@@ -170,7 +171,7 @@ export async function publishQuestionCatalog(
       version,
       playersPerMatch: casual
         ? (instance?.casualConfig.players ?? 4)
-        : (old?.players ?? 4),
+        : (rankedPlayers ?? old?.players ?? 4),
       rulesetId: ruleId,
       rulesetVersion: ruleVersion,
       setId: id,

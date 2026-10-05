@@ -3,8 +3,8 @@ import { setupAuth } from '../auth/client';
 import { OrganizationRequestError } from '../organization/useOrganization';
 
 const messages: Record<string, string> = {
-  CASUAL_DISABLED: 'カジュアルマッチングは無効です。',
-  CASUAL_PAUSED: 'カジュアル・部屋の受付を停止しています。',
+  CASUAL_DISABLED: 'カジュアルマッチは無効です。',
+  CASUAL_PAUSED: 'カジュアルマッチ・部屋の受付を停止しています。',
   GUEST_NOT_ALLOWED: 'ゲスト参加は許可されていません。',
   GUEST_REQUIRED: 'ゲスト名を登録してください。',
   ROOM_HOST_REQUIRED: '部屋主だけが操作できます。',
@@ -29,12 +29,16 @@ const messages: Record<string, string> = {
   REPORT_NOT_ALLOWED: 'この対象には通報できません。',
   ALREADY_REPORTED: 'この問題はすでに通報済みです。',
   MATCH_STARTED: '進行中の試合が終わるまでお待ちください。',
+  MATCH_SWITCH_PENDING:
+    '前の参加からの離脱を確認しています。少し待って再試行してください。',
 };
 export class PlayRequestError extends OrganizationRequestError {
   constructor(
     message: string,
     status: number,
     readonly code: string,
+    readonly instanceId?: string,
+    readonly mode?: 'ranked' | 'casual' | 'room',
   ) {
     super(message, status);
   }
@@ -43,6 +47,7 @@ export async function playRequest<T>(
   path: string,
   body: object = {},
   instanceId = '',
+  signal?: AbortSignal,
 ): Promise<T> {
   const auth = await setupAuth(),
     { data } = await auth.auth.getSession();
@@ -53,15 +58,23 @@ export async function playRequest<T>(
       ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}),
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(20000),
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(20000)])
+      : AbortSignal.timeout(20000),
   });
-  const result = (await response.json()) as T & { code?: string };
+  const result = (await response.json()) as T & {
+    code?: string;
+    instanceId?: string;
+    mode?: 'ranked' | 'casual' | 'room';
+  };
   if (!response.ok)
     throw new PlayRequestError(
       messages[result.code ?? ''] ??
         '操作を完了できませんでした。入力または通信状態を確認してください。',
       response.status,
       result.code ?? '',
+      result.instanceId,
+      result.mode,
     );
   return result;
 }

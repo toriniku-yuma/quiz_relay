@@ -600,7 +600,13 @@ export class RoomLobby {
       };
     });
   }
-  async cancel(actor: string, revoke = false, generation?: string, token?: string) {
+  async cancel(
+    actor: string,
+    revoke = false,
+    generation?: string,
+    token?: string,
+    forfeit = false,
+  ) {
     const room = await this.read();
     if (!room) {
       if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
@@ -612,7 +618,7 @@ export class RoomLobby {
       ((generation && member.generation !== generation) ||
         (token && member.token !== token))
     ) {
-      if (revoke) await this.revokeChildren(actor, generation, token);
+      if (revoke) await this.revokeChildren(actor, generation, token, forfeit);
       return false;
     }
     const current = room.match ? await this.child(room.match.id).lobbyStatus() : null;
@@ -621,13 +627,14 @@ export class RoomLobby {
     const result = await this.atomic(async () => {
       const latest = await this.read();
       if (revoke) {
-        await this.revokeChildren(actor);
+        await this.revokeChildren(actor, undefined, undefined, forfeit);
         if (latest?.match?.tokens[actor])
           await this.child(latest.match.id).cancelReservation(
             actor,
             true,
             undefined,
             latest.match.tokens[actor],
+            forfeit,
           );
       }
       if (latest?.starting) {
@@ -642,6 +649,7 @@ export class RoomLobby {
             true,
             undefined,
             fixed.tokens[actor],
+            forfeit,
           );
         }
       }
@@ -649,7 +657,7 @@ export class RoomLobby {
       if (!latest) return true;
       for (const socket of this.sockets())
         if ((socket.deserializeAttachment() as Attachment).actorId === actor)
-          this.close(socket);
+          this.close(socket, forfeit ? 'MATCH_REPLACED' : undefined);
       latest.members = latest.members.filter((m) => m.id !== actor);
       latest.revision++;
       this.sweep(latest);
@@ -659,7 +667,12 @@ export class RoomLobby {
     });
     return result;
   }
-  private async revokeChildren(actor: string, generation?: string, token?: string) {
+  private async revokeChildren(
+    actor: string,
+    generation?: string,
+    token?: string,
+    forfeit = false,
+  ) {
     const sessions = await this.ctx.storage.list<ChildSession>({
       prefix: `child-session:${actor}:`,
     });
@@ -674,6 +687,7 @@ export class RoomLobby {
         true,
         undefined,
         session.token,
+        forfeit,
       );
     if (matching.length) await this.ctx.storage.delete(matching.map(([key]) => key));
   }
@@ -798,12 +812,12 @@ export class RoomLobby {
       .getWebSockets()
       .filter((s) => (s.deserializeAttachment() as Attachment).live);
   }
-  private close(socket: WebSocket) {
+  private close(socket: WebSocket, reason?: string) {
     const a = socket.deserializeAttachment() as Attachment;
     a.live = false;
     socket.serializeAttachment(a);
     try {
-      socket.close(1000, 'Closed');
+      socket.close(reason ? 1008 : 1000, reason ?? 'Closed');
     } catch {}
   }
   private sweep(room: UserRoom) {

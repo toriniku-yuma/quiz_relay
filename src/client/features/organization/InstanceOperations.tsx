@@ -46,10 +46,12 @@ export default function InstanceOperations({
     },
     {
       action: instance.casualPauseReason ? 'resumeCasual' : 'stopCasual',
-      title: instance.casualPauseReason ? 'カジュアルを再開する' : 'カジュアルを停止する',
+      title: instance.casualPauseReason
+        ? 'カジュアルマッチを再開する'
+        : 'カジュアルマッチを停止する',
       stopping: !instance.casualPauseReason,
       group: '',
-      status: `カジュアル：${instance.casualPauseReason ? '停止中' : '受付中'}`,
+      status: `カジュアルマッチ：${instance.casualPauseReason ? '停止中' : '受付中'}`,
       reason: instance.casualPauseReason,
     },
   ];

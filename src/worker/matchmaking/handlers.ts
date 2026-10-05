@@ -45,7 +45,8 @@ export const enterMatch: Handler<AuthEnv> = async (c) => {
   if (!resume && organized && !name) return c.json({ code: 'PROFILE_REQUIRED' }, 409);
   if (
     (!resume &&
-      (Object.keys(value).join(',') !== 'name' ||
+      (Object.keys(value).some((key) => !['name', 'operationId'].includes(key)) ||
+        (value.operationId !== undefined && !roomId(value.operationId)) ||
         typeof value.name !== 'string' ||
         !value.name.trim() ||
         (!organized && value.name.length > 24))) ||
@@ -74,12 +75,15 @@ export const enterMatch: Handler<AuthEnv> = async (c) => {
     c.get('instanceId')
       ? { id: c.get('instanceId'), owner: c.get('instanceOwner') }
       : undefined,
+    false,
+    typeof value.operationId === 'string' ? value.operationId : undefined,
   );
   if (!result.ok)
     return c.json(
       {
         code: result.code,
         ...('instanceId' in result ? { instanceId: result.instanceId } : {}),
+        ...('mode' in result ? { mode: result.mode } : {}),
       },
       result.code === 'GAME_DATABASE_UNAVAILABLE'
         ? 503
@@ -94,25 +98,45 @@ export const enterMatch: Handler<AuthEnv> = async (c) => {
     path: '/api/matchmaking',
     maxAge: Math.max(0, Math.floor((result.expires - Date.now()) / 1000)),
   });
-  return c.json({ room: result.room });
+  return c.json({ room: result.room, operationId: result.operationId });
 };
 
 export const cancelMatch: Handler<AuthEnv> = async (c) => {
   const body = await c.req.json().catch(() => null);
-  if (!body || !roomId(body.room) || Object.keys(body).join(',') !== 'room')
+  const operationCancel =
+    body &&
+    roomId(body.operationId) &&
+    Object.keys(body).join(',') === 'operationId' &&
+    !c.req.path.endsWith('/logout');
+  if (
+    !operationCancel &&
+    (!body || !roomId(body.room) || Object.keys(body).join(',') !== 'room')
+  )
     return c.json({ code: 'INVALID_ROOM' }, 400);
-  const result = await c.env.MATCHMAKER.getByName(c.get('organizationId')).cancel(
-    c.get('actorId'),
-    body.room,
-    c.req.path.endsWith('/logout'),
-    c.get('instanceId') || undefined,
-  );
-  if (!result.ok) return c.json({ code: result.code }, 409);
-  deleteCookie(c, `qr_match_${body.room}`, {
-    path: '/api/matchmaking',
-    secure: true,
-    sameSite: 'Strict',
-  });
+  const maker = c.env.MATCHMAKER.getByName(c.get('organizationId'));
+  const result = operationCancel
+    ? await maker.cancelAdmission(
+        c.get('actorId'),
+        body.operationId,
+        c.get('instanceId') || undefined,
+      )
+    : await maker.cancel(
+        c.get('actorId'),
+        body.room,
+        c.req.path.endsWith('/logout'),
+        c.get('instanceId') || undefined,
+      );
+  if (!result.ok)
+    return c.json(
+      { code: result.code },
+      result.code === 'GAME_DATABASE_UNAVAILABLE' ? 503 : 409,
+    );
+  if (body.room)
+    deleteCookie(c, `qr_match_${body.room}`, {
+      path: '/api/matchmaking',
+      secure: true,
+      sameSite: 'Strict',
+    });
   return c.json({ ok: true });
 };
 

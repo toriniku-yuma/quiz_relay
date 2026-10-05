@@ -11,6 +11,15 @@ const h = vi.hoisted(() => ({
   request: vi.fn(),
   join: vi.fn(),
   navigate: vi.fn(),
+  exit: vi.fn(),
+  active: null as null | { id: string; instanceId: string },
+  roomView: null as null | {
+    id: string;
+    playing: boolean;
+    waiting?: boolean;
+    matchRoom?: string;
+  },
+  restored: false,
   url: new URL('https://quiz.test/rooms/?instance=instance-a&room=room-a'),
 }));
 vi.mock('react', async (original) => ({
@@ -39,7 +48,14 @@ vi.mock('../src/client/app/context', () => ({
   useApp: () => ({ auth: { user: { id: 'user-a' } }, organization: {}, url: h.url }),
 }));
 vi.mock('../src/client/features/rooms/useRoom', () => ({
-  useRoom: () => ({ active: null, join: h.join }),
+  useRoom: () => ({
+    active: h.active,
+    room: h.roomView,
+    restored: h.restored,
+    isCurrent: (id: unknown) => (h.active?.id ?? null) === id,
+    join: h.join,
+    exit: { submit: h.exit },
+  }),
 }));
 beforeEach(() => {
   h.slots = [];
@@ -48,6 +64,10 @@ beforeEach(() => {
   h.request.mockReset();
   h.join.mockReset();
   h.navigate.mockReset();
+  h.exit.mockReset().mockResolvedValue({ ok: true });
+  h.active = null;
+  h.roomView = null;
+  h.restored = false;
   h.url = new URL('https://quiz.test/rooms/?instance=instance-a&room=room-a');
   vi.stubGlobal('window', new EventTarget());
 });
@@ -108,6 +128,85 @@ function room() {
   h.cursor = 0;
   return RoomWorkspace();
 }
+it.each(['/profile/', '/rooms/?instance=instance-a'])(
+  '部屋ロビーから%sへ移動すると元の部屋だけを自動退室する',
+  (next) => {
+    h.active = { id: 'room-a', instanceId: 'instance-a' };
+    h.roomView = { id: 'room-a', playing: false };
+    room();
+    h.effects[2]();
+    h.effects = [];
+    h.url = new URL(`https://quiz.test${next}`);
+    room();
+    h.effects[2]();
+    expect(h.exit).toHaveBeenCalledExactlyOnceWith({
+      room: 'room-a',
+      instanceId: 'instance-a',
+      force: true,
+    });
+  },
+);
+it.each(['edit', 'game'])('同じ部屋の%s画面への移動では参加を保持する', (view) => {
+  h.active = { id: 'room-a', instanceId: 'instance-a' };
+  h.roomView = { id: 'room-a', playing: false };
+  room();
+  h.effects[2]();
+  h.effects = [];
+  h.url.searchParams.set('view', view);
+  room();
+  h.effects[2]();
+  expect(h.exit).not.toHaveBeenCalled();
+});
+it('開始した本人は対戦専用ページへ移り、途中入室者はロビーに留まる', () => {
+  h.active = { id: 'room-a', instanceId: 'instance-a' };
+  h.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
+  room();
+  h.effects[3]();
+  expect(h.navigate).toHaveBeenCalledExactlyOnceWith(
+    '/rooms/?instance=instance-a&room=room-a&view=game',
+  );
+  h.navigate.mockClear();
+  h.effects = [];
+  h.roomView.waiting = true;
+  room();
+  h.effects[3]();
+  expect(h.navigate).not.toHaveBeenCalled();
+});
+it('部屋状態を確認する前の画面移動は、試合中の参加をロビー退出扱いにしない', () => {
+  h.active = { id: 'room-a', instanceId: 'instance-a' };
+  room();
+  h.effects[2]();
+  h.effects = [];
+  h.url = new URL('https://quiz.test/profile/');
+  room();
+  h.effects[2]();
+  expect(h.exit).not.toHaveBeenCalled();
+});
+it('新しい部屋に入った直後の旧部屋状態では、対戦画面へ移動しない', () => {
+  h.active = { id: 'room-b', instanceId: 'instance-a' };
+  h.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
+  h.url.searchParams.set('room', 'room-b');
+  room();
+  h.effects[3]();
+  expect(h.navigate).not.toHaveBeenCalled();
+});
+it('Aの遅い復帰確認で、成立済みのB参加を上書きしない', async () => {
+  let finish!: (value: unknown) => void;
+  h.request.mockImplementation((path: string) =>
+    path === API_PATHS.roomView
+      ? new Promise((done) => {
+          finish = done;
+        })
+      : Promise.resolve({ room: { settings: newRoomSettings(false) } }),
+  );
+  room();
+  h.effects[1]();
+  h.active = { id: 'room-b', instanceId: 'instance-b' };
+  finish({ room: {} });
+  await settle();
+  expect(h.join).not.toHaveBeenCalled();
+  expect(h.active.id).toBe('room-b');
+});
 it.each(['instance-a', 'instance-b'])(
   '応答不明のA参加をB画面（%s）で再試行しても、要求先と復帰先をAへ固定する',
   async (nextInstance) => {

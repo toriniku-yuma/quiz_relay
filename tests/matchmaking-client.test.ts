@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   request: vi.fn(),
 }));
 vi.mock('react', () => ({
+  useCallback: (callback: unknown) => callback,
   useState: (initial: unknown) => [initial, vi.fn()],
   useRef: (initial: unknown) => ({ current: initial }),
   useEffect: (effect: () => () => void) => mocks.effects.push(effect),
@@ -32,7 +33,7 @@ beforeEach(() => {
 it('clears the saved room only when the server confirms there is no active match', async () => {
   mocks.resume.mockRejectedValue(new MatchError('NO_ACTIVE_MATCH'));
   useMatchmaking('user-a');
-  const cleanup = mocks.effects[0]();
+  const cleanup = mocks.effects[1]();
   await vi.waitFor(() => expect(mocks.leave).toHaveBeenCalledOnce());
   expect(mocks.attach).not.toHaveBeenCalled();
   cleanup();
@@ -40,7 +41,7 @@ it('clears the saved room only when the server confirms there is no active match
 it('keeps recovery information when resume fails temporarily', async () => {
   mocks.resume.mockRejectedValue(new Error('network offline'));
   useMatchmaking('user-a');
-  const cleanup = mocks.effects[0]();
+  const cleanup = mocks.effects[1]();
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(mocks.leave).not.toHaveBeenCalled();
   cleanup();
@@ -52,7 +53,7 @@ it('ignores a delayed no-match response after unmount', async () => {
   });
   mocks.resume.mockReturnValue(response);
   useMatchmaking('user-a');
-  mocks.effects[0]()();
+  mocks.effects[1]()();
   reject(new MatchError('NO_ACTIVE_MATCH'));
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(mocks.leave).not.toHaveBeenCalled();
@@ -68,11 +69,11 @@ it('keeps a new match when an earlier resume arrives late', async () => {
     path.endsWith('/join') ? { room: 'new-room' } : { playersPerMatch: 2 },
   );
   const match = useMatchmaking('user-a');
-  const cleanup = mocks.effects[0]();
+  const cleanup = mocks.effects[1]();
   await match.join('user-a');
   resolve({ room: 'old-room' });
   await new Promise((done) => setTimeout(done, 0));
-  expect(mocks.attach).toHaveBeenCalledExactlyOnceWith('new-room');
+  expect(mocks.attach).toHaveBeenCalledExactlyOnceWith('new-room', '');
   cleanup();
 });
 it('ignores an earlier no-match response after a successful cancellation', async () => {
@@ -83,11 +84,41 @@ it('ignores an earlier no-match response after a successful cancellation', async
     }),
   );
   const match = useMatchmaking('user-a');
-  const cleanup = mocks.effects[0]();
+  const cleanup = mocks.effects[1]();
   await match.cancel();
   reject(new MatchError('NO_ACTIVE_MATCH'));
   await new Promise((done) => setTimeout(done, 0));
   expect(mocks.leave).toHaveBeenCalledOnce();
   expect(mocks.attach).not.toHaveBeenCalled();
   cleanup();
+});
+it('参加結果が不明なら操作ID・名前・参加先を固定して再試行する', async () => {
+  mocks.request
+    .mockRejectedValueOnce(new Error('response lost'))
+    .mockResolvedValueOnce({ room: 'confirmed' });
+  const match = useMatchmaking('user-a', 'old-instance', 'ranked', 'new-instance');
+  await match.join('original');
+  await match.join('changed');
+  expect(mocks.request.mock.calls[1]).toEqual(mocks.request.mock.calls[0]);
+  expect(mocks.request.mock.calls[0][1]).toMatchObject({
+    name: 'original',
+    operationId: expect.any(String),
+  });
+  expect(mocks.request.mock.calls[0][2]).toBe('new-instance');
+  expect(mocks.attach).toHaveBeenCalledWith('confirmed', 'new-instance');
+});
+it('同じモードの別インスタンスを復帰先として提示し、他モードは解除しない', async () => {
+  mocks.resume
+    .mockRejectedValueOnce(
+      new MatchError('OTHER_INSTANCE_ACTIVE', 'instance-b', 409, 'ranked'),
+    )
+    .mockResolvedValueOnce({ room: 'room-b' });
+  useMatchmaking('user-a', 'instance-a');
+  const cleanup = mocks.effects[1]();
+  await vi.waitFor(() =>
+    expect(mocks.attach).toHaveBeenCalledWith('room-b', 'instance-b'),
+  );
+  expect(mocks.resume).toHaveBeenLastCalledWith('instance-b');
+  cleanup();
+  expect(mocks.leave).not.toHaveBeenCalled();
 });

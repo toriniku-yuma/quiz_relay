@@ -39,13 +39,18 @@ export function useGame(
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [clock, setClock] = useState(Date.now());
-  const [room, setRoom] = useState<{ id: string } | null>(saved?.room ?? null);
+  const [room, setRoom] = useState<{ id: string; instanceId?: string } | null>(
+    saved?.room ?? null,
+  );
+  const currentRoom = useRef(room);
+  currentRoom.current = room;
   const socket = useRef<WebSocket | null>(null);
   const pendingCommand = useRef<Command | null>(null);
   const offset = useRef(0);
 
   useEffect(() => {
     if (!room) return;
+    const stillActive = () => currentRoom.current === room;
 
     const url = new URL(
       mode === 'local' ? API_PATHS.gameSocket : API_PATHS.matchSocket,
@@ -53,18 +58,25 @@ export function useGame(
     );
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('room', room.id);
-    if (instanceId) url.searchParams.set('instance', instanceId);
+    if (room.instanceId ?? instanceId)
+      url.searchParams.set('instance', room.instanceId ?? instanceId);
 
     const disconnect = connectGameSocket(url, {
-      status: setConnection,
+      status: (value) => {
+        if (stillActive()) setConnection(value);
+      },
       sync: () =>
         JSON.stringify({
           type: 'sync',
           lastSeq: currentSnapshot.current?.roomSeq ?? null,
           matchId: currentSnapshot.current?.matchId ?? null,
         }),
-      error: setError,
+      error: (value) => {
+        if (stillActive()) setError(value);
+      },
       released: () => {
+        if (!stillActive()) return;
+        currentRoom.current = null;
         setRoom(null);
         setSnapshot(null);
         setPanel(null);
@@ -74,10 +86,12 @@ export function useGame(
         saveGameSession(null, null, mode, subject);
       },
       opened: (ws) => {
+        if (!stillActive()) return;
         socket.current = ws;
         if (pendingCommand.current) ws.send(JSON.stringify(pendingCommand.current));
       },
       message: (data) => {
+        if (!stillActive()) return false;
         const message = JSON.parse(data) as GameMessage;
         if (message.type === 'state' || message.type === 'delta') {
           const next = applyGameUpdate(currentSnapshot.current, message);
@@ -148,8 +162,10 @@ export function useGame(
       setPending(false);
       setSnapshot(null);
       setPanel(null);
-      setRoom({ id: input.room });
-      saveGameSession({ id: input.room }, null, mode, subject);
+      const next = { id: input.room };
+      currentRoom.current = next;
+      setRoom(next);
+      saveGameSession(next, null, mode, subject);
     } catch (error) {
       setError(error instanceof Error ? error.message : '接続に失敗しました。');
       setConnection('idle');
@@ -157,20 +173,26 @@ export function useGame(
   }
 
   const attach = useCallback(
-    (id: string) => {
+    (id: string, connectedInstance?: string) => {
       setError('');
       currentSnapshot.current = null;
       pendingCommand.current = null;
       setPending(false);
       setSnapshot(null);
       setPanel(null);
-      setRoom({ id });
-      saveGameSession({ id }, null, mode, subject);
+      const next = {
+        id,
+        ...(connectedInstance ? { instanceId: connectedInstance } : {}),
+      };
+      currentRoom.current = next;
+      setRoom(next);
+      saveGameSession(next, null, mode, subject);
     },
     [mode, subject],
   );
 
   const leave = useCallback(() => {
+    currentRoom.current = null;
     setRoom(null);
     setSnapshot(null);
     setPanel(null);
@@ -184,7 +206,9 @@ export function useGame(
 
   function reconnect() {
     setError('');
-    setRoom((current) => (current ? { ...current } : null));
+    const next = currentRoom.current ? { ...currentRoom.current } : null;
+    currentRoom.current = next;
+    setRoom(next);
   }
 
   function send(type: Command['type'], payload: Command['payload'] = {}) {
@@ -211,6 +235,7 @@ export function useGame(
   return {
     snapshot,
     roomId: room?.id ?? null,
+    roomInstanceId: room?.instanceId ?? instanceId,
     attach,
     panel,
     actorId,

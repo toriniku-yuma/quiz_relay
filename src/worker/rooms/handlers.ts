@@ -1,6 +1,7 @@
 import type { Handler, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { API_PATHS } from '../../shared/api-paths';
+import { resultsQuery } from '../../shared/results';
 import { validateBroughtSet, validateRoomSettings } from '../../shared/rooms';
 import { type AuthEnv, authenticate } from '../auth/handlers';
 import { loadMatchDefinition } from '../catalog/database';
@@ -135,14 +136,34 @@ export const casual: Handler<AuthEnv> = async (c) => {
   const input = await body(c),
     maker = c.env.MATCHMAKER.getByName(identity.instance.organizationId);
   if (c.req.path === API_PATHS.casualCancel) {
-    const room = validId(input.room),
-      result = await maker.cancel(identity.actor.id, room, false, identity.instance.id);
-    if (!result.ok) throw new OrganizationError(result.code, 409);
-    deleteCookie(c, `qr_match_${room}`, {
-      path: '/api/matchmaking',
-      secure: true,
-      sameSite: 'Strict',
-    });
+    const operationCancel = input.operationId !== undefined;
+    if (Object.keys(input).join(',') !== (operationCancel ? 'operationId' : 'room'))
+      throw new OrganizationError('INVALID_SETUP', 400);
+    const room = operationCancel ? undefined : validId(input.room),
+      result = operationCancel
+        ? await maker.cancelAdmission(
+            identity.actor.id,
+            validId(input.operationId),
+            identity.instance.id,
+            'casual',
+          )
+        : await maker.cancel(
+            identity.actor.id,
+            room as string,
+            false,
+            identity.instance.id,
+          );
+    if (!result.ok)
+      throw new OrganizationError(
+        result.code,
+        result.code === 'GAME_DATABASE_UNAVAILABLE' ? 503 : 409,
+      );
+    if (room)
+      deleteCookie(c, `qr_match_${room}`, {
+        path: '/api/matchmaking',
+        secure: true,
+        sameSite: 'Strict',
+      });
     return c.json(result);
   }
   if (!identity.actor.name) throw new OrganizationError('PROFILE_REQUIRED', 409);
@@ -154,11 +175,19 @@ export const casual: Handler<AuthEnv> = async (c) => {
     c.req.path === API_PATHS.casualResume,
     identity.scope,
     identity.actor.guest,
+    input.operationId === undefined ? undefined : validId(input.operationId),
   );
   if (!result.ok)
-    throw new OrganizationError(result.code, result.code === 'RATE_LIMIT' ? 429 : 409);
+    return c.json(
+      result,
+      result.code === 'GAME_DATABASE_UNAVAILABLE'
+        ? 503
+        : result.code === 'RATE_LIMIT'
+          ? 429
+          : 409,
+    );
   matchCookie(c, result);
-  return c.json({ room: result.room });
+  return c.json({ room: result.room, operationId: result.operationId });
 };
 export const settings: Handler<AuthEnv> = async (c) => {
   const input = await body(c);
@@ -177,8 +206,15 @@ export const sets: Handler<AuthEnv> = async (c) => {
       : { sets: await personalSets(c.env, c.get('subject')) },
   );
 };
-export const results: Handler<AuthEnv> = async (c) =>
-  c.json(await history(c.env, await context(c, 'room', true)));
+export const results: Handler<AuthEnv> = async (c) => {
+  let query: ReturnType<typeof resultsQuery>;
+  try {
+    query = resultsQuery(await body(c));
+  } catch {
+    throw new OrganizationError('INVALID_SETUP', 400);
+  }
+  return c.json(await history(c.env, await context(c, 'room', true), query));
+};
 export const reports: Handler<AuthEnv> = async (c) =>
   c.json(await report(c.env, await context(c, 'room', true), await body(c)));
 export const info: Handler<AuthEnv> = async (c) => {
@@ -301,7 +337,13 @@ export const roomActions: Handler<AuthEnv> = async (c) => {
     matchCookie(c, { ...session, expires: Date.now() + 12 * 3600000 });
     return c.json({ room: session.room });
   }
-  const result = await maker.cancel(identity.actor.id, id, false, identity.instance.id);
+  const result = await maker.cancel(
+    identity.actor.id,
+    id,
+    false,
+    identity.instance.id,
+    input.force === true,
+  );
   if (!result.ok) throw new OrganizationError(result.code, 409);
   deleteCookie(c, `qr_room_${id}`, cookieOptions);
   return c.json(result);

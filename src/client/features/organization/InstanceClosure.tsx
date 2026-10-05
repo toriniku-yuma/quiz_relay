@@ -66,7 +66,7 @@ export default function InstanceClosure({
             >
               <p>
                 {instance.name}
-                を準備中へ戻します。ランク／カジュアルの個別停止設定は保持します。問題・設定を確認してから公開してください。
+                を準備中へ戻します。ランク／カジュアルマッチの個別停止設定は保持します。問題・設定を確認してから公開してください。
               </p>
               <Button
                 disabled={model.mutation.busy}

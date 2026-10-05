@@ -56,6 +56,7 @@ it('履歴のactor・開催元をクライアント入力で変更できない',
     runtime.GAME_OWNER,
     await contentHash({ home: runtime.GAME_OWNER, subject: 'self' }),
     [],
+    {},
   );
 });
 it('DB停止は503。秘密やDB例外を応答へ出さない', async () => {
@@ -63,4 +64,75 @@ it('DB停止は503。秘密やDB例外を応答へ出さない', async () => {
   const response = await request({ Authorization: 'Bearer token' });
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({ code: 'RESULTS_UNAVAILABLE' });
+});
+
+it('本人順位も入力のactor・開催元を使わず、認証された本人だけを取得する', async () => {
+  mocks.read.mockResolvedValue({
+    ranking: [],
+    history: [],
+    self: { rank: 104, rating: 980 },
+  });
+  const response = await request(
+    { Authorization: 'Bearer token' },
+    JSON.stringify({
+      section: 'self',
+      actorId: 'other',
+      owner: 'https://other.test',
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    ranking: [],
+    history: [],
+    self: { rank: 104, rating: 980 },
+  });
+  expect(mocks.read).toHaveBeenLastCalledWith(
+    {},
+    runtime.GAME_OWNER,
+    await contentHash({ home: runtime.GAME_OWNER, subject: 'self' }),
+    [],
+    { section: 'self' },
+  );
+});
+
+it('履歴の種別・追加取得・詳細指定は本人の読取へだけ渡す', async () => {
+  const cursor = {
+    finishedAt: '2026-10-01T00:00:00.000Z',
+    resultId: crypto.randomUUID(),
+  };
+  for (const query of [
+    { section: 'history', kind: 'casual', cursor },
+    { section: 'history', resultId: crypto.randomUUID() },
+    { section: 'ranking' },
+    { section: 'self' },
+  ]) {
+    expect(
+      (await request({ Authorization: 'Bearer token' }, JSON.stringify(query))).status,
+    ).toBe(200);
+    expect(mocks.read).toHaveBeenLastCalledWith(
+      {},
+      runtime.GAME_OWNER,
+      await contentHash({ home: runtime.GAME_OWNER, subject: 'self' }),
+      [],
+      query,
+    );
+  }
+});
+it.each([
+  null,
+  [],
+  { section: 'other' },
+  { kind: 'any' },
+  { resultId: 'x' },
+  { section: 'ranking', cursor: {} },
+  { section: 'self', cursor: {} },
+  { section: 'self', kind: 'ranked' },
+  { section: 'self', resultId: crypto.randomUUID() },
+  { resultId: crypto.randomUUID(), kind: 'room' },
+  { cursor: { finishedAt: 'invalid', resultId: crypto.randomUUID() } },
+])('不正な履歴指定を拒否する: %j', async (query) => {
+  expect(
+    (await request({ Authorization: 'Bearer token' }, JSON.stringify(query))).status,
+  ).toBe(400);
+  expect(mocks.read).not.toHaveBeenCalled();
 });

@@ -17,15 +17,16 @@ export default function CasualPage() {
   }, [url.pathname, instanceId, active, matchStatus?.retained]);
   return (
     <main className="mx-auto max-w-4xl p-4 md:p-8">
-      <PageHeader title="カジュアル" description="非レートの自動マッチングです。" />
+      <PageHeader title="カジュアルマッチ" description="非レートの自動マッチングです。" />
       {!auth.ready ? (
         <p role="status">ログイン状態を確認しています。</p>
-      ) : auth.user || url.searchParams.get('guest') === '1' ? (
+      ) : auth.user || instanceId || url.searchParams.get('guest') === '1' ? (
         active ? (
-          <div hidden={active !== instanceId}>
+          <div>
             <CasualLobby
               key={`${active}:${auth.user?.id ?? 'guest'}`}
               instanceId={active}
+              targetInstanceId={instanceId}
             />
           </div>
         ) : (

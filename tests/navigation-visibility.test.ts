@@ -51,7 +51,9 @@ it('準備中の通常対戦・履歴は対象の運営者だけに表示する'
     state.permissions = [permission];
     const markup = renderToStaticMarkup(createElement(Navigation));
     expect(markup).toContain('ランクマッチ');
-    expect(markup).toContain('対戦履歴・ランキング');
+    expect(markup).toContain('対戦履歴');
+    expect(markup).toContain('href="/history/?instance=prepared"');
+    expect(markup).toContain('href="/ranking/?instance=prepared"');
   }
   state.permissions = [];
   state.administrator = true;

@@ -27,11 +27,16 @@ const errors: Record<string, string> = {
   ROOM_CLOSED: '待機が終了しました。もう一度マッチングしてください。',
   MATCHMAKING_FULL: '現在の参加枠が満員です。しばらく待ってください。',
   RATE_LIMIT: '操作が多いため、少し待ってからお試しください。',
+  MATCH_SWITCH_PENDING:
+    '前の参加からの離脱を確認しています。少し待って再試行してください。',
+  OPERATION_CONFLICT: '再試行の内容が変わっています。参加状態を確認してください。',
 };
 export class MatchError extends Error {
   constructor(
     readonly code: string,
     readonly instanceId?: string,
+    readonly status = 409,
+    readonly mode?: 'ranked' | 'casual' | 'room',
   ) {
     super(
       errors[code] ??
@@ -54,13 +59,20 @@ export async function matchRequest(path: string, body: object = {}, instanceId =
   });
   const result = (await response.json()) as {
     room?: string;
+    operationId?: string;
     instanceId?: string;
     code?: string;
+    mode?: 'ranked' | 'casual' | 'room';
     playersPerMatch?: number;
     rules?: { correctAnswersToWin: number; mistakesToDisqualify: number };
   };
   if (!response.ok)
-    throw new MatchError(result.code ?? 'MATCH_FAILED', result.instanceId);
+    throw new MatchError(
+      result.code ?? 'MATCH_FAILED',
+      result.instanceId,
+      response.status,
+      result.mode,
+    );
   return result;
 }
 export const resumeMatch = (instanceId = '') =>

@@ -8,6 +8,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { Env } from '../src/worker/env';
 import {
   advance,
+  forfeitPlayer,
   type State,
   snapshot,
   updateConnections,
@@ -95,6 +96,51 @@ it('全員切断で全員減少。一時切断から期限前に復帰したら�
   ).toBe(20);
 });
 
+it.each(['ranked', 'casual', 'room'] as const)(
+  '強制離脱は本人だけに適用し、%sの終端原本とレートを再試行・再接続で変更しない',
+  (kind) => {
+    const { state } = resultFixture();
+    state.phase = 'REVEALING';
+    state.result = null;
+    delete state.completed;
+    state.matchKind = kind;
+    const template = state.players[1];
+    state.players.push({ ...template, id: 'c' }, { ...template, id: 'd' });
+    forfeitPlayer(state, 'b', 3000);
+    expect(state.phase).toBe('REVEALING');
+    expect(state.players.find((p) => p.id === 'b')).toMatchObject({
+      forfeited: true,
+      disqualified: true,
+      connected: false,
+      mistakes: 0,
+    });
+    updateConnections(state, new Set(['a', 'b', 'c', 'd']), 3001);
+    expect(state.players.find((p) => p.id === 'b')?.connected).toBe(false);
+    forfeitPlayer(state, 'c', 3002);
+    forfeitPlayer(state, 'd', 3003);
+    expect((state as State).result?.reason).toBe(
+      kind === 'room' ? 'last_remaining' : 'disqualifications',
+    );
+    expect(
+      (state as State).completed?.players.find((p) => p.id === 'b')?.ratingDelta,
+    ).toBe(kind === 'ranked' ? -20 : 0);
+    const original = structuredClone(state.completed);
+    forfeitPlayer(state, 'b', 4000);
+    forfeitPlayer(state, 'a', 4001);
+    updateConnections(state, new Set(['a', 'b', 'c', 'd']), 4002);
+    advance(state, 4003);
+    expect(state.completed).toEqual(original);
+  },
+);
+it('待機中の強制離脱では結果・レートを生成しない', () => {
+  const { state } = resultFixture();
+  state.phase = 'WAITING';
+  state.result = null;
+  delete state.completed;
+  forfeitPlayer(state, 'a', 3000);
+  expect(state.completed).toBeUndefined();
+  expect(state.players[0].forfeited).toBeUndefined();
+});
 it('旧DO・開発参加の結果は遡及保存しない', () => {
   const { state, record } = resultFixture();
   delete state.startedAt;

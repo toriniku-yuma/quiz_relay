@@ -5,6 +5,7 @@ import {
   type User,
 } from '@supabase/supabase-js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { publicPlayEntry } from '../src/client/features/auth/publicEntry';
 import { useAuth } from '../src/client/features/auth/useAuth';
 import { withdrawalReceiptKey } from '../src/client/features/profile/withdrawalReceipt';
 
@@ -36,6 +37,18 @@ vi.mock('../src/client/features/auth/client', async (importOriginal) => ({
 }));
 
 const subject = '00000000-0000-4000-8000-000000000001';
+it.each([
+  ['/game/?instance=sample', true],
+  ['/casual/?instance=sample', true],
+  ['/rooms/?instance=sample', true],
+  ['/rooms/?room=sample&invite=sample', true],
+  ['/game/?guest=1', true],
+  ['/game/', false],
+  ['/game/?instance=sample&view=settings', false],
+  ['/profile/', false],
+])('公開参加先%sだけを未ログインで保持する', (path, expected) => {
+  expect(publicPlayEntry(new URL(`https://quiz.test${path}`))).toBe(expected);
+});
 const user: User = {
   id: subject,
   aud: 'authenticated',

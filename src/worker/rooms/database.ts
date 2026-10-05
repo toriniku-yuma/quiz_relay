@@ -240,6 +240,9 @@ export async function ensureCasualCatalog(env: Env, instanceId: string) {
         ).length
       )
         throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
+      await tx.execute(
+        sql`select set_config('quiz.organization_id',${instance.organizationId},true)`,
+      );
       const [active] = await tx
         .select()
         .from(matchmakingSettings)
@@ -250,9 +253,6 @@ export async function ensureCasualCatalog(env: Env, instanceId: string) {
           ),
         );
       if (active) return;
-      await tx.execute(
-        sql`select set_config('quiz.organization_id',${instance.organizationId},true)`,
-      );
       await publishQuestionCatalog(
         tx,
         instanceId,
@@ -540,7 +540,11 @@ export async function saveCasualSettings(
     ) ||
     !Number.isInteger(config.players) ||
     config.players < 2 ||
-    config.players > 4
+    config.players > 4 ||
+    (input.rankedPlayers !== undefined &&
+      (!Number.isInteger(input.rankedPlayers) ||
+        Number(input.rankedPlayers) < 2 ||
+        Number(input.rankedPlayers) > 4))
   )
     throw new OrganizationError('INVALID_SETUP', 400);
   const { db, close } = organizationDatabase(env);
@@ -592,6 +596,7 @@ export async function saveCasualSettings(
         id,
         identity.instance.owner,
         env.GAME_CONFIG_PROFILE,
+        input.rankedPlayers as number | undefined,
       );
       await tx.insert(moderationRequests).values({
         id: operationId,
@@ -603,6 +608,9 @@ export async function saveCasualSettings(
           action: 'casualConfig',
           before: identity.instance.casualConfig,
           after: config,
+          ...(input.rankedPlayers !== undefined
+            ? { rankedPlayers: input.rankedPlayers }
+            : {}),
         },
       });
       return { ok: true };

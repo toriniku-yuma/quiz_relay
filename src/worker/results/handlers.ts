@@ -1,4 +1,5 @@
 import type { Handler } from 'hono';
+import { resultsQuery } from '../../shared/results';
 import type { AuthEnv } from '../auth/handlers';
 import { connectDatabase } from '../db/connection';
 import { organizationDatabase } from '../organization/database';
@@ -7,6 +8,13 @@ import { currentProfileNames } from '../organization/profile';
 import { readResults } from './read';
 
 export const resultsOverview: Handler<AuthEnv> = async (c) => {
+  let query: ReturnType<typeof resultsQuery>;
+  try {
+    const text = await c.req.text();
+    query = resultsQuery(text ? JSON.parse(text) : {});
+  } catch {
+    return c.json({ code: 'INVALID_SETUP' }, 400);
+  }
   const binding = c.env.GAME_HYPERDRIVE;
   const url = binding?.connectionString ?? c.env.GAME_DATABASE_URL;
   if (!url) return c.json({ code: 'RESULTS_UNAVAILABLE' }, 503);
@@ -30,6 +38,7 @@ export const resultsOverview: Handler<AuthEnv> = async (c) => {
       c.get('instanceOwner'),
       c.get('actorId'),
       excludedActors,
+      query,
     );
     if (c.get('instanceId') && result.ranking.length) {
       const organization = organizationDatabase(c.env);

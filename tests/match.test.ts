@@ -268,6 +268,8 @@ async function current(socket: WebSocket) {
 
 it('DO G06/G07/G10: hibernation and reconnect keep the current panel, deadline, ACK and delta history', async () => {
   const { stub, tokens, sockets } = await room(3);
+  // Verify recovery before the deadline; runtime load must not turn this into an expiry test.
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
   try {
     const initial = await current(sockets[0]);
     const buzz: Command = {
@@ -343,6 +345,7 @@ it('DO G06/G07/G10: hibernation and reconnect keep the current panel, deadline, 
     expect(fallback.type === 'state' && fallback.panel).toEqual(before.panel);
   } finally {
     for (const socket of sockets) socket.close();
+    clock.mockRestore();
   }
 });
 

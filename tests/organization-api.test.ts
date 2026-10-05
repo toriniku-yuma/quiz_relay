@@ -95,6 +95,7 @@ it('組織一覧は検証済みsubjectだけを使い、入力されたsubject�
     'verified',
     'test-installer',
     undefined,
+    'local',
   );
   expect(response.headers.get('Cache-Control')).toBe('no-store');
 });
@@ -119,7 +120,7 @@ it('本人履歴はサーバーで解決したownerと旧actorのみを参照', 
   );
   expect(response.status).toBe(200);
   expect(mocks.resolve).toHaveBeenCalledWith({}, 'verified', instanceId, false);
-  expect(mocks.read).toHaveBeenCalledWith({}, 'urn:uuid:host', 'old-actor', []);
+  expect(mocks.read).toHaveBeenCalledWith({}, 'urn:uuid:host', 'old-actor', [], {});
 });
 it.each([
   { administrator: true, permissions: [] },
@@ -149,17 +150,25 @@ it.each([
       isolated,
     );
     expect(response.status).toBe(200);
-    expect(mocks.enter).toHaveBeenCalledWith('operator', '運営者', undefined, false, {
-      id: instanceId,
-      owner: 'private',
-    });
+    expect(mocks.enter).toHaveBeenCalledWith(
+      'operator',
+      '運営者',
+      undefined,
+      false,
+      {
+        id: instanceId,
+        owner: 'private',
+      },
+      false,
+      undefined,
+    );
     expect((await request(`/api/matchmaking/config?instance=${instanceId}`)).status).toBe(
       200,
     );
     expect((await request(`/api/results/overview?instance=${instanceId}`)).status).toBe(
       200,
     );
-    expect(mocks.read).toHaveBeenCalledWith({}, 'private', 'operator', []);
+    expect(mocks.read).toHaveBeenCalledWith({}, 'private', 'operator', [], {});
   },
 );
 it('対象権限のない一般ユーザーは準備中のAPIを利用できない', async () => {
@@ -203,10 +212,18 @@ it('参加名はリクエストで偽装できず、未登録でも既存試合�
       isolated,
     );
   expect((await enter('join', { name: '偽装名' })).status).toBe(200);
-  expect(mocks.enter).toHaveBeenLastCalledWith('old-actor', '登録名', undefined, false, {
-    id: instanceId,
-    owner: 'urn:uuid:host',
-  });
+  expect(mocks.enter).toHaveBeenLastCalledWith(
+    'old-actor',
+    '登録名',
+    undefined,
+    false,
+    {
+      id: instanceId,
+      owner: 'urn:uuid:host',
+    },
+    false,
+    undefined,
+  );
   mocks.restriction.mockRejectedValue(
     new OrganizationError('PARTICIPATION_RESTRICTED', 409),
   );
@@ -225,10 +242,18 @@ it('参加名はリクエストで偽装できず、未登録でも既存試合�
   expect(await rejected.json()).toEqual({ code: 'PROFILE_REQUIRED' });
   expect(mocks.enter).not.toHaveBeenCalled();
   expect((await enter('resume', {})).status).toBe(200);
-  expect(mocks.enter).toHaveBeenCalledWith('old-actor', '', undefined, true, {
-    id: instanceId,
-    owner: 'urn:uuid:host',
-  });
+  expect(mocks.enter).toHaveBeenCalledWith(
+    'old-actor',
+    '',
+    undefined,
+    true,
+    {
+      id: instanceId,
+      owner: 'urn:uuid:host',
+    },
+    false,
+    undefined,
+  );
 });
 
 it('ランキングのBAN除外はサーバーの組織・インスタンスで取得して集計前に渡す', async () => {
@@ -240,5 +265,11 @@ it('ランキングのBAN除外はサーバーの組織・インスタンスで�
   );
   expect(response.status).toBe(200);
   expect(mocks.excluded).toHaveBeenCalledWith({}, 'org', instanceId);
-  expect(mocks.read).toHaveBeenCalledWith({}, 'urn:uuid:host', 'old-actor', ['banned']);
+  expect(mocks.read).toHaveBeenCalledWith(
+    {},
+    'urn:uuid:host',
+    'old-actor',
+    ['banned'],
+    {},
+  );
 });

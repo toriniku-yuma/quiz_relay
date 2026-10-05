@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import type { RoomView } from '../../../shared/rooms';
 import { useApp } from '../../app/context';
@@ -6,6 +6,7 @@ import { navigate } from '../../app/navigation';
 import { ROOMS_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import DataTable from '../../components/DataTable';
+import Modal from '../../components/Modal';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
 import LoginForm from '../auth/LoginForm';
@@ -31,6 +32,8 @@ export default function RoomWorkspace() {
     [error, setError] = useState(''),
     [namePrompt, setNamePrompt] = useState(false);
   const [joinAfterName, setJoinAfterName] = useState(false);
+  const [restorePrompt, setRestorePrompt] = useState(false);
+  const offeredAt = useRef('');
   const joined = useMutation(
     API_PATHS.roomJoin,
     (request) => {
@@ -44,7 +47,7 @@ export default function RoomWorkspace() {
     (path, body) =>
       playRequest(path, body, String((body as Record<string, unknown>).instanceId)),
   );
-  const eligible = !!auth.user || url.searchParams.get('guest') === '1';
+  const eligible = !!auth.user || !!instanceId || url.searchParams.get('guest') === '1';
   useEffect(() => {
     if (joinAfterName && guest?.data?.id) {
       setJoinAfterName(false);
@@ -77,7 +80,7 @@ export default function RoomWorkspace() {
       if (auth.user || guest?.data?.id)
         void playRequest<{ room: RoomView }>(API_PATHS.roomView, { room: id }, instanceId)
           .then(() => {
-            if (live && !session.active) session.join(id, instanceId);
+            if (live && session.isCurrent(null)) session.join(id, instanceId);
           })
           .catch(() => {});
     } else if (eligible && view !== 'sets') void refresh();
@@ -93,16 +96,94 @@ export default function RoomWorkspace() {
     eligible,
     view,
     refresh,
-    session.active,
+    session.isCurrent,
     session.join,
   ]);
   const activeHere =
     session.active?.id === id && session.active.instanceId === instanceId;
+  const previous = useRef<{ href: string; lobby: boolean } | null>(null);
+  useEffect(() => {
+    const last = previous.current;
+    const inside =
+      url.pathname === ROOMS_PATH && activeHere && ['', 'edit', 'game'].includes(view);
+    previous.current = {
+      href: url.href,
+      lobby:
+        inside &&
+        view !== 'game' &&
+        session.room?.id === session.active?.id &&
+        !!session.room?.id &&
+        (!session.room.playing || !!session.room.waiting),
+    };
+    if (last?.lobby && last.href !== url.href && !inside && session.active)
+      void session.exit.submit({
+        room: session.active.id,
+        instanceId: session.active.instanceId,
+        force: true,
+      });
+  }, [
+    url.href,
+    url.pathname,
+    activeHere,
+    view,
+    session.active,
+    session.room?.playing,
+    session.room?.waiting,
+    session.room?.id,
+    session.exit?.submit,
+  ]);
+  useEffect(() => {
+    if (
+      url.pathname === ROOMS_PATH &&
+      activeHere &&
+      session.room?.id === id &&
+      session.room?.matchRoom &&
+      !session.room.waiting &&
+      view !== 'game' &&
+      view !== 'edit' &&
+      !session.restored
+    )
+      navigate(
+        `${ROOMS_PATH}?instance=${instanceId}&room=${id}&view=game${auth.user ? '' : '&guest=1'}`,
+      );
+  }, [
+    url.pathname,
+    activeHere,
+    session.room?.matchRoom,
+    session.room?.id,
+    session.room?.waiting,
+    view,
+    instanceId,
+    id,
+    auth.user,
+    session.restored,
+  ]);
+  useEffect(() => {
+    if (
+      url.pathname === ROOMS_PATH &&
+      !view &&
+      session.room?.playing &&
+      !session.room.waiting &&
+      (session.restored || !activeHere) &&
+      offeredAt.current !== url.href
+    ) {
+      offeredAt.current = url.href;
+      setRestorePrompt(true);
+    }
+  }, [
+    url.href,
+    url.pathname,
+    view,
+    session.room?.playing,
+    session.room?.waiting,
+    session.restored,
+    activeHere,
+  ]);
   return (
     <>
       {session.active && (
         <div hidden={!activeHere || view === 'edit'}>
-          <RoomLobby session={session} />
+          <RoomLobby session={session} gamePage={view === 'game'} />
         </div>
       )}
       {view === 'sets' ? (
@@ -128,21 +209,7 @@ export default function RoomWorkspace() {
             <>
               <RoomRules settings={info.settings} />
               {info.playing && <p>対戦中です。入室後はロビーで次の試合を待ちます。</p>}
-              {!auth.user && (
-                <>
-                  <p>ログインして参加できます。</p>
-                  <LoginForm auth={auth} />
-                  {info.guestAllowed && (
-                    <a
-                      className="my-3 block underline"
-                      href={`${ROOMS_PATH}?instance=${info.instanceId}&room=${id}&invite=${invite}&guest=1`}
-                    >
-                      ゲストで参加
-                    </a>
-                  )}
-                </>
-              )}
-              {(auth.user || (eligible && info.guestAllowed)) && (
+              {(auth.user || info.guestAllowed) && (
                 <form
                   className="mt-4 grid gap-3"
                   onSubmit={(e) => {
@@ -172,6 +239,11 @@ export default function RoomWorkspace() {
                         : 'ゲストで入室する'}
                   </Button>
                 </form>
+              )}
+              {!auth.user && (
+                <div className="mt-6">
+                  <LoginForm auth={auth} />
+                </div>
               )}
             </>
           )}
@@ -243,6 +315,29 @@ export default function RoomWorkspace() {
         />
       )}
       {!auth.user && guest?.error && <p role="alert">{guest.error}</p>}
+      {restorePrompt &&
+        url.pathname === ROOMS_PATH &&
+        !view &&
+        session.room?.playing &&
+        !session.room.waiting && (
+          <Modal
+            title="参加中の部屋マッチがあります"
+            onClose={() => setRestorePrompt(false)}
+          >
+            <Button
+              tone="primary"
+              onClick={() => {
+                setRestorePrompt(false);
+                session.resume();
+                navigate(
+                  `${ROOMS_PATH}?instance=${session.active?.instanceId}&room=${session.active?.id}&view=game${auth.user ? '' : '&guest=1'}`,
+                );
+              }}
+            >
+              参加中の試合へ戻る
+            </Button>
+          </Modal>
+        )}
       {auth.user && !organization.data && <p role="status">組織情報を確認しています。</p>}
     </>
   );

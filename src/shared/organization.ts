@@ -20,6 +20,7 @@ export type OrganizationOverview = {
     rankedPauseReason?: string | null;
     casualPauseReason?: string | null;
     casualConfig?: import('./rooms').CasualSettings;
+    rankedPlayers?: number;
     hasOwnQuestions?: boolean;
     permissions: InstancePermission[];
   }[];

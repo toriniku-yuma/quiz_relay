@@ -565,7 +565,7 @@ export function changed(state: State, now: number) {
 export function updateConnections(state: State, connected: Set<string>, now: number) {
   let updated = false;
   for (const player of state.players) {
-    const present = connected.has(player.id);
+    const present = !player.forfeited && connected.has(player.id);
     if (player.connected !== present) {
       player.connected = present;
       updated = true;
@@ -573,8 +573,8 @@ export function updateConnections(state: State, connected: Set<string>, now: num
   }
   updated = checkInvalid(state, now) || updated;
   if (isActive(state)) {
-    const answerersConnected = answeringPlayers(state).filter((p) =>
-      connected.has(p.id),
+    const answerersConnected = answeringPlayers(state).filter(
+      (p) => !p.forfeited && connected.has(p.id),
     ).length;
     if (answerersConnected <= 1 && !state.reconnect) {
       state.reconnect = {
@@ -596,6 +596,30 @@ export function updateConnections(state: State, connected: Set<string>, now: num
 
 export const answeringPlayers = (state: State) =>
   state.players.filter((p) => p.role !== 'presenter');
+export function forfeitPlayer(state: State, actor: string, now: number) {
+  if (!isActive(state)) return;
+  const player = state.players.find((p) => p.id === actor);
+  if (!player || player.forfeited) return;
+  player.forfeited = true;
+  player.connected = false;
+  player.locked = true;
+  if (player.role !== 'presenter') player.disqualified = true;
+  if (state.holder === actor) {
+    state.holder = null;
+    state.panel = null;
+    state.response = null;
+    state.judgment = null;
+    state.phase = 'REVEALING';
+    state.deadline =
+      now +
+      (state.revealed === graphemes(state.question.text).length
+        ? state.waitRemaining
+        : state.rules.revealIntervalMs);
+    if (state.reconnect) state.reconnect.remaining = state.deadline - now;
+  }
+  checkInvalid(state, now);
+  changed(state, now);
+}
 export function questionEnded(state: State) {
   return (
     state.judgment?.result === 'correct' ||

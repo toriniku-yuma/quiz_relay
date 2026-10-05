@@ -23,9 +23,9 @@ originはpath・query・fragment・userinfoを含めず正規化し、完全一�
 | --- | --- | --- |
 | GET /api/auth/config | 公開 | url・publishableKeyだけ、no-store |
 | POST /api/matchmaking/config | Bearer | competition参照・playersPerMatch・rules。問題内容は含めない |
-| POST /api/matchmaking/join | Bearer、{name} | {room}とHttpOnly cookie。二重参加409 |
+| POST /api/matchmaking/join | Bearer、{name, operationId} | {room, operationId}とHttpOnly cookie。同一操作は同じ参加先へ再送 |
 | POST /api/matchmaking/resume | Bearer、{} | 同じactorの{room}とcookie。参加なし409 |
-| POST /api/matchmaking/cancel | Bearer、{room} | 待機だけ取消。開始後409、古い部屋指定409 |
+| POST /api/matchmaking/cancel | Bearer、{room}または{operationId} | 待機だけ取消。開始後409、古い部屋指定409。部屋未確定でも操作IDを閉鎖 |
 | POST /api/matchmaking/logout | Bearer、{room} | 本人の部屋セッション・接続を失効 |
 | GET /api/matchmaking/socket?room=UUID | 同一Origin・部屋cookie・WebSocket Upgrade | state/delta/ackと本人用panel |
 
@@ -33,9 +33,13 @@ originはpath・query・fragment・userinfoを含めず正規化し、完全一�
 
 tokenはURL/JSONに含めない。WebSocketでは部屋cookieを認可し、初回のBearerを再送しない。ログアウト操作で失効するが、Supabase管理側の失効が既発行cookieへ即時伝播する方式ではない。
 
-既存の部屋ID形式は `1c:<UUID>`（互換性のため保持）。組織Matchmakerが同一actorのインスタンス横断の二重参加を防ぎ、GameRoomは設定人数の異なるactor接続がそろった時だけDB固定版を再確認して開始する。取消と開始は同じDO内で直列化。
+既存の部屋ID形式は `1c:<UUID>`（互換性のため保持）。組織Matchmakerが同一actorのインスタンス・モード横断の参加枠を最大2つに制限する。新参加が成立すると旧本人だけを強制離脱させ、未確認の離脱は永続台帳から再試行する。GameRoomは設定人数の異なるactor接続がそろった時だけDB固定版を再確認して開始する。取消と開始は同じDO内で直列化。
 
 未接続予約60秒・待機部屋10分・セッション12時間の期限を復帰で延長しない。開始後の切断猶予・終端状態・再送/復帰は[復旧設計](architecture.md)に従う。
+自動マッチは初回接続後の最後の接続切れを検知した時点で予約・セッション・参加世代を閉じる。ページ移動での取消は本人の待機を全タブから解除し、開始との競合はサーバーの現在phaseで判定する。カジュアルマッチの取消も{room}または{operationId}を受け付ける。
+
+本人履歴の `POST /api/results/overview` とゲスト対応の `POST /api/play/results` は、`section: history | ranking`、履歴の`kind: ranked | casual | room`、詳細の`resultId`、追加取得の`cursor: {finishedAt, resultId}`を受け付ける。詳細とkind/cursor、ランキングと履歴指定の併用は400。actor・ownerはサーバーで固定する。終了日時と結果IDの降順で20件ずつ返し、`nextCursor`で続きを指定する。一覧には問題本文を含めず、詳細は参加者本人に出題済み問題だけを返す。ゲストは30日期限を取得前に適用する。
+認証済みの `POST /api/results/overview` は `section: self` も受け付ける。ランキング取得時には `self: {rank, rating}` を返し、`self` 指定時は本人情報だけを取得してranking/historyを空配列で返す。順位は全対象者の順位計算後に本人を抽出し、一覧の100人制限を受けない。順位なしはnull、レートは初期値1000＋保存済みランク差分とする。順位からの除外で本人のレートを初期化しない。`self` とkind/resultId/cursorの併用は400。ゲストの結果APIは履歴だけを返す。
 
 config応答のrulesはDBで検証した公開ルール値。設定切替後の新規参加は新しいマッチング定義版を使用し、既存部屋は保存した版を保持する。正解数の目標到達によるDO結果理由は `target_reached`。
 
@@ -92,7 +96,7 @@ config応答のrulesはDBで検証した公開ルール値。設定切替後の�
 
 開催元だけが確定原本を発行します。INVALIDも終了状態・理由・開催元の確定レート差分を持つ結果として扱います。
 所属元では開催元付きの本人履歴へ表示し、所属元自身のレートへ加算しません。
-部屋・カジュアルの識別を保持し、すべてのランキング指標から除外します。
+部屋・カジュアルマッチの識別を保持し、すべてのランキング指標から除外します。
 
 配送内容はeventId・origin・resultId・matchId・開催instance・固定設定参照・開始終了時刻・種別・終了状態・理由・参加actor・勝敗・正解数・お手つき数・失格・レート差分です。
 正解・問題本文・入力解答は配送しません。出題済み問題の振り返りは開催元へ移動し、開催元でも本人を認証します。

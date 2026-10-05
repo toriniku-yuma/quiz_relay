@@ -6,6 +6,7 @@ import { defaultQuestionSettings, emptyQuestion } from '../src/shared/questions.
 import { newRoomSettings } from '../src/shared/rooms.ts';
 import { loadMatchDefinition } from '../src/worker/catalog/database.ts';
 import { contentHash } from '../src/worker/catalog/hash.ts';
+import { connectDatabase } from '../src/worker/db/connection.ts';
 import {
   accountWithdrawals,
   instanceGrants,
@@ -24,9 +25,14 @@ import {
 import type { Env } from '../src/worker/env.ts';
 import { rules } from '../src/worker/game/rules.ts';
 import { actorForSubject } from '../src/worker/organization/access.ts';
-import { allowedInstanceActors } from '../src/worker/organization/database.ts';
+import {
+  allowedInstanceActors,
+  organizationDatabase,
+  overview,
+} from '../src/worker/organization/database.ts';
 import { questionMutation } from '../src/worker/questions/database.ts';
 import { commitResult } from '../src/worker/results/database.ts';
+import { readResults } from '../src/worker/results/read.ts';
 import type { ResultRecord } from '../src/worker/results/record.ts';
 import {
   createGuest,
@@ -147,11 +153,55 @@ export async function verifyRooms(
   const request = {
     id: instanceId,
     config,
+    rankedPlayers: 3,
     revision: instance.operationRevision,
     operationId: crypto.randomUUID(),
   };
   await saveCasualSettings(env, adminSubject, request);
   await saveCasualSettings(env, adminSubject, request);
+  for (const rankedPlayers of [1, 5, 2.5])
+    await assert.rejects(
+      saveCasualSettings(env, adminSubject, {
+        ...request,
+        operationId: crypto.randomUUID(),
+        rankedPlayers,
+      }),
+      /INVALID_SETUP/,
+    );
+  await assert.rejects(
+    saveCasualSettings(env, adminSubject, { ...request, rankedPlayers: 2 }),
+    /OPERATION_CONFLICT/,
+  );
+  const rankedVersions = await Promise.all(
+    ['', '-band-0', '-band-1', '-band-2'].map((suffix) =>
+      loadMatchDefinition({
+        ...env,
+        GAME_OWNER: instance.owner,
+        GAME_CONFIG_PROFILE: `local${suffix}`,
+      }),
+    ),
+  );
+  await saveCasualSettings(env, adminSubject, {
+    ...request,
+    operationId: crypto.randomUUID(),
+    revision: Number(request.revision) + 1,
+    rankedPlayers: 2,
+  });
+  for (const [index, suffix] of ['', '-band-0', '-band-1', '-band-2'].entries()) {
+    const fixed = rankedVersions[index];
+    assert.equal(fixed.playersPerMatch, 3);
+    const previous = await loadMatchDefinition(
+      { ...env, GAME_OWNER: instance.owner, GAME_CONFIG_PROFILE: `local${suffix}` },
+      fixed.competition,
+    );
+    assert.equal(previous.playersPerMatch, 3);
+    const current = await loadMatchDefinition({
+      ...env,
+      GAME_OWNER: instance.owner,
+      GAME_CONFIG_PROFILE: `local${suffix}`,
+    });
+    assert.equal(current.playersPerMatch, 2);
+  }
   await assert.rejects(
     saveCasualSettings(env, adminSubject, {
       ...request,
@@ -173,6 +223,28 @@ export async function verifyRooms(
   });
   assert.equal(definition.kind, 'casual');
   assert.equal(definition.playersPerMatch, 2);
+  // The organization writer's RLS must see the active catalog before deciding to publish.
+  await ensureCasualCatalog(env, instanceId);
+  await ensureCasualCatalog(env, instanceId);
+  const unchanged = await loadMatchDefinition({
+    ...env,
+    GAME_OWNER: instance.owner,
+    GAME_CONFIG_PROFILE: 'local-casual',
+  });
+  assert.deepEqual(unchanged.competition, definition.competition);
+  const organizationConnection = organizationDatabase(env);
+  try {
+    const data = await overview(
+      organizationConnection.db,
+      adminSubject,
+      undefined,
+      undefined,
+      'local',
+    );
+    assert.equal(data.instances.find((i) => i.id === instanceId)?.rankedPlayers, 2);
+  } finally {
+    await organizationConnection.close();
+  }
   const categories = await roomOptions(env, instanceId);
   assert.deepEqual(
     categories.map((c) => c.id).sort(),
@@ -485,6 +557,136 @@ export async function verifyRooms(
     .from(resultPlayers)
     .where(eq(resultPlayers.resultId, old.result.id));
   assert.equal(indexed.find((p) => p.actorId === guest.actorId)?.name, 'ゲスト');
+  const detail = await history(env, identity, {
+    section: 'history',
+    resultId: record.result.id,
+  });
+  assert.equal(detail.history.length, 1);
+  assert.equal(detail.history[0].questions?.length, 1);
+  assert.equal(
+    (await history(env, identity, { section: 'history', resultId: old.result.id }))
+      .history.length,
+    0,
+  );
+  assert.equal(
+    (
+      await history(
+        env,
+        { ...identity, actor: { ...identity.actor, id: 'other-actor' } },
+        { section: 'history', resultId: record.result.id },
+      )
+    ).history.length,
+    0,
+  );
+  const tiedAt = Date.now();
+  for (let i = 0; i < 26; i++) {
+    const fixture = structuredClone(record);
+    fixture.matchId = crypto.randomUUID();
+    fixture.result.id = crypto.randomUUID();
+    fixture.result.finishedAt = tiedAt;
+    fixture.kind = i % 2 ? 'casual' : 'room';
+    await commitResult(db, fixture);
+  }
+  const firstPage = await history(env, identity, { section: 'history' });
+  assert.equal(firstPage.history.length, 20);
+  assert.ok(firstPage.nextCursor);
+  assert.ok(firstPage.history.every((entry) => entry.questions === undefined));
+  assert.equal(firstPage.history[0].correct, 1);
+  const nextQuery = { section: 'history' as const, cursor: firstPage.nextCursor };
+  const nextPage = await history(env, identity, nextQuery);
+  assert.deepEqual(await history(env, identity, nextQuery), nextPage);
+  assert.equal(nextPage.history.length, 7);
+  assert.equal(nextPage.nextCursor, null);
+  assert.equal(
+    new Set([...firstPage.history, ...nextPage.history].map((entry) => entry.resultId))
+      .size,
+    27,
+  );
+  const casualPage = await history(env, identity, { section: 'history', kind: 'casual' });
+  assert.equal(casualPage.history.length, 13);
+  assert.ok(casualPage.history.every((entry) => entry.kind === 'casual'));
+  assert.deepEqual(
+    (await history(env, author, { section: 'ranking' })).ranking,
+    beforeRanking,
+  );
+  console.log(
+    'PASS: history 20-item cursor pagination/ties/retry, kind filter, participant-only detail, guest deadline, list without question bodies, ranking isolation',
+  );
+  // Separate owner; 103 tied leaders and one participant outside the top 100.
+  const rankingOwner = `urn:uuid:${crypto.randomUUID()}`;
+  const selfActor = crypto.randomUUID();
+  const leaders: string[] = [];
+  for (let i = 0; i < 52; i++) {
+    const fixture = structuredClone(record);
+    fixture.owner = rankingOwner;
+    fixture.kind = 'ranked';
+    fixture.matchId = crypto.randomUUID();
+    fixture.result.id = crypto.randomUUID();
+    fixture.result.reason = i === 51 ? 'target_reached' : 'connections';
+    fixture.definition.kind = 'ranked';
+    delete fixture.definition.original;
+    fixture.completedQuestions = [];
+    for (const key of ['competition', 'ruleset', 'questionSet'] as const)
+      fixture.definition[key].owner = rankingOwner;
+    const first = crypto.randomUUID();
+    const second = i === 51 ? selfActor : crypto.randomUUID();
+    leaders.push(first);
+    if (i !== 51) leaders.push(second);
+    fixture.result.winnerId = i === 51 ? first : null;
+    fixture.players = [
+      { ...player(first, '上位者'), ratingDelta: 20 },
+      { ...player(second, '参加者'), ratingDelta: i === 51 ? -20 : 20 },
+    ];
+    await commitResult(db, fixture);
+  }
+  const rankingReader = connectDatabase(roleUrl('quiz_game_reader'));
+  try {
+    const overview = await readResults(rankingReader.db, rankingOwner, selfActor, [], {
+      section: 'ranking',
+    });
+    assert.equal(overview.ranking.length, 100);
+    assert.ok(overview.ranking.every((row) => row.rank === 1));
+    assert.ok(overview.ranking.every((row) => row.actorId !== selfActor));
+    assert.deepEqual(overview.self, { rank: 104, rating: 980 });
+    const selfOnly = await readResults(rankingReader.db, rankingOwner, selfActor, [], {
+      section: 'self',
+    });
+    assert.deepEqual(selfOnly, { ranking: [], history: [], self: overview.self });
+    assert.deepEqual(
+      (
+        await readResults(
+          rankingReader.db,
+          rankingOwner,
+          selfActor,
+          leaders.slice(0, 2),
+          { section: 'self' },
+        )
+      ).self,
+      { rank: 102, rating: 980 },
+    );
+    assert.deepEqual(
+      (
+        await readResults(rankingReader.db, rankingOwner, selfActor, [selfActor], {
+          section: 'self',
+        })
+      ).self,
+      { rank: null, rating: 980 },
+    );
+    for (const [owner, actor] of [
+      [rankingOwner, crypto.randomUUID()],
+      [record.owner, actors[1]], // room/casual results do not assign a rank
+      ['https://unrelated-ranking.invalid', selfActor],
+    ])
+      assert.deepEqual(
+        (await readResults(rankingReader.db, owner, actor, [], { section: 'self' })).self,
+        { rank: null, rating: 1000 },
+      );
+  } finally {
+    await rankingReader.close();
+  }
+  console.log(
+    'PASS: self rank outside top 100, ties, exclusions without resetting rating, initial 1000, owner/nonrank isolation and real reader permissions',
+  );
   // A restored personal set must also be erased by the maintenance role after retirement.
   const [withdrawal] = await db
     .select()

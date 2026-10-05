@@ -26,7 +26,7 @@ export function readGameSession(
   mode: 'local' | 'formal' = 'local',
   subject = '',
 ): {
-  room: { id: string };
+  room: { id: string; instanceId?: string };
   snapshot: Snapshot | null;
 } | null {
   try {
@@ -57,7 +57,7 @@ export function readGameSession(
 }
 
 export function saveGameSession(
-  room: { id: string } | null,
+  room: { id: string; instanceId?: string } | null,
   snapshot: Snapshot | null,
   mode: 'local' | 'formal' = 'local',
   subject = '',

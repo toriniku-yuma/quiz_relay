@@ -7,6 +7,7 @@ export type Phase =
   | 'INVALID';
 
 export type Player = {
+  forfeited?: boolean;
   role?: 'presenter';
   guest?: boolean;
   id: string;

@@ -4,13 +4,17 @@ import {
   CASUAL_PATH,
   DEBUG_PATH,
   GAME_PATH,
+  HISTORY_PATH,
   LOCAL_GAME_PATH,
   PROFILE_PATH,
+  RANKING_PATH,
   ROOMS_PATH,
   USERS_PATH,
 } from './paths';
 
 const paths: readonly string[] = [
+  HISTORY_PATH,
+  RANKING_PATH,
   CASUAL_PATH,
   ROOMS_PATH,
   USERS_PATH,

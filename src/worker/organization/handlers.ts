@@ -25,7 +25,13 @@ export const organizationOverview: Handler<AuthEnv> = async (c) => {
     } | null;
     const cursor = input?.accountCursor;
     return c.json(
-      await overview(db, c.get('subject'), c.env.INITIAL_ADMIN_SUBJECT, cursor),
+      await overview(
+        db,
+        c.get('subject'),
+        c.env.INITIAL_ADMIN_SUBJECT,
+        cursor,
+        c.env.GAME_CONFIG_PROFILE,
+      ),
     );
   } finally {
     await close();

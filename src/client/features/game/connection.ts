@@ -50,16 +50,22 @@ export function connectGameSocket(
           'NO_RANKED_QUESTIONS',
           'SETUP_UNAVAILABLE',
           'WAITING_EXPIRED',
+          'WAITING_CANCELLED',
           'INSTANCE_ACCESS_REVOKED',
+          'MATCH_REPLACED',
         ].includes(reason)
       )
         callbacks.released?.();
       stop(
-        reason === 'INSTANCE_ACCESS_REVOKED'
-          ? 'このインスタンスの参加権限がなくなったため、待機を解除しました。'
-          : reason === 'NO_RANKED_QUESTIONS'
-            ? '出題できる問題がないため待機を解除しました。問題が復旧したら、改めてマッチングしてください。'
-            : '接続が拒否されました。他のタブを閉じ、再接続してください。',
+        reason === 'MATCH_REPLACED'
+          ? '新しい参加先へ切り替えました。'
+          : reason === 'WAITING_CANCELLED'
+            ? '待機を解除しました。'
+            : reason === 'INSTANCE_ACCESS_REVOKED'
+              ? 'このインスタンスの参加権限がなくなったため、待機を解除しました。'
+              : reason === 'NO_RANKED_QUESTIONS'
+                ? '出題できる問題がないため待機を解除しました。問題が復旧したら、改めてマッチングしてください。'
+                : '接続が拒否されました。他のタブを閉じ、再接続してください。',
       );
       return;
     }

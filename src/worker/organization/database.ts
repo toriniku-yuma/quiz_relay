@@ -9,10 +9,12 @@ import {
 import { connectDatabase } from '../db/connection.ts';
 import {
   organizationAccounts as accounts,
+  competitions,
   instanceGrants as grants,
   guestSessions,
   instanceDeletions,
   instances,
+  matchmakingSettings,
   moderationSanctions,
   organizationEvents,
   organizations,
@@ -91,6 +93,7 @@ export async function overview(
   subject: string,
   initialSubject?: string,
   accountCursor?: string,
+  profile = 'default',
 ): Promise<OrganizationOverview> {
   if (
     accountCursor !== undefined &&
@@ -147,6 +150,33 @@ export async function overview(
             ),
       ),
     );
+  const playerCounts = all.length
+    ? await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select set_config('quiz.organization_id', ${organization.id}, true)`,
+        );
+        return tx
+          .select({ owner: competitions.owner, players: competitions.playersPerMatch })
+          .from(matchmakingSettings)
+          .innerJoin(
+            competitions,
+            and(
+              eq(competitions.owner, matchmakingSettings.owner),
+              eq(competitions.competitionId, matchmakingSettings.competitionId),
+              eq(competitions.version, matchmakingSettings.competitionVersion),
+            ),
+          )
+          .where(
+            and(
+              inArray(
+                matchmakingSettings.owner,
+                all.map((i) => i.owner),
+              ),
+              eq(matchmakingSettings.profile, profile),
+            ),
+          );
+      })
+    : [];
   const permissions = await db
     .select()
     .from(grants)
@@ -185,6 +215,8 @@ export async function overview(
         rankedPauseReason: instance.rankedPauseReason,
         casualPauseReason: instance.casualPauseReason,
         casualConfig: instance.casualConfig,
+        rankedPlayers:
+          playerCounts.find((row) => row.owner === instance.owner)?.players ?? 4,
         hasOwnQuestions: authored.some((row) => row.id === instance.id),
         permissions: permissions
           .filter((p) => p.instanceId === instance.id)

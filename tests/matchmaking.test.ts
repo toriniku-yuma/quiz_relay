@@ -83,7 +83,7 @@ async function socket(
   return response.webSocket;
 }
 
-it('カジュアルは実力帯なしで自動開始し、部屋・ランクへの同時参加を拒否する', async () => {
+it('カジュアルは実力帯なしで自動開始し、存在しない部屋への切替では元の試合を保持する', async () => {
   definition.kind = 'casual';
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const scope = { id: crypto.randomUUID(), owner, mode: 'casual' as const };
@@ -133,7 +133,7 @@ it('カジュアルは実力帯なしで自動開始し、部屋・ランクへ�
         { ...scope, mode: 'room' },
         { operationId: crypto.randomUUID(), password: '', invite: '' },
       ),
-    ).toMatchObject({ ok: false, code: 'OTHER_INSTANCE_ACTIVE' });
+    ).toMatchObject({ ok: false, code: 'ROOM_CLOSED' });
     expect(
       await runInDurableObject(
         runtime.GAME_ROOM.getByName(`room:${roomId}`),
@@ -147,6 +147,284 @@ it('カジュアルは実力帯なしで自動開始し、部屋・ランクへ�
     for (const socket of sockets) socket.close();
   }
 }, 20000);
+it('2人のカジュアルマッチは登録ユーザーとゲストの接続で同じ試合を自動開始する', async () => {
+  definition.kind = 'casual';
+  definition.playersPerMatch = 2;
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const scope = { id: crypto.randomUUID(), owner, mode: 'casual' as const };
+  const first = await queue.enter(
+    'registered',
+    '登録ユーザー',
+    undefined,
+    false,
+    scope,
+    false,
+    crypto.randomUUID(),
+  );
+  const second = await queue.enter(
+    'guest',
+    'ゲスト',
+    undefined,
+    false,
+    scope,
+    true,
+    crypto.randomUUID(),
+  );
+  if (!first.ok || !second.ok) throw new Error('setup');
+  expect(second.room).toBe(first.room);
+  const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const a = await socket(room, first.token, scope.id),
+    b = await socket(room, second.token, scope.id);
+  try {
+    expect(await state(room)).toMatchObject({
+      phase: 'REVEALING',
+      matchKind: 'casual',
+      playersRequired: 2,
+    });
+    expect((await state(room))?.players.filter((p) => p.guest)).toHaveLength(1);
+  } finally {
+    a.close();
+    b.close();
+  }
+});
+it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試行・古い操作・復帰要求は重複処理しない', async () => {
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const scope = { id: crypto.randomUUID(), owner };
+  const operationId = crypto.randomUUID();
+  const first = await queue.enter(
+    'switch-a',
+    'A',
+    undefined,
+    false,
+    scope,
+    false,
+    operationId,
+  );
+  if (!first.ok) throw new Error(first.code);
+  const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const sockets = [await socket(room, first.token, scope.id)];
+  try {
+    for (let i = 1; i < 4; i++) {
+      const entry = await queue.enter(
+        `switch-${i}`,
+        `P${i}`,
+        undefined,
+        false,
+        scope,
+        false,
+        crypto.randomUUID(),
+      );
+      if (!entry.ok) throw new Error(entry.code);
+      sockets.push(await socket(room, entry.token, scope.id));
+    }
+    const other = { ...scope, mode: 'casual' as const };
+    expect(await queue.enter('switch-a', '', undefined, true, other)).toMatchObject({
+      ok: false,
+      code: 'OTHER_INSTANCE_ACTIVE',
+    });
+    expect((await state(room))?.players[0].forfeited).toBeUndefined();
+    const replacementId = crypto.randomUUID();
+    const second = await queue.enter(
+      'switch-a',
+      'A',
+      undefined,
+      false,
+      other,
+      false,
+      replacementId,
+    );
+    if (!second.ok) throw new Error(second.code);
+    expect(second.room).not.toBe(first.room);
+    expect((await state(room))?.phase).toBe('REVEALING');
+    expect((await state(room))?.players[0]).toMatchObject({
+      forfeited: true,
+      connected: false,
+      disqualified: true,
+    });
+    expect(
+      await queue.enter('switch-a', 'A', undefined, false, other, false, replacementId),
+    ).toEqual(second);
+    expect(
+      await queue.enter(
+        'switch-a',
+        'changed',
+        undefined,
+        false,
+        other,
+        false,
+        replacementId,
+      ),
+    ).toMatchObject({ ok: false, code: 'OPERATION_CONFLICT' });
+    expect(
+      await queue.enter('switch-a', 'A', undefined, false, scope, false, operationId),
+    ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
+    expect(await queue.cancel('switch-a', first.room, false, scope.id)).toMatchObject({
+      ok: false,
+      code: 'STALE_ROOM',
+    });
+    expect(
+      await room.cancelReservation('switch-a', true, undefined, first.token, true),
+    ).toBe(true);
+    expect((await state(room))?.players.filter((p) => p.forfeited)).toHaveLength(1);
+    expect(await socket(room, first.token, scope.id).catch(() => null)).toBeNull();
+  } finally {
+    for (const ws of sockets) ws.close();
+  }
+}, 20000);
+
+it('旧離脱が未確認なら2枠を保持し3つ目を拒否し、Alarmで再試行して回収する', async () => {
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const first = await queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    crypto.randomUUID(),
+  );
+  if (!first.ok) throw new Error(first.code);
+  let unavailable = true;
+  let restore = () => {};
+  await runInDurableObject(queue, async (instance) => {
+    const target = instance as unknown as {
+      room(id: string): ReturnType<Env['GAME_ROOM']['getByName']>;
+    };
+    const original = target.room.bind(target);
+    const spy = vi.spyOn(target, 'room').mockImplementation((id) => {
+      const actual = original(id);
+      return id !== first.room
+        ? actual
+        : ({
+            lobbyStatus: () => actual.lobbyStatus(),
+            reserve: (...args: Parameters<typeof actual.reserve>) =>
+              actual.reserve(...args),
+            cancelReservation: (...args: Parameters<typeof actual.cancelReservation>) => {
+              if (args[4] && unavailable) throw new Error('RPC lost');
+              return actual.cancelReservation(...args);
+            },
+          } as unknown as typeof actual);
+    });
+    restore = () => spy.mockRestore();
+  });
+  try {
+    const second = await queue.enter(
+      'a',
+      'A',
+      undefined,
+      false,
+      undefined,
+      false,
+      crypto.randomUUID(),
+    );
+    expect(second.ok).toBe(true);
+    expect(
+      await queue.enter(
+        'a',
+        'A',
+        undefined,
+        false,
+        undefined,
+        false,
+        crypto.randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
+    unavailable = false;
+    await runDurableObjectAlarm(queue);
+    expect(
+      await runInDurableObject(
+        queue,
+        async (_i, ctx) =>
+          (await ctx.storage.get<{ switches?: object }>('queue'))?.switches,
+      ),
+    ).toEqual({});
+    expect(
+      (
+        await queue.enter(
+          'a',
+          'A',
+          undefined,
+          false,
+          undefined,
+          false,
+          crypto.randomUUID(),
+        )
+      ).ok,
+    ).toBe(true);
+  } finally {
+    restore();
+  }
+});
+
+it('切替結果不明→ログアウト→新待機取消の後も、元の進行中試合へ新トークンで復帰する', async () => {
+  definition.playersPerMatch = 2;
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const first = await queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    crypto.randomUUID(),
+  );
+  const partner = await queue.enter('b', 'B');
+  if (!first.ok || !partner.ok) throw new Error('setup');
+  const oldRoom = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const sockets = [
+    await socket(oldRoom, first.token),
+    await socket(oldRoom, partner.token),
+  ];
+  let restore = () => {};
+  let lostRoom = '';
+  await runInDurableObject(queue, async (instance) => {
+    const target = instance as unknown as { room(id: string): typeof oldRoom };
+    const original = target.room.bind(target);
+    const spy = vi.spyOn(target, 'room').mockImplementation((id) => {
+      const actual = original(id);
+      return id === first.room
+        ? actual
+        : ({
+            lobbyStatus: () => actual.lobbyStatus(),
+            cancelReservation: (...args: Parameters<typeof actual.cancelReservation>) =>
+              actual.cancelReservation(...args),
+            reserve: async (...args: Parameters<typeof actual.reserve>) => {
+              await actual.reserve(...args);
+              lostRoom = id;
+              throw new Error('reply lost');
+            },
+          } as unknown as typeof actual);
+    });
+    restore = () => spy.mockRestore();
+  });
+  try {
+    expect(
+      await queue.enter(
+        'a',
+        'A',
+        undefined,
+        false,
+        undefined,
+        false,
+        crypto.randomUUID(),
+      ),
+    ).toMatchObject({ ok: false, code: 'GAME_DATABASE_UNAVAILABLE' });
+    restore();
+    await queue.logoutActor('a');
+    expect((await state(oldRoom))?.phase).toBe('REVEALING');
+    expect(await queue.cancel('a', lostRoom)).toMatchObject({ ok: true });
+    const resumed = await queue.enter('a', '', undefined, true);
+    if (!resumed.ok) throw new Error(resumed.code);
+    expect(resumed.room).toBe(first.room);
+    expect(resumed.token).not.toBe(first.token);
+    sockets.push(await socket(oldRoom, resumed.token));
+    expect((await state(oldRoom))?.players[0].forfeited).toBeUndefined();
+  } finally {
+    restore();
+    for (const ws of sockets) ws.close();
+  }
+});
+
 it.each([2, 3, 4])(
   'M01/M03: %i distinct connected actors start once; duplicate tabs and reservations do not start',
   async (count) => {
@@ -187,6 +465,292 @@ it('M01: cancellation frees slots and invalidates the old cookie before a replac
     ).status,
   ).toBe(401);
   expect((await stub.reserve('b', 'B', 'new', definition)).ok).toBe(true);
+});
+
+it.each(['ranked', 'casual'] as const)(
+  '%sの待機は最後の接続切れで世代ごと解除し、他タブ接続中は保持する',
+  async (kind) => {
+    definition.kind = kind;
+    const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
+    await room.reserve('a', 'A', 'token-a', definition, undefined, 'generation-a');
+    const a = await socket(room, 'token-a'),
+      b = await socket(room, 'token-a');
+    try {
+      await runInDurableObject(room, async (instance, ctx) =>
+        instance.webSocketClose(ctx.getWebSockets()[0]),
+      );
+      expect((await room.lobbyStatus())?.actors).toEqual(['a']);
+      expect((await state(room))?.players[0].connected).toBe(true);
+      await runInDurableObject(room, async (instance, ctx) => {
+        const live = ctx
+          .getWebSockets()
+          .find((ws) => (ws.deserializeAttachment() as { live: boolean }).live);
+        if (!live) throw new Error('live socket');
+        await instance.webSocketClose(live);
+      });
+      expect((await room.lobbyStatus())?.actors).toEqual([]);
+      expect((await state(room))?.result).toBeNull();
+      await evictDurableObject(room);
+      expect(
+        await room.reserve('a', 'A', 'token-a', definition, undefined, 'generation-a'),
+      ).toMatchObject({ ok: false });
+    } finally {
+      a.close();
+      b.close();
+    }
+  },
+);
+
+it('部屋ID未確定の取消を参加前・DB読込中に保存し、後発の別操作を巻き込まない', async () => {
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const first = crypto.randomUUID();
+  expect(await queue.cancelAdmission('a', first)).toMatchObject({ ok: true });
+  expect(
+    await queue.enter('a', 'A', undefined, false, undefined, false, first),
+  ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
+  let released = false;
+  let started = false;
+  mocks.load.mockImplementationOnce(async () => {
+    started = true;
+    while (!released) await new Promise((resolve) => setTimeout(resolve, 5));
+    return structuredClone(definition);
+  });
+  const slow = crypto.randomUUID(),
+    fast = crypto.randomUUID();
+  const pending = queue.enter('a', 'A', undefined, false, undefined, false, slow);
+  await vi.waitFor(() => expect(started).toBe(true));
+  expect(await queue.cancelAdmission('a', slow)).toMatchObject({ ok: true });
+  const successor = await queue.enter('a', 'A', undefined, false, undefined, false, fast);
+  released = true;
+  expect(await pending).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
+  expect(successor.ok).toBe(true);
+  expect(await queue.enter('a', '', undefined, true)).toEqual(successor);
+});
+
+it('切断済み待機者の古い台帳は、新参加者2人の同じ待機先への割当を妨げない', async () => {
+  definition.playersPerMatch = 2;
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const old = await queue.enter('old', 'Old');
+  if (!old.ok) throw new Error(old.code);
+  const room = runtime.GAME_ROOM.getByName(`1c:${old.room}`);
+  const oldSocket = await socket(room, old.token);
+  await runInDurableObject(room, async (instance, ctx) =>
+    instance.webSocketClose(ctx.getWebSockets()[0]),
+  );
+  const a = await queue.enter('a', 'A'),
+    b = await queue.enter('b', 'B');
+  if (!a.ok || !b.ok) throw new Error('setup');
+  expect(b.room).toBe(a.room);
+  const current = runtime.GAME_ROOM.getByName(`1c:${a.room}`);
+  const connections = [await socket(current, a.token), await socket(current, b.token)];
+  try {
+    expect((await state(current))?.phase).toBe('REVEALING');
+  } finally {
+    oldSocket.close();
+    for (const ws of connections) ws.close();
+  }
+});
+
+it('切替中の旧待機も操作IDで閉じ、後発予約拒否で旧待機を復活させない', async () => {
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const oldOperation = crypto.randomUUID();
+  const old = await queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    oldOperation,
+  );
+  if (!old.ok) throw new Error(old.code);
+  let release = false,
+    entered = false;
+  let restore = () => {};
+  await runInDurableObject(queue, async (instance) => {
+    const target = instance as unknown as {
+      room(id: string): DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>;
+    };
+    const original = target.room.bind(target);
+    const spy = vi.spyOn(target, 'room').mockImplementation((id) =>
+      id === old.room
+        ? original(id)
+        : ({
+            reserve: async () => {
+              entered = true;
+              while (!release) await new Promise((done) => setTimeout(done, 5));
+              return { ok: false, code: 'ROOM_CLOSED' };
+            },
+          } as unknown as ReturnType<typeof original>),
+    );
+    restore = () => spy.mockRestore();
+  });
+  const pending = queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    crypto.randomUUID(),
+  );
+  try {
+    await vi.waitFor(() => expect(entered).toBe(true));
+    expect(await queue.cancelAdmission('a', oldOperation)).toMatchObject({ ok: true });
+    expect(
+      (await runtime.GAME_ROOM.getByName(`1c:${old.room}`).lobbyStatus())?.actors,
+    ).toEqual([]);
+  } finally {
+    release = true;
+  }
+  await pending;
+  restore();
+  expect(await queue.enter('a', '', undefined, true)).toMatchObject({
+    ok: false,
+    code: 'NO_ACTIVE_MATCH',
+  });
+});
+
+it('取消応答が失われても同じ操作は復活せず、開始済みなら取消せず復帰できる', async () => {
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const operationId = crypto.randomUUID();
+  const first = await queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    operationId,
+  );
+  if (!first.ok) throw new Error(first.code);
+  expect(await queue.cancelAdmission('a', operationId)).toMatchObject({ ok: true });
+  await evictDurableObject(queue);
+  expect(await queue.cancelAdmission('a', operationId)).toMatchObject({ ok: true });
+  expect(
+    await queue.enter('a', 'A', undefined, false, undefined, false, operationId),
+  ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
+  definition.playersPerMatch = 2;
+  const startedOperation = crypto.randomUUID();
+  const next = await queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    startedOperation,
+  );
+  const other = await queue.enter('b', 'B');
+  if (!next.ok || !other.ok) throw new Error('setup');
+  const room = runtime.GAME_ROOM.getByName(`1c:${next.room}`);
+  const a = await socket(room, next.token),
+    b = await socket(room, other.token);
+  try {
+    expect(await queue.cancelAdmission('a', startedOperation)).toMatchObject({
+      ok: false,
+      code: 'MATCH_STARTED',
+    });
+    expect((await state(room))?.players[0].forfeited).toBeUndefined();
+    expect(await queue.enter('a', '', undefined, true)).toEqual(next);
+    await runInDurableObject(room, async (instance, ctx) => {
+      const ws = ctx
+        .getWebSockets()
+        .find(
+          (ws) => (ws.deserializeAttachment() as { actorId: string }).actorId === 'a',
+        );
+      if (!ws) throw new Error('socket');
+      await instance.webSocketClose(ws);
+    });
+    expect((await state(room))?.reconnect?.deadline).toBeGreaterThan(Date.now());
+    expect((await state(room))?.result).toBeNull();
+  } finally {
+    a.close();
+    b.close();
+  }
+});
+
+it('待機取消のDO応答消失は閉鎖世代を保持し、再起動後のAlarmで同じ取消を完了する', async () => {
+  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const operationId = crypto.randomUUID();
+  const admitted = await queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    operationId,
+  );
+  if (!admitted.ok) throw new Error(admitted.code);
+  let restore = () => {};
+  await runInDurableObject(queue, async (instance) => {
+    const target = instance as unknown as {
+      room(id: string): DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>;
+    };
+    const original = target.room.bind(target);
+    const spy = vi.spyOn(target, 'room').mockImplementation((id) => {
+      const actual = original(id);
+      return {
+        cancelReservation: async (
+          ...args: Parameters<typeof actual.cancelReservation>
+        ) => {
+          await actual.cancelReservation(...args);
+          throw new Error('response lost');
+        },
+      } as unknown as typeof actual;
+    });
+    restore = () => spy.mockRestore();
+  });
+  try {
+    expect(await queue.cancelAdmission('a', operationId)).toMatchObject({
+      ok: false,
+      code: 'GAME_DATABASE_UNAVAILABLE',
+    });
+  } finally {
+    restore();
+  }
+  await runInDurableObject(queue, async (_instance, ctx) => {
+    const receipts =
+      await ctx.storage.get<Record<string, { expires: number; cancelling?: unknown }>>(
+        'admissions:a',
+      );
+    if (!receipts) throw new Error('receipt');
+    receipts[operationId].expires = Date.now() - 1;
+    await ctx.storage.put('admissions:a', receipts);
+  });
+  const next = await queue.enter(
+    'a',
+    'A',
+    undefined,
+    false,
+    undefined,
+    false,
+    crypto.randomUUID(),
+  );
+  if (!next.ok) throw new Error(next.code);
+  expect(
+    await runInDurableObject(
+      queue,
+      async (_instance, ctx) =>
+        (
+          await ctx.storage.get<Record<string, { cancelling?: unknown }>>('admissions:a')
+        )?.[operationId]?.cancelling,
+    ),
+  ).toBeDefined();
+  expect(
+    await queue.enter('a', 'A', undefined, false, undefined, false, operationId),
+  ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
+  await evictDurableObject(queue);
+  await runDurableObjectAlarm(queue);
+  expect(await queue.enter('a', '', undefined, true)).toMatchObject({
+    ok: true,
+    room: next.room,
+  });
+  expect(
+    (await state(runtime.GAME_ROOM.getByName(`1c:${admitted.room}`)))?.result,
+  ).toBeNull();
+  await queue.cancel('a', next.room);
 });
 
 it('M01/G14: failed DB revalidation cannot start or expose a question', async () => {

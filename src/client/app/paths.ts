@@ -5,3 +5,5 @@ export const PROFILE_PATH = '/account/';
 export const USERS_PATH = '/users/';
 export const CASUAL_PATH = '/casual/';
 export const ROOMS_PATH = '/rooms/';
+export const HISTORY_PATH = '/history/';
+export const RANKING_PATH = '/ranking/';

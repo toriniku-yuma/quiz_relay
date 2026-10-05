@@ -199,7 +199,9 @@ export default function GameBoard({ game }: { game: Game }) {
                 </>
               )}
               {entry.guest && <span>ゲスト</span>}
-              {entry.disqualified ? (
+              {entry.forfeited ? (
+                <span>離脱</span>
+              ) : entry.disqualified ? (
                 <span>失格</span>
               ) : (
                 entry.locked && <span>この問題は解答不可</span>

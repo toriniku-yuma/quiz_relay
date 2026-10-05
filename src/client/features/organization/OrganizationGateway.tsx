@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { canAccessInstance } from '../../../shared/organization';
+import type { MatchStatus } from '../../app/context';
 import { useApp } from '../../app/context';
-import { gameHref } from '../../app/navigation';
 import { GAME_PATH } from '../../app/paths';
 import MatchLobby from '../matchmaking/MatchLobby';
-import ResultsPanel from '../results/ResultsPanel';
 import InstanceClosure from './InstanceClosure';
 import InstanceDeletion from './InstanceDeletion';
 import OrganizationPanel from './OrganizationPanel';
@@ -30,6 +29,13 @@ export default function OrganizationGateway() {
   useEffect(() => {
     if (matchingPage && (available || canResume) && canSwitch) setSessionId(instanceId);
   }, [matchingPage, available, canResume, canSwitch, instanceId]);
+  const onStatus = useCallback(
+    (status: MatchStatus) =>
+      setMatchStatus((current) =>
+        status.roomId ? status : current?.mode === 'ranked' ? null : current,
+      ),
+    [setMatchStatus],
+  );
 
   return (
     <>
@@ -46,33 +52,20 @@ export default function OrganizationGateway() {
         </p>
       )}
       {sessionId !== null && (
-        <div hidden={!matchingPage || sessionId !== instanceId}>
+        <div hidden={!matchingPage || !available}>
           <MatchLobby
             key={sessionId}
             auth={auth}
             instanceId={sessionId}
-            onStatus={setMatchStatus}
+            targetInstanceId={instanceId}
+            onStatus={onStatus}
           />
         </div>
       )}
-      {!view && available && sessionId !== instanceId && (
+      {!view && available && sessionId === null && (
         <p role="status" className="my-4 border border-line p-4">
-          {matchStatus?.roomId
-            ? '別のインスタンスで対戦中です。参加するには、先に現在の対戦を終えるか待機を取り消してください。'
-            : '参加状態を確認しています。'}
-          {matchStatus?.roomId && (
-            <a className="mt-2 block underline" href={gameHref(matchStatus.instanceId)}>
-              対戦に戻る
-            </a>
-          )}
+          参加状態を確認しています。
         </p>
-      )}
-      {view === 'history' && available && (
-        <ResultsPanel
-          key={instanceId}
-          instanceId={instanceId}
-          refreshKey={auth.user?.id ?? ''}
-        />
       )}
       {view === 'delete' && selected ? (
         <InstanceDeletion

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import MenuToggle from '../components/MenuToggle';
+import { publicPlayEntry } from '../features/auth/publicEntry';
 import type { Auth } from '../features/auth/useAuth';
 import { useOrganization } from '../features/organization/useOrganization';
 import NotificationBell from '../features/questions/NotificationBell';
@@ -11,20 +12,22 @@ import ProfilePage from '../pages/ProfilePage';
 import RoomsPage from '../pages/RoomsPage';
 import Navigation from './AppNavigation';
 import { AppContext, type MatchStatus } from './context';
-import { gameHref, handleNavigation, useLocation } from './navigation';
-import { CASUAL_PATH, DEBUG_PATH, GAME_PATH, LOCAL_GAME_PATH, ROOMS_PATH } from './paths';
+import { gameHref, handleNavigation, navigate, useLocation } from './navigation';
+import {
+  CASUAL_PATH,
+  DEBUG_PATH,
+  GAME_PATH,
+  HISTORY_PATH,
+  LOCAL_GAME_PATH,
+  ROOMS_PATH,
+} from './paths';
 import { routes } from './routes';
 import { useMobileMenu } from './useMobileMenu';
 
 export default function Application({ auth }: { auth: Auth }) {
   const organization = useOrganization(!!auth.user);
   const url = useLocation();
-  const guest = useGuest(
-    auth.ready &&
-      !auth.user &&
-      (url.searchParams.get('guest') === '1' ||
-        (url.pathname === ROOMS_PATH && url.searchParams.has('room'))),
-  );
+  const guest = useGuest(auth.ready && !auth.user && publicPlayEntry(url));
   const [matchStatus, setMatchStatus] = useState<MatchStatus | null>(null);
 
   const content = useRef<HTMLDivElement>(null);
@@ -40,12 +43,26 @@ export default function Application({ auth }: { auth: Auth }) {
   const path = `${url.pathname.replace(/\/$/, '')}/`;
   const route = routes.find((candidate) => candidate.path === path);
   const Page = route && 'component' in route ? route.component : NotFoundPage;
-  const active = matchStatus?.roomId && !matchStatus.finished ? matchStatus : null;
+  const active =
+    matchStatus?.roomId && matchStatus.playing && !matchStatus.finished
+      ? matchStatus
+      : null;
   const needsProfile =
     !!organization.data?.account && !organization.data.account.displayName && !active;
   const activeName =
     organization.data?.instances.find((instance) => instance.id === active?.instanceId)
       ?.name ?? '参加中のインスタンス';
+
+  useEffect(() => {
+    if (
+      [GAME_PATH, CASUAL_PATH].includes(url.pathname) &&
+      url.searchParams.get('view') === 'history'
+    ) {
+      const params = new URLSearchParams(url.searchParams);
+      params.delete('view');
+      navigate(`${HISTORY_PATH}?${params}`, true);
+    }
+  }, [url.pathname, url.searchParams]);
 
   useEffect(() => {
     document.addEventListener('click', handleNavigation);

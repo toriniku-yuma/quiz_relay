@@ -1,25 +1,35 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { type MatchStatus, useApp } from '../../app/context';
-import { PROFILE_PATH } from '../../app/paths';
+import { navigate } from '../../app/navigation';
+import { GAME_PATH, PROFILE_PATH } from '../../app/paths';
 import Button from '../../components/Button';
+import Modal from '../../components/Modal';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
 import type { Auth } from '../auth/useAuth';
 import GameBoard from '../game/GameBoard';
-import ResultsPanel from '../results/ResultsPanel';
+import ResultLinks from '../results/ResultLinks';
 import { useMatchmaking } from './useMatchmaking';
 
 export default function MatchLobby({
   auth,
   instanceId = '',
+  targetInstanceId = instanceId,
   onStatus,
 }: {
   auth: Auth;
   instanceId?: string;
+  targetInstanceId?: string;
   onStatus?: (status: MatchStatus) => void;
 }) {
-  const match = useMatchmaking(auth.user?.id ?? '', instanceId);
-  const { organization } = useApp();
+  const { organization, url } = useApp();
+  const match = useMatchmaking(
+    auth.user?.id ?? '',
+    instanceId,
+    'ranked',
+    targetInstanceId,
+    `${url.pathname}${url.search}`,
+  );
   const registeredName = organization.data?.account?.displayName;
   const organized = organization.data?.enabled === true;
   const [name, setName] = useState('');
@@ -28,10 +38,35 @@ export default function MatchLobby({
   const finished =
     game.snapshot?.phase === 'FINISHED' || game.snapshot?.phase === 'INVALID';
   const roomId = game.roomId ?? null;
+  const playing = !!game.snapshot && game.snapshot.phase !== 'WAITING' && !finished;
   const retained = match.busy || (!!roomId && !finished);
+  const confirmedResultId =
+    game.snapshot?.result?.storage === 'confirmed' ? game.snapshot.result.id : undefined;
   useEffect(() => {
-    onStatus?.({ instanceId, roomId, retained, finished });
-  }, [onStatus, instanceId, roomId, retained, finished]);
+    onStatus?.({
+      instanceId: game.roomInstanceId,
+      roomId,
+      retained,
+      finished,
+      mode: 'ranked',
+      playing,
+    });
+  }, [onStatus, game.roomInstanceId, roomId, retained, finished, playing]);
+  useEffect(() => {
+    if (confirmedResultId)
+      window.dispatchEvent(
+        new CustomEvent('results:refresh', {
+          detail: { instanceId: game.roomInstanceId },
+        }),
+      );
+  }, [confirmedResultId, game.roomInstanceId]);
+  const previous = useRef(url.href);
+  const matching = url.pathname === GAME_PATH && !url.searchParams.get('view');
+  useEffect(() => {
+    if (previous.current !== url.href && matching && game.roomId && playing)
+      match.offerRestore();
+    previous.current = url.href;
+  }, [url.href, matching, game.roomId, playing, match.offerRestore]);
 
   return (
     <>
@@ -48,12 +83,21 @@ export default function MatchLobby({
           {match.error || game.error || logoutError}
         </p>
       )}
-      {game.roomId ? (
+      {game.roomId && match.viewing && game.roomInstanceId === targetInstanceId ? (
         <>
           <p role="status" className="my-3">
             {game.connection === 'open' ? '接続済み' : '接続を確認しています。'}
           </p>
           {game.snapshot && <GameBoard game={game} />}
+          {game.snapshot?.phase === 'WAITING' &&
+            match.players &&
+            game.snapshot.playersRequired !== match.players && (
+              <p className="my-4" role="status">
+                この待機は変更前の{game.snapshot.playersRequired}人設定です。現在の
+                {match.players}
+                人設定で参加するには、待機を取り消して参加し直してください。
+              </p>
+            )}
           {(game.connection === 'stopped' || game.connection === 'idle') && (
             <Button onClick={game.reconnect}>再接続</Button>
           )}
@@ -103,6 +147,7 @@ export default function MatchLobby({
                 maxLength={24}
                 required
                 value={name}
+                disabled={match.busy || match.uncertain}
                 onChange={(event) => setName(event.target.value)}
               />
             )}
@@ -112,7 +157,7 @@ export default function MatchLobby({
                 tone="primary"
                 disabled={match.busy || (organized && !registeredName)}
               >
-                マッチングする
+                {match.uncertain ? '同じ内容で再試行' : 'マッチングする'}
               </Button>
               <Button onClick={match.resume} disabled={match.busy}>
                 参加中の試合へ戻る
@@ -121,11 +166,27 @@ export default function MatchLobby({
           </form>
         </Panel>
       )}
-      {(!game.roomId || finished) && (
-        <ResultsPanel
-          instanceId={instanceId}
-          refreshKey={`${auth.user?.id}:${game.snapshot?.result?.id ?? ''}:${game.snapshot?.result?.storage ?? ''}`}
-        />
+      {match.uncertain && (
+        <p role="status" className="my-4">
+          参加結果が不明です。入力を保持したまま、同じ内容で再試行してください。
+        </p>
+      )}
+      {matching && match.restored && playing && (
+        <Modal title="参加中のランクマッチがあります" onClose={match.dismissRestored}>
+          <Button
+            tone="primary"
+            disabled={match.busy}
+            onClick={() => {
+              navigate(`${GAME_PATH}?instance=${game.roomInstanceId}`);
+              void match.resume();
+            }}
+          >
+            参加中の試合へ戻る
+          </Button>
+        </Modal>
+      )}
+      {game.snapshot?.result && (
+        <ResultLinks instanceId={game.roomInstanceId} result={game.snapshot.result} />
       )}
       <Button
         className="mt-5"

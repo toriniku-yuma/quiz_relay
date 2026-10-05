@@ -9,6 +9,8 @@ export type MatchStatus = {
   roomId: string | null;
   finished: boolean;
   href?: string;
+  mode?: 'ranked' | 'casual' | 'room';
+  playing?: boolean;
 };
 
 export const AppContext = createContext<{

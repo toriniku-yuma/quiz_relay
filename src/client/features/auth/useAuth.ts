@@ -1,7 +1,7 @@
 import type { User } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
 import { navigate } from '../../app/navigation';
-import { CASUAL_PATH, GAME_PATH, ROOMS_PATH } from '../../app/paths';
+import { GAME_PATH, ROOMS_PATH } from '../../app/paths';
 import { hasAuthCallback, readAuthReturn } from './callback';
 import {
   redirectSignedOut,
@@ -10,6 +10,7 @@ import {
   signInWithGoogle,
   signOut,
 } from './client';
+import { publicPlayEntry } from './publicEntry';
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
@@ -18,10 +19,7 @@ export function useAuth() {
   const [message, setMessage] = useState('');
   useEffect(() => {
     const initialUrl = new URL(location.href);
-    const publicEntry =
-      (initialUrl.pathname === ROOMS_PATH && initialUrl.searchParams.has('room')) ||
-      (initialUrl.searchParams.get('guest') === '1' &&
-        [GAME_PATH, ROOMS_PATH, CASUAL_PATH].includes(initialUrl.pathname));
+    const publicEntry = publicPlayEntry(initialUrl);
     const storedAuthentication =
       typeof localStorage !== 'undefined' &&
       Object.keys(localStorage).some((key) => /^sb-.*-auth-token$/.test(key));

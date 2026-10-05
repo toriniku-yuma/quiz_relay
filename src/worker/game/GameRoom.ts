@@ -27,6 +27,7 @@ import {
   changed,
   commandFingerprint,
   createState,
+  forfeitPlayer,
   questionEnded,
   type State,
   snapshot,
@@ -253,7 +254,7 @@ export class GameRoom extends DurableObject<Env> {
       )
         return { ok: false as const, code: 'STALE_RESERVATION' };
       if (generation) room.generations[actorId] = generation;
-      this.sweep(room, now);
+      await this.sweep(room, now);
       await this.save(room);
       if (room.lobby.closed || now >= room.lobby.sessionExpires)
         return { ok: false as const, code: 'ROOM_CLOSED' };
@@ -297,7 +298,7 @@ export class GameRoom extends DurableObject<Env> {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (!room?.lobby) return null;
       await this.checkWaitingAccess(room);
-      this.sweep(room, Date.now());
+      await this.sweep(room, Date.now());
       advance(room.state, Date.now());
       await this.save(room);
       this.broadcast(room);
@@ -474,9 +475,10 @@ export class GameRoom extends DurableObject<Env> {
     revoke = false,
     generation?: string,
     token?: string,
+    forfeit = false,
   ) {
     if (await this.userLobby().read())
-      return this.userLobby().cancel(actorId, revoke, generation, token);
+      return this.userLobby().cancel(actorId, revoke, generation, token, forfeit);
     return this.ctx.blockConcurrencyWhile(async () => {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (
@@ -486,14 +488,14 @@ export class GameRoom extends DurableObject<Env> {
       )
         return false;
       if (revoke && token) {
-        if (await this.ctx.storage.get(`revoked:${token}`)) return true;
+        if (!forfeit && (await this.ctx.storage.get(`revoked:${token}`))) return true;
         await this.ctx.storage.put(`revoked:${token}`, true);
       }
       if (!room?.lobby) {
         if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
         return true;
       }
-      this.sweep(room, Date.now());
+      await this.sweep(room, Date.now());
       if (
         !revoke &&
         (room.state.phase === 'FINISHED' ||
@@ -512,10 +514,19 @@ export class GameRoom extends DurableObject<Env> {
         await this.save(room);
         return false;
       }
-      if (!revoke && generation) await this.ctx.storage.put(`closed:${generation}`, true);
+      if ((!revoke || forfeit) && generation)
+        await this.ctx.storage.put(`closed:${generation}`, true);
       for (const socket of this.liveSockets())
         if (this.attachment(socket).actorId === actorId)
-          this.closeSocket(socket, 1008, 'SESSION_REVOKED');
+          this.closeSocket(
+            socket,
+            1008,
+            forfeit
+              ? 'MATCH_REPLACED'
+              : !revoke && room.state.phase === 'WAITING'
+                ? 'WAITING_CANCELLED'
+                : 'SESSION_REVOKED',
+          );
       for (const [token, actor] of Object.entries(room.sessions))
         if (actor === actorId) {
           if (revoke) await this.ctx.storage.put(`revoked:${token}`, true);
@@ -526,7 +537,8 @@ export class GameRoom extends DurableObject<Env> {
         delete room.lobby.reservations[actorId];
         if (room.generations) delete room.generations[actorId];
       }
-      this.sweep(room, Date.now());
+      if (forfeit) forfeitPlayer(room.state, actorId, Date.now());
+      await this.sweep(room, Date.now());
       changed(room.state, Date.now());
       await this.save(room);
       this.broadcast(room);
@@ -595,7 +607,7 @@ export class GameRoom extends DurableObject<Env> {
         };
       }
       const now = Date.now();
-      this.sweep(room, now);
+      await this.sweep(room, now);
       await this.save(room);
       this.broadcast(room);
 
@@ -671,7 +683,7 @@ export class GameRoom extends DurableObject<Env> {
           return new Response(null, { status: 403 });
 
         let now = Date.now();
-        this.sweep(room, now);
+        await this.sweep(room, now);
         await this.save(room);
         if (
           room.lobby &&
@@ -761,7 +773,7 @@ export class GameRoom extends DurableObject<Env> {
           live: true,
           lastSeq: null,
         } satisfies Attachment);
-        this.sweep(room, now);
+        await this.sweep(room, now);
 
         if (
           room.state.phase === 'WAITING' &&
@@ -822,7 +834,7 @@ export class GameRoom extends DurableObject<Env> {
       }
 
       const now = Date.now();
-      this.sweep(room, now);
+      await this.sweep(room, now);
       const attachment = this.attachment(socket);
       if (!attachment.live) {
         await this.save(room);
@@ -839,7 +851,7 @@ export class GameRoom extends DurableObject<Env> {
 
       if (attachment.count > settings.game.commandsPerWindow) {
         this.closeSocket(socket, 1008, 'RATE_LIMIT');
-        this.sweep(room, now);
+        await this.sweep(room, now);
         await this.save(room);
         this.broadcast(room);
         return;
@@ -904,7 +916,7 @@ export class GameRoom extends DurableObject<Env> {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (!room) return;
 
-      this.sweep(room, Date.now());
+      await this.sweep(room, Date.now());
       advance(room.state, Date.now());
       await this.save(room);
       this.broadcast(room);
@@ -960,7 +972,7 @@ export class GameRoom extends DurableObject<Env> {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (!room) return;
 
-      this.sweep(room, Date.now());
+      await this.sweep(room, Date.now());
       await this.save(room);
       this.broadcast(room);
     });
@@ -985,7 +997,7 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  private sweep(room: Room, now: number) {
+  private async sweep(room: Room, now: number) {
     for (const socket of this.liveSockets()) {
       if (now >= this.attachment(socket).lastSeen + heartbeatTimeout)
         this.closeSocket(socket, 1000, 'HEARTBEAT_TIMEOUT');
@@ -1005,14 +1017,23 @@ export class GameRoom extends DurableObject<Env> {
         );
         for (const player of [...room.state.players]) {
           if (connected.has(player.id)) room.lobby.reservations[player.id] = 0;
-          else if (room.lobby.reservations[player.id] === 0)
+          else if (
+            room.lobby.reservations[player.id] === 0 &&
+            room.state.matchKind === 'room'
+          )
             room.lobby.reservations[player.id] = now + reservationLifetime;
-          else if (now >= room.lobby.reservations[player.id]) {
+          else if (
+            room.lobby.reservations[player.id] === 0 ||
+            now >= room.lobby.reservations[player.id]
+          ) {
+            const generation = room.generations?.[player.id];
+            if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
             if (room.state.definition?.kind === 'room') room.lobby.closed = true;
             room.state.players = room.state.players.filter(
               (item) => item.id !== player.id,
             );
             delete room.lobby.reservations[player.id];
+            if (room.generations) delete room.generations[player.id];
             for (const [token, actor] of Object.entries(room.sessions))
               if (actor === player.id) delete room.sessions[token];
             changed(room.state, now);

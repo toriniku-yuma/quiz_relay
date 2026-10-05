@@ -67,7 +67,7 @@ AppがページとNotFoundを選び、redirect.tsが転送URLを作り、mainが
 app/navigation.tsが通常の同一タブ内クリックとHistory APIを扱います。
 外部・API・修飾キー・download・別タブ指定はブラウザーの動作を維持します。
 Applicationが共通認証・組織情報・メニューを保持し、移動でMatchPageを破棄しません。
-OrganizationGatewayは閲覧先と対戦接続先を分け、参加処理・待機・対戦中の接続先を維持します。
+OrganizationGatewayは閲覧先と対戦接続先を分け、開始済み試合の接続先を維持します。自動マッチの待機は画面移動で取り消し、応答不明の参加操作も同じ操作IDで取消を確認します。
 スマートフォンのメニューは標準dialogを使い、フォーカスとEscape操作を保ちます。
 
 Workerのルートも method・path・middleware・handler の登録だけにします。
@@ -89,6 +89,8 @@ React・TypeScript・Tailwind CSSを使います。色・文字・余白はテ�
 `global.css` はimport・`@theme`・body・リンク・フォーカス等の全体設定に限定します。
 Preflightと重複するresetや部品ごとのCSS・media queryを蓄積しません。
 キーボード操作・フォーカス・適切なHTML要素を維持します。テーマと効果音の見た目は[概要](../spec/overview.md)に従います。
+
+隣接するボタン・入力欄・テーブル・メニュー項目が接しないよう、まとまりにはflex／gridのgapを設定し、別のまとまりとの間にも余白を設けます。通常表示だけでなく、待機・結果・エラー・狭い画面でもgap抜けがないことを確認します。
 
 ### クラスの結合
 

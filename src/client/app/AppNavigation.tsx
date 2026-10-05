@@ -11,8 +11,10 @@ import {
   CASUAL_PATH,
   DEBUG_PATH,
   GAME_PATH,
+  HISTORY_PATH,
   LOCAL_GAME_PATH,
   PROFILE_PATH,
+  RANKING_PATH,
   ROOMS_PATH,
   USERS_PATH,
 } from './paths';
@@ -44,7 +46,7 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
       ? [
           ...(auth.user ? [{ label: 'ランクマッチ', href: gameHref(instanceId) }] : []),
           {
-            label: 'カジュアル',
+            label: 'カジュアルマッチ',
             href: `${CASUAL_PATH}?instance=${instanceId}${auth.user ? '' : '&guest=1'}`,
           },
           {
@@ -52,11 +54,12 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
             href: `${ROOMS_PATH}?instance=${instanceId}${auth.user ? '' : '&guest=1'}`,
           },
           {
-            label: '対戦履歴・ランキング',
-            href: auth.user
-              ? gameHref(instanceId, 'history')
-              : `${CASUAL_PATH}?instance=${instanceId}&guest=1&view=history`,
+            label: '対戦履歴',
+            href: `${HISTORY_PATH}?instance=${instanceId}${auth.user ? '' : '&guest=1'}`,
           },
+          ...(auth.user
+            ? [{ label: 'ランキング', href: `${RANKING_PATH}?instance=${instanceId}` }]
+            : []),
         ]
       : [];
   const administrator = data?.account?.administrator === true;
@@ -150,27 +153,29 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
               {data?.organization?.name ?? '組織'}
             </p>
             <p className="mb-2 px-3 text-base font-bold text-muted">インスタンス切替</p>
-            <MenuPopover title={selected?.name ?? 'インスタンスを選ぶ'}>
-              <ul className="mt-2 grid gap-1">
-                {data?.instances.map((instance) => (
-                  <li key={instance.id}>
-                    <a
-                      data-instance-switch
-                      className={linkClass(gameHref(instance.id))}
-                      href={gameHref(instance.id)}
-                      aria-current={instance.id === instanceId ? 'true' : undefined}
-                    >
-                      {instance.id === instanceId ? '✓ ' : ''}
-                      {instance.name}
-                      {instance.state === 'preparing' ? '（準備中）' : ''}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </MenuPopover>
-            <a className={linkClass(GAME_PATH)} href={GAME_PATH}>
-              インスタンス一覧
-            </a>
+            <div className="grid gap-3">
+              <MenuPopover title={selected?.name ?? 'インスタンスを選ぶ'}>
+                <ul className="mt-2 grid gap-1">
+                  {data?.instances.map((instance) => (
+                    <li key={instance.id}>
+                      <a
+                        data-instance-switch
+                        className={linkClass(gameHref(instance.id))}
+                        href={gameHref(instance.id)}
+                        aria-current={instance.id === instanceId ? 'true' : undefined}
+                      >
+                        {instance.id === instanceId ? '✓ ' : ''}
+                        {instance.name}
+                        {instance.state === 'preparing' ? '（準備中）' : ''}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </MenuPopover>
+              <a className={linkClass(GAME_PATH)} href={GAME_PATH}>
+                インスタンス一覧
+              </a>
+            </div>
           </div>
         )}
         {sections.map((section, index) => (

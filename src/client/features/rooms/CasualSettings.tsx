@@ -16,6 +16,7 @@ export default function CasualSettings({
 }) {
   const [config, setConfig] = useState(instance.casualConfig ?? defaultCasualSettings);
   const [revision, setRevision] = useState(instance.operationRevision);
+  const [rankedPlayers, setRankedPlayers] = useState(instance.rankedPlayers ?? 4);
   const mutation = useMutation(
     API_PATHS.casualSettings,
     async (request) => {
@@ -33,22 +34,36 @@ export default function CasualSettings({
         void mutation.submit({
           id: instance.id,
           config,
+          rankedPlayers,
           revision,
         });
       }}
     >
-      <h4 className="font-bold">カジュアル・部屋の参加設定</h4>
+      <h4 className="font-bold">対戦の参加設定</h4>
       <fieldset className="grid gap-3" disabled={locked}>
+        <TextField
+          id={`ranked-players-${instance.id}`}
+          label="ランクマッチの人数（2〜4人）"
+          placeholder="例：4"
+          type="number"
+          min={2}
+          max={4}
+          value={rankedPlayers}
+          onChange={(e) => setRankedPlayers(e.target.valueAsNumber)}
+        />
+        <p>
+          人数の変更は新しい待機に適用します。変更前からの待機は取り消して、参加し直してください。
+        </p>
         <label className="flex gap-3">
           <Checkbox
             checked={config.enabled}
             onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
           />
-          カジュアル自動マッチングを有効にする
+          カジュアルマッチを有効にする
         </label>
         <TextField
           id={`casual-players-${instance.id}`}
-          label="カジュアルの人数（2〜4人）"
+          label="カジュアルマッチの人数（2〜4人）"
           placeholder="例：4"
           type="number"
           min={2}
@@ -61,7 +76,7 @@ export default function CasualSettings({
             checked={config.casualGuests}
             onChange={(e) => setConfig({ ...config, casualGuests: e.target.checked })}
           />
-          カジュアルへのゲスト参加を許可
+          カジュアルマッチへのゲスト参加を許可
         </label>
         <label className="flex gap-3">
           <Checkbox

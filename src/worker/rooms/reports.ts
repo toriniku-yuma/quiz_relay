@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
+import type { ResultsQuery } from '../../shared/results.ts';
 import { contentHash } from '../catalog/hash.ts';
 import { connectDatabase } from '../db/connection.ts';
 import {
@@ -22,10 +23,18 @@ function reader(env: Env) {
   if (!address) throw new OrganizationError('RESULTS_UNAVAILABLE', 503);
   return connectDatabase(address, env.DATABASE_CA_CERT, !!binding);
 }
-export async function history(env: Env, identity: Identity) {
+export async function history(env: Env, identity: Identity, query: ResultsQuery = {}) {
   const { db, close } = reader(env);
   try {
-    const result = await readResults(db, identity.instance.owner, identity.actor.id);
+    const result = await readResults(db, identity.instance.owner, identity.actor.id, [], {
+      ...query,
+      ...(identity.actor.guest
+        ? {
+            finishedAfter: new Date(Date.now() - guestLifetime).toISOString(),
+            section: 'history' as const,
+          }
+        : {}),
+    });
     if (identity.actor.guest) {
       result.ranking = [];
       result.history = result.history.filter(
