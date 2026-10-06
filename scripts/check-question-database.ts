@@ -245,11 +245,13 @@ try {
   );
   await mutate('reviewer', { operation: 'save', input: question });
   const own = (await overview('reviewer')).submissions.find(
-    (q) => q.authorId === actors[2],
+    (submission) => submission.authorId === actors[2],
   );
   assert.ok(own);
   await mutate('reviewer', { operation: 'submit', id: own.id, revision: own.revision });
-  const pending = (await overview('reviewer')).submissions.find((q) => q.id === own.id);
+  const pending = (await overview('reviewer')).submissions.find(
+    (submission) => submission.id === own.id,
+  );
   assert.ok(pending);
   await assert.rejects(
     mutate('reviewer', {
@@ -266,11 +268,14 @@ try {
     config: { ...defaultQuestionSettings, mode: 'open' },
   });
   assert.equal(
-    (await overview('reviewer')).submissions.find((q) => q.id === own.id)?.status,
+    (await overview('reviewer')).submissions.find(
+      (submission) => submission.id === own.id,
+    )?.status,
     'approved',
   );
   assert.equal(
-    (await overview('author')).submissions.find((q) => q.id === row.id)?.stopped,
+    (await overview('author')).submissions.find((submission) => submission.id === row.id)
+      ?.stopped,
     true,
   );
   const requestId = crypto.randomUUID();
@@ -385,12 +390,12 @@ try {
   );
   assert.ok(draft);
   const races = await Promise.allSettled(
-    [1, 2].map((n) =>
+    [1, 2].map((editNumber) =>
       mutate('author', {
         operation: 'save',
         id: draft.id,
         revision: draft.revision,
-        input: { ...draft.input, explanation: `同時編集${n}` },
+        input: { ...draft.input, explanation: `同時編集${editNumber}` },
       }),
     ),
   );
@@ -709,8 +714,8 @@ try {
         page: 2,
       });
       assert.deepEqual(
-        second.submissions.map((r) => r.id),
-        sorted.submissions.slice(10, 20).map((r) => r.id),
+        second.submissions.map((submission) => submission.id),
+        sorted.submissions.slice(10, 20).map((submission) => submission.id),
       );
     }
   }
@@ -849,7 +854,10 @@ try {
     action: 'stop',
     reason: '一括検証',
     requestId: crypto.randomUUID(),
-    changes: batchRows.map((r) => ({ id: r.id, revision: r.revision })),
+    changes: batchRows.map((submission) => ({
+      id: submission.id,
+      revision: submission.revision,
+    })),
   };
   await assert.rejects(
     mutate('admin', {
@@ -859,24 +867,27 @@ try {
     /EDIT_CONFLICT/,
   );
   assert.deepEqual(
-    (await managed()).map((r) => r.stopped),
+    (await managed()).map((submission) => submission.stopped),
     [false, false],
   );
   await mutate('admin', batch);
   await mutate('admin', batch);
   assert.deepEqual(
-    (await managed()).map((r) => r.revision),
-    batchRows.map((r) => r.revision + 1),
+    (await managed()).map((submission) => submission.revision),
+    batchRows.map((submission) => submission.revision + 1),
   );
   batchRows = await managed();
   await mutate('admin', {
     ...batch,
     action: 'delete',
     requestId: crypto.randomUUID(),
-    changes: batchRows.map((r) => ({ id: r.id, revision: r.revision })),
+    changes: batchRows.map((submission) => ({
+      id: submission.id,
+      revision: submission.revision,
+    })),
   });
   batchRows = await managed();
-  assert.ok(batchRows.every((r) => r.deletedAt));
+  assert.ok(batchRows.every((submission) => submission.deletedAt));
   await assert.rejects(
     mutate('admin', {
       operation: 'resume',
@@ -892,12 +903,16 @@ try {
     all: false,
   })) as { questions: import('../src/shared/question-transfer.ts').TransferQuestion[] };
   assert.equal(exported.questions.length, 2);
-  assert.ok(exported.questions.every((r) => r.stopped));
+  assert.ok(exported.questions.every((exportedQuestion) => exportedQuestion.stopped));
   const whole = (await mutate('admin', {
     operation: 'export-managed',
     all: true,
   })) as typeof exported;
-  assert.ok(whole.questions.every((r) => !r.input.text.startsWith('一括検証')));
+  assert.ok(
+    whole.questions.every(
+      (exportedQuestion) => !exportedQuestion.input.text.startsWith('一括検証'),
+    ),
+  );
   const transfer = {
     operation: 'import-transfer',
     requestId: crypto.randomUUID(),
@@ -906,36 +921,45 @@ try {
   };
   await mutate('admin', transfer);
   await mutate('admin', transfer);
-  const imported = (await overview('admin')).submissions.filter((r) =>
-    r.input.text.startsWith('一括検証'),
+  const imported = (await overview('admin')).submissions.filter((submission) =>
+    submission.input.text.startsWith('一括検証'),
   );
   assert.equal(imported.length, 2);
   assert.ok(
     imported.every(
-      (r) =>
-        r.status === 'draft' && r.stopped && r.provenance && !managedIds.includes(r.id),
+      (submission) =>
+        submission.status === 'draft' &&
+        submission.stopped &&
+        submission.provenance &&
+        !managedIds.includes(submission.id),
     ),
   );
   await mutate('admin', {
     ...batch,
     action: 'restore',
     requestId: crypto.randomUUID(),
-    changes: batchRows.map((r) => ({ id: r.id, revision: r.revision })),
+    changes: batchRows.map((submission) => ({
+      id: submission.id,
+      revision: submission.revision,
+    })),
   });
   assert.ok(
-    (await managed()).every((r) => !r.deletedAt && r.stopped && r.status === 'draft'),
+    (await managed()).every(
+      (submission) =>
+        !submission.deletedAt && submission.stopped && submission.status === 'draft',
+    ),
   );
   const currentManaged = async () => {
-    const row = (await managed()).find((r) => r.id === managedIds[0]);
+    const row = (await managed()).find((submission) => submission.id === managedIds[0]);
     assert.ok(row);
     return row;
   };
   const transition = async (operation: string) => {
-    const r = await currentManaged();
+    const currentSubmission = await currentManaged();
     await mutate('admin', {
       operation,
-      id: r.id,
-      revision: r.revision,
+      id: currentSubmission.id,
+      revision: currentSubmission.revision,
       reason: '停止状態の検証',
     });
   };
@@ -969,8 +993,8 @@ try {
   assert.equal((await fixedSettings()).fixed, true);
   assert.equal((await fixedSettings()).current, 2);
   const available = async () => {
-    const r = await currentManaged();
-    assert.ok(r.publishedId);
+    const currentSubmission = await currentManaged();
+    assert.ok(currentSubmission.publishedId);
     return (
       await db
         .select()
@@ -978,7 +1002,7 @@ try {
         .where(
           and(
             eq(schema.questionAvailability.owner, owner),
-            eq(schema.questionAvailability.questionId, r.publishedId),
+            eq(schema.questionAvailability.questionId, currentSubmission.publishedId),
           ),
         )
     )[0];

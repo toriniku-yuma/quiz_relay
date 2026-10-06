@@ -128,25 +128,32 @@ export async function verifyWithdrawal(
     assert.equal(row.payloadHash, await contentHash(row.payload));
     assert.ok(
       row.payload.players
-        .filter((p) => p.id === actors[1])
-        .every((p) => p.name === '退会ユーザー'),
+        .filter((player) => player.id === actors[1])
+        .every((player) => player.name === '退会ユーザー'),
     );
   }
   const players = await db.select().from(resultPlayers);
   assert.deepEqual(
     players
       .map(({ name: _, ...player }) => player)
-      .sort((a, b) => (a.resultId + a.actorId).localeCompare(b.resultId + b.actorId)),
+      .sort((left, right) =>
+        (left.resultId + left.actorId).localeCompare(right.resultId + right.actorId),
+      ),
     originalPlayers
       .map(({ name: _, ...player }) => player)
-      .sort((a, b) => (a.resultId + a.actorId).localeCompare(b.resultId + b.actorId)),
+      .sort((left, right) =>
+        (left.resultId + left.actorId).localeCompare(right.resultId + right.actorId),
+      ),
   );
   await assert.rejects(
     db.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL ROLE quiz_erasure`);
       const changed = {
         ...stored[0].payload,
-        players: stored[0].payload.players.map((p) => ({ ...p, ratingDelta: 999 })),
+        players: stored[0].payload.players.map((player) => ({
+          ...player,
+          ratingDelta: 999,
+        })),
       };
       await tx.execute(
         sql`select quiz_game.erase_result_names(${stored[0].resultId}::uuid,${JSON.stringify(changed)}::jsonb,${await contentHash(changed)})`,

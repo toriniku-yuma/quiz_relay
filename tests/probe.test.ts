@@ -100,7 +100,9 @@ it('accepts a hibernation WebSocket and serves persisted state', async () => {
 
   socket.accept();
   const message = new Promise<string>((resolve) =>
-    socket.addEventListener('message', (e) => resolve(String(e.data)), { once: true }),
+    socket.addEventListener('message', (event) => resolve(String(event.data)), {
+      once: true,
+    }),
   );
 
   socket.send('snapshot');

@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import QuestionClassification from '../src/client/features/questions/QuestionClassification';
 import type { QuestionOverview } from '../src/shared/questions';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
   uncertain: false,
@@ -10,23 +10,27 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('react', () => ({
   useRef: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = { current: value };
-    return h.slots[i];
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length) mocks.slots[i] = { current: value };
+    return mocks.slots[i];
   },
   useState: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = value;
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length) mocks.slots[i] = value;
     return [
-      h.slots[i],
+      mocks.slots[i],
       (next: unknown) => {
-        h.slots[i] = next;
+        mocks.slots[i] = next;
       },
     ];
   },
 }));
 vi.mock('../src/client/features/questions/useQuestionOperation', () => ({
-  useQuestionOperation: () => ({ busy: false, uncertain: h.uncertain, submit: h.submit }),
+  useQuestionOperation: () => ({
+    busy: false,
+    uncertain: mocks.uncertain,
+    submit: mocks.submit,
+  }),
 }));
 type Element = {
   type: unknown;
@@ -49,7 +53,7 @@ function draw(id = 'a', revision = 1, open = true) {
     categories: [{ id: 'next', name: '変更先', active: true }],
   } as QuestionOverview;
   const render = () => {
-    h.cursor = 0;
+    mocks.cursor = 0;
     return QuestionClassification({
       data,
       instanceId: 'instance',
@@ -72,9 +76,9 @@ function prepare() {
   expect(button(draw(), applyLabel)).toBeDefined();
 }
 beforeEach(() => {
-  h.slots = [];
-  h.uncertain = false;
-  h.submit.mockReset();
+  mocks.slots = [];
+  mocks.uncertain = false;
+  mocks.submit.mockReset();
 });
 it('閉じた後に選択対象や版が変わったら古い分類結果を破棄する', () => {
   prepare();
@@ -86,13 +90,13 @@ it('閉じた後に選択対象や版が変わったら古い分類結果を破�
 });
 it('保存結果が不明な間は選択変更でも再試行用の対象と入力を保持する', () => {
   prepare();
-  h.uncertain = true;
+  mocks.uncertain = true;
   expect(button(draw('b'), applyLabel)).toBeDefined();
   expect(
     find(draw('b'), (element) => element.type === 'textarea')?.props.value,
   ).toContain('"a"');
   button(draw('b'), '同じ内容で再試行')?.props.onClick?.();
-  expect(h.submit).toHaveBeenCalledWith({});
-  h.uncertain = false;
+  expect(mocks.submit).toHaveBeenCalledWith({});
+  mocks.uncertain = false;
   expect(button(draw('b'), applyLabel)).toBeUndefined();
 });

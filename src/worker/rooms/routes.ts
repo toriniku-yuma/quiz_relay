@@ -24,7 +24,7 @@ rooms.use(
   '/api/play/*',
   bodyLimit({
     maxSize: 2 * 1024 * 1024,
-    onError: (c) => c.json({ code: 'INVALID_SETUP' }, 413),
+    onError: (context) => context.json({ code: 'INVALID_SETUP' }, 413),
   }),
 );
 rooms.get(API_PATHS.roomSocket, socket);

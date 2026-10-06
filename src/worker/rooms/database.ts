@@ -108,12 +108,15 @@ export async function publicInstances(env: Env) {
   const { db, close } = organizationDatabase(env);
   try {
     return (await db.select().from(instances).where(eq(instances.state, 'published')))
-      .filter((i) => i.casualConfig.casualGuests || i.casualConfig.roomGuests)
-      .map((i) => ({
-        id: i.id,
-        name: i.name,
-        casualConfig: i.casualConfig,
-        casualPauseReason: i.casualPauseReason,
+      .filter(
+        (instance) =>
+          instance.casualConfig.casualGuests || instance.casualConfig.roomGuests,
+      )
+      .map((instance) => ({
+        id: instance.id,
+        name: instance.name,
+        casualConfig: instance.casualConfig,
+        casualPauseReason: instance.casualPauseReason,
       }));
   } finally {
     await close();
@@ -424,11 +427,11 @@ export async function roomDefinition(
 ): Promise<MatchDefinition> {
   let questions: FixedQuestion[];
   if (settings.source === 'original') {
-    questions = validateBroughtSet(original).map((q, index) => ({
-      ...q,
+    questions = validateBroughtSet(original).map((question, index) => ({
+      ...question,
       id: `original-${sourceId}-${index}`,
       version: 1,
-      answer: q.readings[0],
+      answer: question.readings[0],
       distractors: [...dummyCharacters],
       source: '',
       permission: '部屋用持込',
@@ -484,15 +487,17 @@ export async function roomDefinition(
             ),
           );
         return rows
-          .map((r) => ({
-            ...r.q,
-            ...(configuration?.config.showAuthor ? { authorName: r.authorName } : {}),
+          .map((catalogEntry) => ({
+            ...catalogEntry.q,
+            ...(configuration?.config.showAuthor
+              ? { authorName: catalogEntry.authorName }
+              : {}),
           }))
           .filter(
-            (q) =>
+            (question) =>
               (settings.categories.length === 0 ||
-                settings.categories.includes(q.categoryId ?? '')) &&
-              settings.difficulties.includes(q.difficulty ?? 0),
+                settings.categories.includes(question.categoryId ?? '')) &&
+              settings.difficulties.includes(question.difficulty ?? 0),
           );
       });
     } finally {
@@ -536,7 +541,7 @@ export async function saveCasualSettings(
     !config ||
     Object.keys(config).sort().join(',') !== 'casualGuests,enabled,players,roomGuests' ||
     !['enabled', 'casualGuests', 'roomGuests'].every(
-      (k) => typeof config[k as keyof typeof config] === 'boolean',
+      (key) => typeof config[key as keyof typeof config] === 'boolean',
     ) ||
     !Number.isInteger(config.players) ||
     config.players < 2 ||

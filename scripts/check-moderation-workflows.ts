@@ -216,13 +216,13 @@ export async function verifyWorkflows(
     pageSize: 100,
   });
   assert.deepEqual(
-    oldest.rows.map((r) => r.resultId),
-    fullHistory.rows.map((r) => r.resultId).reverse(),
+    oldest.rows.map((result) => result.resultId),
+    fullHistory.rows.map((result) => result.resultId).reverse(),
   );
   const originalRanking = await readResults(db, scope.owner, actors[1]);
   const excluded = await readResults(db, scope.owner, actors[1], [actors[1]]);
   assert.equal(originalRanking.ranking[0].actorId, actors[1]);
-  assert.ok(!excluded.ranking.some((r) => r.actorId === actors[1]));
+  assert.ok(!excluded.ranking.some((rankingEntry) => rankingEntry.actorId === actors[1]));
   assert.equal(excluded.ranking[0].rank, 1);
   await db
     .insert(instanceGrants)
@@ -303,7 +303,9 @@ export async function verifyWorkflows(
     'revoke',
   );
   const notices = await run((tx) => personalModeration(tx, 'author', {}));
-  assert.ok(notices.notifications.some((n) => n.id === again.operationId));
+  assert.ok(
+    notices.notifications.some((notification) => notification.id === again.operationId),
+  );
   const manualBan = { ...ban, operationId: crypto.randomUUID() };
   await mutate('reviewer', manualBan);
   const manualAppeal = {
@@ -328,7 +330,8 @@ export async function verifyWorkflows(
   assert.equal(settledAppeal.decision, 'revoke');
   assert.ok(settledAppeal.resolvedAt);
   for (const row of (await db.select().from(moderationSanctions)).filter(
-    (r) => r.actorId === actors[1] && r.kind === 'ban' && !r.revokedAt,
+    (sanction) =>
+      sanction.actorId === actors[1] && sanction.kind === 'ban' && !sanction.revokedAt,
   )) {
     await mutate('reviewer', {
       instanceId,
@@ -406,7 +409,9 @@ export async function verifyWorkflows(
   assert.equal(page3.users.length, 10);
   assert.equal(page4.users.length, 5);
   assert.ok(
-    !page3.users.some((r) => page4.users.some((other) => other.actorId === r.actorId)),
+    !page3.users.some((user) =>
+      page4.users.some((other) => other.actorId === user.actorId),
+    ),
   );
   for (const sort of [
     'name',
@@ -436,8 +441,8 @@ export async function verifyWorkflows(
         }),
       );
       assert.deepEqual(
-        second.users.map((r) => r.actorId),
-        full.users.slice(10, 20).map((r) => r.actorId),
+        second.users.map((user) => user.actorId),
+        full.users.slice(10, 20).map((user) => user.actorId),
       );
       if (sort === 'role' && direction === 'desc')
         assert.equal(full.users[0].administrator, true);

@@ -30,16 +30,20 @@ export function useMutation(
       } catch {
         setError('保存しましたが表示を更新できませんでした。再読み込みしてください。');
       }
-    } catch (e) {
+    } catch (caughtError) {
       const rejected =
-        e instanceof OrganizationRequestError &&
-        e.status >= 400 &&
-        e.status < 500 &&
-        e.status !== 408 &&
+        caughtError instanceof OrganizationRequestError &&
+        caughtError.status >= 400 &&
+        caughtError.status < 500 &&
+        caughtError.status !== 408 &&
         !uncertain;
       if (rejected) pending.current = null;
       setUncertain(!rejected);
-      setError(e instanceof Error ? e.message : '保存結果を確認できませんでした。');
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : '保存結果を確認できませんでした。',
+      );
     } finally {
       sending.current = false;
       setBusy(false);

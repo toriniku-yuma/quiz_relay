@@ -96,8 +96,8 @@ export async function verifyProfiles(
         revision,
         status,
       }))
-      .sort((a, b) => a.id.localeCompare(b.id)),
-    originalInputs.sort((a, b) => a.id.localeCompare(b.id)),
+      .sort((left, right) => left.id.localeCompare(right.id)),
+    originalInputs.sort((left, right) => left.id.localeCompare(right.id)),
   );
   for (const old of oldSets) {
     const [stored] = await db

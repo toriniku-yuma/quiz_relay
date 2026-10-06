@@ -153,8 +153,8 @@ export type PersonalModeration = {
 
 export function sanctionRevision(rows: Sanction[]) {
   return rows
-    .filter((r) => activeSanction(r))
-    .map((r) => `${r.id}:${r.revision}`)
+    .filter((sanction) => activeSanction(sanction))
+    .map((sanction) => `${sanction.id}:${sanction.revision}`)
     .sort()
     .join('|');
 }

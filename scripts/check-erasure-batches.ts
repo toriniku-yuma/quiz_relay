@@ -47,7 +47,7 @@ export async function verifyErasureBatches(db: PostgresJsDatabase) {
     .values({ id: withdrawalId, organizationId, actorId, authDeletedAt: now });
   const ids = Array.from(
     { length: 1001 },
-    (_, n) => `e${n.toString(16).padStart(63, '0')}`,
+    (_, index) => `e${index.toString(16).padStart(63, '0')}`,
   );
   await db.insert(instanceRooms).values(ids.map((roomId) => ({ instanceId, roomId })));
   let calls = 0,
@@ -121,7 +121,7 @@ export async function verifyErasureBatches(db: PostgresJsDatabase) {
     null,
   );
   let finished = false;
-  for (let n = 0; !finished && n < 50; n++) {
+  for (let index = 0; !finished && index < 50; index++) {
     calls = 0;
     finished = await privacy((tx) => anonymizeWithdrawal(tx, env, withdrawalId));
     assert.ok(calls <= erasureBatch.rooms);
@@ -151,7 +151,7 @@ export async function verifyErasureBatches(db: PostgresJsDatabase) {
       .reviewAttemptedAt,
     '1970-01-01 00:00:00+00',
   );
-  for (let n = 0; reviewed.size < 1001 && n < 50; n++) {
+  for (let index = 0; reviewed.size < 1001 && index < 50; index++) {
     calls = 0;
     await privacy((tx) => expireRoomReviews(tx, rooms));
     assert.ok(calls <= erasureBatch.rooms);
@@ -184,7 +184,7 @@ export async function verifyErasureBatches(db: PostgresJsDatabase) {
     return ready;
   };
   let rejected = false;
-  for (let n = 0; !rejected && n < 50; n++) {
+  for (let index = 0; !rejected && index < 50; index++) {
     calls = 0;
     try {
       assert.equal(await erase(), false);
@@ -209,7 +209,7 @@ export async function verifyErasureBatches(db: PostgresJsDatabase) {
   checked.clear();
   await db.insert(instanceDeletions).values(receipt);
   finished = false;
-  for (let n = 0; !finished && n < 100; n++) {
+  for (let index = 0; !finished && index < 100; index++) {
     calls = 0;
     finished = await erase();
     assert.ok(calls <= 2 * erasureBatch.rooms);

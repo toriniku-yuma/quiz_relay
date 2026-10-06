@@ -109,11 +109,11 @@ it('カジュアルは実力帯なしで自動開始し、存在しない部屋�
         ),
       );
     }
-    expect(new Set(admissions.map((a) => a.room)).size).toBe(1);
+    expect(new Set(admissions.map((admission) => admission.room)).size).toBe(1);
     const saved = await state(runtime.GAME_ROOM.getByName(`1c:${admissions[0].room}`));
     expect(saved?.phase).toBe('REVEALING');
     expect(saved?.matchKind).toBe('casual');
-    expect(saved?.players.filter((p) => p.guest)).toHaveLength(2);
+    expect(saved?.players.filter((player) => player.guest)).toHaveLength(2);
     expect(
       mocks.load.mock.calls
         .filter(([, reference]) => !reference)
@@ -173,18 +173,18 @@ it('2人のカジュアルマッチは登録ユーザーとゲストの接続で
   if (!first.ok || !second.ok) throw new Error('setup');
   expect(second.room).toBe(first.room);
   const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
-  const a = await socket(room, first.token, scope.id),
-    b = await socket(room, second.token, scope.id);
+  const firstSocket = await socket(room, first.token, scope.id),
+    secondSocket = await socket(room, second.token, scope.id);
   try {
     expect(await state(room)).toMatchObject({
       phase: 'REVEALING',
       matchKind: 'casual',
       playersRequired: 2,
     });
-    expect((await state(room))?.players.filter((p) => p.guest)).toHaveLength(1);
+    expect((await state(room))?.players.filter((player) => player.guest)).toHaveLength(1);
   } finally {
-    a.close();
-    b.close();
+    firstSocket.close();
+    secondSocket.close();
   }
 });
 it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試行・古い操作・復帰要求は重複処理しない', async () => {
@@ -265,7 +265,9 @@ it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試�
     expect(
       await room.cancelReservation('switch-a', true, undefined, first.token, true),
     ).toBe(true);
-    expect((await state(room))?.players.filter((p) => p.forfeited)).toHaveLength(1);
+    expect(
+      (await state(room))?.players.filter((player) => player.forfeited),
+    ).toHaveLength(1);
     expect(await socket(room, first.token, scope.id).catch(() => null)).toBeNull();
   } finally {
     for (const ws of sockets) ws.close();
@@ -473,8 +475,8 @@ it.each(['ranked', 'casual'] as const)(
     definition.kind = kind;
     const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
     await room.reserve('a', 'A', 'token-a', definition, undefined, 'generation-a');
-    const a = await socket(room, 'token-a'),
-      b = await socket(room, 'token-a');
+    const firstSocket = await socket(room, 'token-a'),
+      secondSocket = await socket(room, 'token-a');
     try {
       await runInDurableObject(room, async (instance, ctx) =>
         instance.webSocketClose(ctx.getWebSockets()[0]),
@@ -495,8 +497,8 @@ it.each(['ranked', 'casual'] as const)(
         await room.reserve('a', 'A', 'token-a', definition, undefined, 'generation-a'),
       ).toMatchObject({ ok: false });
     } finally {
-      a.close();
-      b.close();
+      firstSocket.close();
+      secondSocket.close();
     }
   },
 );
@@ -537,12 +539,15 @@ it('切断済み待機者の古い台帳は、新参加者2人の同じ待機先
   await runInDurableObject(room, async (instance, ctx) =>
     instance.webSocketClose(ctx.getWebSockets()[0]),
   );
-  const a = await queue.enter('a', 'A'),
-    b = await queue.enter('b', 'B');
-  if (!a.ok || !b.ok) throw new Error('setup');
-  expect(b.room).toBe(a.room);
-  const current = runtime.GAME_ROOM.getByName(`1c:${a.room}`);
-  const connections = [await socket(current, a.token), await socket(current, b.token)];
+  const firstAdmission = await queue.enter('a', 'A'),
+    secondAdmission = await queue.enter('b', 'B');
+  if (!firstAdmission.ok || !secondAdmission.ok) throw new Error('setup');
+  expect(secondAdmission.room).toBe(firstAdmission.room);
+  const current = runtime.GAME_ROOM.getByName(`1c:${firstAdmission.room}`);
+  const connections = [
+    await socket(current, firstAdmission.token),
+    await socket(current, secondAdmission.token),
+  ];
   try {
     expect((await state(current))?.phase).toBe('REVEALING');
   } finally {
@@ -644,8 +649,8 @@ it('取消応答が失われても同じ操作は復活せず、開始済みな�
   const other = await queue.enter('b', 'B');
   if (!next.ok || !other.ok) throw new Error('setup');
   const room = runtime.GAME_ROOM.getByName(`1c:${next.room}`);
-  const a = await socket(room, next.token),
-    b = await socket(room, other.token);
+  const firstSocket = await socket(room, next.token),
+    secondSocket = await socket(room, other.token);
   try {
     expect(await queue.cancelAdmission('a', startedOperation)).toMatchObject({
       ok: false,
@@ -665,8 +670,8 @@ it('取消応答が失われても同じ操作は復活せず、開始済みな�
     expect((await state(room))?.reconnect?.deadline).toBeGreaterThan(Date.now());
     expect((await state(room))?.result).toBeNull();
   } finally {
-    a.close();
-    b.close();
+    firstSocket.close();
+    secondSocket.close();
   }
 });
 
@@ -946,25 +951,25 @@ it('M01: cancellation racing the final connection has a single outcome', async (
 it('A04: logout revokes old sockets/cookies and authenticated resume restores the same actor', async () => {
   definition.playersPerMatch = 2;
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const a = await queue.enter('a', 'A', definition.competition);
-  const b = await queue.enter('b', 'B', definition.competition);
-  if (!a.ok || !b.ok) throw new Error('join');
-  const stub = runtime.GAME_ROOM.getByName(`1c:${a.room}`);
-  const first = await socket(stub, a.token);
-  const second = await socket(stub, b.token);
+  const firstAdmission = await queue.enter('a', 'A', definition.competition);
+  const secondAdmission = await queue.enter('b', 'B', definition.competition);
+  if (!firstAdmission.ok || !secondAdmission.ok) throw new Error('join');
+  const stub = runtime.GAME_ROOM.getByName(`1c:${firstAdmission.room}`);
+  const first = await socket(stub, firstAdmission.token);
+  const second = await socket(stub, secondAdmission.token);
   try {
-    expect((await queue.cancel('a', a.room, true)).ok).toBe(true);
+    expect((await queue.cancel('a', firstAdmission.room, true)).ok).toBe(true);
     expect(
       (
         await stub.fetch('https://game.test', {
-          headers: { Upgrade: 'websocket', 'X-Game-Session': a.token },
+          headers: { Upgrade: 'websocket', 'X-Game-Session': firstAdmission.token },
         })
       ).status,
     ).toBe(401);
     const resumed = await queue.enter('a', '', definition.competition, true);
     if (!resumed.ok) throw new Error(resumed.code);
-    expect(resumed.room).toBe(a.room);
-    expect(resumed.token).not.toBe(a.token);
+    expect(resumed.room).toBe(firstAdmission.room);
+    expect(resumed.token).not.toBe(firstAdmission.token);
     expect((await state(stub))?.players).toHaveLength(2);
   } finally {
     first.close();
@@ -1228,27 +1233,45 @@ it('a stale DB response cannot recreate membership after a newer admission is ca
 
 it('組織内A/Bの同時参加は一つ、他のactorの待機列はインスタンス別', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const a = { id: crypto.randomUUID(), owner };
-  const b = { id: crypto.randomUUID(), owner };
+  const firstCompetition = { id: crypto.randomUUID(), owner };
+  const secondCompetition = { id: crypto.randomUUID(), owner };
   const results = await Promise.all([
-    queue.enter('same', 'S', definition.competition, false, a),
-    queue.enter('same', 'S', definition.competition, false, b),
+    queue.enter('same', 'S', definition.competition, false, firstCompetition),
+    queue.enter('same', 'S', definition.competition, false, secondCompetition),
   ]);
-  expect(results.filter((r) => r.ok)).toHaveLength(1);
-  const first = await queue.enter('first', 'A', definition.competition, false, a);
-  const second = await queue.enter('second', 'B', definition.competition, false, b);
+  expect(results.filter((result) => result.ok)).toHaveLength(1);
+  const first = await queue.enter(
+    'first',
+    'A',
+    definition.competition,
+    false,
+    firstCompetition,
+  );
+  const second = await queue.enter(
+    'second',
+    'B',
+    definition.competition,
+    false,
+    secondCompetition,
+  );
   if (!first.ok || !second.ok) throw new Error('join');
   expect(first.room).not.toBe(second.room);
-  expect(await queue.enter('first', '', undefined, true, b)).toMatchObject({
+  expect(
+    await queue.enter('first', '', undefined, true, secondCompetition),
+  ).toMatchObject({
     ok: false,
     code: 'OTHER_INSTANCE_ACTIVE',
-    instanceId: a.id,
+    instanceId: firstCompetition.id,
   });
-  expect(await queue.cancel('first', first.room, false, b.id)).toMatchObject({
+  expect(
+    await queue.cancel('first', first.room, false, secondCompetition.id),
+  ).toMatchObject({
     ok: false,
   });
   await evictDurableObject(queue);
-  expect(await queue.enter('first', '', undefined, true, a)).toEqual(first);
+  expect(await queue.enter('first', '', undefined, true, firstCompetition)).toEqual(
+    first,
+  );
 });
 
 it('取消済みの世代は、部屋が未作成でも遅延した予約を再成立させない', async () => {
@@ -1304,9 +1327,15 @@ it('部屋トークンは別インスタンスIDのWebSocketに使えない', as
 
 it('終端後に未保存結果を残したまま組織参加枠を解放する', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const a = { id: crypto.randomUUID(), owner };
-  const b = { id: crypto.randomUUID(), owner };
-  const first = await queue.enter('a', 'A', definition.competition, false, a);
+  const firstCompetition = { id: crypto.randomUUID(), owner };
+  const secondCompetition = { id: crypto.randomUUID(), owner };
+  const first = await queue.enter(
+    'a',
+    'A',
+    definition.competition,
+    false,
+    firstCompetition,
+  );
   if (!first.ok) throw new Error(first.code);
   const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
   await runInDurableObject(room, async (_instance, ctx) => {
@@ -1317,7 +1346,9 @@ it('終端後に未保存結果を残したまま組織参加枠を解放する'
     saved.resultRetryAt = Date.now() + 60000;
     await ctx.storage.put('room', saved);
   });
-  expect((await queue.enter('a', 'A', definition.competition, false, b)).ok).toBe(true);
+  expect(
+    (await queue.enter('a', 'A', definition.competition, false, secondCompetition)).ok,
+  ).toBe(true);
   expect((await state(room))?.phase).toBe('FINISHED');
 });
 
@@ -1358,9 +1389,15 @@ it('候補0の待機解除は開始済みの固定問題や終端を変更しな
 
 it('部屋照合が失敗しても別インスタンスへの参加枠を解放しない', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const a = { id: crypto.randomUUID(), owner };
-  const b = { id: crypto.randomUUID(), owner };
-  const first = await queue.enter('a', 'A', definition.competition, false, a);
+  const firstCompetition = { id: crypto.randomUUID(), owner };
+  const secondCompetition = { id: crypto.randomUUID(), owner };
+  const first = await queue.enter(
+    'a',
+    'A',
+    definition.competition,
+    false,
+    firstCompetition,
+  );
   if (!first.ok) throw new Error(first.code);
   let restore = () => {};
   await runInDurableObject(queue, async (instance) => {
@@ -1377,14 +1414,16 @@ it('部屋照合が失敗しても別インスタンスへの参加枠を解放�
     restore = () => spy.mockRestore();
   });
   try {
-    expect(await queue.enter('a', 'A', definition.competition, false, b)).toMatchObject({
+    expect(
+      await queue.enter('a', 'A', definition.competition, false, secondCompetition),
+    ).toMatchObject({
       ok: false,
       code: 'OTHER_INSTANCE_ACTIVE',
     });
   } finally {
     restore();
   }
-  expect(await queue.enter('a', '', undefined, true, a)).toEqual(first);
+  expect(await queue.enter('a', '', undefined, true, firstCompetition)).toEqual(first);
 });
 
 it('レビューR01: logout応答消失中の復帰でも進行中の組織参加枠を保持する', async () => {
@@ -1447,7 +1486,7 @@ it('レビューR01: logout応答消失中の復帰でも進行中の組織参�
       await queue.enter('a', 'A', definition.competition, false, other),
     ).toMatchObject({ ok: false, code: 'OTHER_INSTANCE_ACTIVE' });
     expect((await state(room))?.phase).toBe('REVEALING');
-    expect((await state(room))?.players.map((p) => p.id)).toContain('a');
+    expect((await state(room))?.players.map((player) => player.id)).toContain('a');
   } finally {
     release();
     await logout;

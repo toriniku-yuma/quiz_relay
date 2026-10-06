@@ -22,10 +22,16 @@ export function useQuestionOperation(instanceId: string, saved: () => Promise<vo
       }
       setPending(null);
       return true;
-    } catch (e) {
-      if (e instanceof QuestionRequestError && e.status < 500 && e.status !== 408)
+    } catch (caughtError) {
+      if (
+        caughtError instanceof QuestionRequestError &&
+        caughtError.status < 500 &&
+        caughtError.status !== 408
+      )
         setPending(null);
-      setError(e instanceof Error ? e.message : '保存できませんでした。');
+      setError(
+        caughtError instanceof Error ? caughtError.message : '保存できませんでした。',
+      );
       return false;
     } finally {
       sending.current = false;

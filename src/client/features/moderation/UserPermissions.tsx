@@ -45,8 +45,8 @@ export default function UserPermissions({
       <div className="grid gap-5">
         <form
           className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
+          onSubmit={(event) => {
+            event.preventDefault();
             void mutation.submit({
               action: 'permissions',
               instanceId,
@@ -61,19 +61,21 @@ export default function UserPermissions({
             className="grid gap-3"
           >
             <legend>このインスタンスのモデレーター権限</legend>
-            {instancePermissions.map((p) => (
-              <label key={p}>
+            {instancePermissions.map((permission) => (
+              <label key={permission}>
                 <Checkbox
-                  checked={permissions.includes(p)}
-                  onChange={(e) =>
+                  checked={permissions.includes(permission)}
+                  onChange={(event) =>
                     setPermissions(
-                      e.target.checked
-                        ? [...permissions, p]
-                        : permissions.filter((v) => v !== p),
+                      event.target.checked
+                        ? [...permissions, permission]
+                        : permissions.filter(
+                            (grantedPermission) => grantedPermission !== permission,
+                          ),
                     )
                   }
                 />{' '}
-                {labels[p]}
+                {labels[permission]}
               </label>
             ))}
           </fieldset>
@@ -88,8 +90,8 @@ export default function UserPermissions({
         {!user.administrator && (
           <form
             className="grid gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               void mutation.submit({
                 action: 'inviteAdmin',
                 actorId: user.actorId,
@@ -103,7 +105,7 @@ export default function UserPermissions({
                 required
                 disabled={mutation.busy || mutation.uncertain}
                 value={keepSender}
-                onChange={(e) => setKeepSender(e.target.value)}
+                onChange={(event) => setKeepSender(event.target.value)}
                 className="h-12 border border-line p-3"
               >
                 <option value="">選択してください</option>

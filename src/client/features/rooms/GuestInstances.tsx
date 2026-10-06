@@ -28,14 +28,18 @@ export default function GuestInstances({ instanceId = '' }: { instanceId?: strin
         ).instances,
       );
       setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '一覧を読み込めませんでした。');
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : '一覧を読み込めませんでした。',
+      );
     }
   }, []);
   useEffect(() => {
     void refresh();
   }, [refresh]);
-  const selected = instances?.find((i) => i.id === instanceId);
+  const selected = instances?.find((instance) => instance.id === instanceId);
   if (instanceId)
     return (
       <Panel title={selected?.name ?? 'インスタンス'}>
@@ -84,24 +88,28 @@ export default function GuestInstances({ instanceId = '' }: { instanceId?: strin
         一覧を更新
       </Button>
       <DataTable label="ゲスト参加可能なインスタンス" columns={['名前', '受付', '参加']}>
-        {instances?.map((i) => (
-          <tr key={i.id}>
-            <td>{i.name}</td>
-            <td>{i.casualPauseReason ? `停止中：${i.casualPauseReason}` : '受付中'}</td>
+        {instances?.map((instance) => (
+          <tr key={instance.id}>
+            <td>{instance.name}</td>
+            <td>
+              {instance.casualPauseReason
+                ? `停止中：${instance.casualPauseReason}`
+                : '受付中'}
+            </td>
             <td>
               <div className="flex gap-4">
-                {i.casualConfig.enabled && i.casualConfig.casualGuests && (
+                {instance.casualConfig.enabled && instance.casualConfig.casualGuests && (
                   <a
                     className="underline"
-                    href={`${CASUAL_PATH}?instance=${i.id}&guest=1`}
+                    href={`${CASUAL_PATH}?instance=${instance.id}&guest=1`}
                   >
                     カジュアルマッチ
                   </a>
                 )}
-                {i.casualConfig.roomGuests && (
+                {instance.casualConfig.roomGuests && (
                   <a
                     className="underline"
-                    href={`${ROOMS_PATH}?instance=${i.id}&guest=1`}
+                    href={`${ROOMS_PATH}?instance=${instance.id}&guest=1`}
                   >
                     部屋
                   </a>

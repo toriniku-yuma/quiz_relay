@@ -980,7 +980,8 @@ export class Matchmaker extends DurableObject<Env> {
               room,
               await this.status(
                 room,
-                Object.values(snapshot.actors).find((e) => e.room === room)?.userRoom,
+                Object.values(snapshot.actors).find((entry) => entry.room === room)
+                  ?.userRoom,
               ),
             ] as const;
           } catch {

@@ -29,7 +29,9 @@ export default function QuestionActions({
   const frozen = useRef(rows);
   if (!model.uncertain) frozen.current = rows;
   rows = frozen.current;
-  const identity = rows.map((r) => `${r.id}:${r.revision}`).join('|');
+  const identity = rows
+    .map((submission) => `${submission.id}:${submission.revision}`)
+    .join('|');
   const [editing, setEditing] = useState(identity);
   if (!model.uncertain && identity !== editing) {
     setEditing(identity);
@@ -40,7 +42,7 @@ export default function QuestionActions({
     setFixed(false);
   }
   if (!open) return null;
-  const deleted = rows.some((r) => r.deletedAt);
+  const deleted = rows.some((submission) => submission.deletedAt);
   const choices = deleted
     ? { restore: '復元' }
     : {
@@ -48,7 +50,9 @@ export default function QuestionActions({
         ...(data.administrator ? { difficulty: '難易度変更' } : {}),
         stop: '使用停止',
         resume: '使用停止の解除',
-        ...(rows.every((r) => r.status === 'pending' || r.publishedId)
+        ...(rows.every(
+          (submission) => submission.status === 'pending' || submission.publishedId,
+        )
           ? { return: '差戻し' }
           : {}),
         delete: '削除',
@@ -63,15 +67,16 @@ export default function QuestionActions({
       busy={model.busy}
     >
       <p>
-        対象 {rows.length}件：{rows.map((r) => r.input.text || '未入力').join('、')}
+        対象 {rows.length}件：
+        {rows.map((submission) => submission.input.text || '未入力').join('、')}
       </p>
       <form
         className="grid gap-4"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const changes = rows.map((r) => ({
-            id: r.id,
-            revision: r.revision,
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const changes = rows.map((submission) => ({
+            id: submission.id,
+            revision: submission.revision,
             categoryId: category,
             difficulty: Number(level),
             fixed,
@@ -93,12 +98,12 @@ export default function QuestionActions({
               className="m-2 border border-line p-3"
               required
               value={action}
-              onChange={(e) => setAction(e.target.value)}
+              onChange={(event) => setAction(event.target.value)}
             >
               <option value="">選択してください</option>
-              {Object.entries(choices).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
+              {Object.entries(choices).map(([actionKey, actionLabel]) => (
+                <option key={actionKey} value={actionKey}>
+                  {actionLabel}
                 </option>
               ))}
             </select>
@@ -110,14 +115,14 @@ export default function QuestionActions({
                 className="m-2 border border-line p-3"
                 required
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(event) => setCategory(event.target.value)}
               >
                 <option value="">選択してください</option>
                 {data.categories
-                  .filter((c) => c.active)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
+                  .filter((availableCategory) => availableCategory.active)
+                  .map((availableCategory) => (
+                    <option key={availableCategory.id} value={availableCategory.id}>
+                      {availableCategory.name}
                     </option>
                   ))}
               </select>
@@ -130,17 +135,20 @@ export default function QuestionActions({
                 <select
                   className="m-2 border border-line p-3"
                   value={level}
-                  onChange={(e) => setLevel(e.target.value)}
+                  onChange={(event) => setLevel(event.target.value)}
                 >
-                  {['初級', '中級', '上級'].map((s, i) => (
-                    <option key={s} value={i}>
-                      {s}
+                  {['初級', '中級', '上級'].map((label, i) => (
+                    <option key={label} value={i}>
+                      {label}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                <Checkbox checked={fixed} onChange={(e) => setFixed(e.target.checked)} />{' '}
+                <Checkbox
+                  checked={fixed}
+                  onChange={(event) => setFixed(event.target.checked)}
+                />{' '}
                 自動更新せず固定する
               </label>
             </>
@@ -151,7 +159,7 @@ export default function QuestionActions({
             placeholder="例：内容に誤りがあるため"
             required={!['classify', 'approve'].includes(action)}
             value={reason}
-            onChange={(e) => setReason(e.target.value)}
+            onChange={(event) => setReason(event.target.value)}
             maxLength={1000}
           />
         </fieldset>

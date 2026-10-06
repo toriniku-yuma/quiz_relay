@@ -6,7 +6,7 @@ import type { Auth } from '../src/client/features/auth/useAuth';
 import MatchLobby from '../src/client/features/matchmaking/MatchLobby';
 import CasualLobby from '../src/client/features/rooms/CasualLobby';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   cursor: 0,
   dependencies: [] as unknown[][],
   effects: [] as Array<() => void>,
@@ -30,15 +30,15 @@ const h = vi.hoisted(() => ({
 vi.mock('react', async (original) => ({
   ...(await original<typeof import('react')>()),
   useEffect: (effect: () => void, dependencies: unknown[]) => {
-    const index = h.cursor++;
-    const previous = h.dependencies[index];
+    const index = mocks.cursor++;
+    const previous = mocks.dependencies[index];
     if (
       !previous ||
       dependencies.length !== previous.length ||
       dependencies.some((value, i) => !Object.is(value, previous[i]))
     ) {
-      h.dependencies[index] = dependencies;
-      h.effects.push(effect);
+      mocks.dependencies[index] = dependencies;
+      mocks.effects.push(effect);
     }
   },
 }));
@@ -46,18 +46,18 @@ vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
     auth: { user: { id: 'self' } },
     organization: { data: { enabled: true, account: { displayName: '本人' } } },
-    url: h.url,
+    url: mocks.url,
   }),
 }));
 vi.mock('../src/client/features/matchmaking/useMatchmaking', () => ({
-  useMatchmaking: () => h.match,
+  useMatchmaking: () => mocks.match,
 }));
 beforeEach(() => {
-  h.cursor = 0;
-  h.dependencies = [];
-  h.effects = [];
-  h.url = new URL('https://quiz.test/game/?instance=instance-a');
-  h.match.game.snapshot.result.storage = 'pending';
+  mocks.cursor = 0;
+  mocks.dependencies = [];
+  mocks.effects = [];
+  mocks.url = new URL('https://quiz.test/game/?instance=instance-a');
+  mocks.match.game.snapshot.result.storage = 'pending';
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -70,8 +70,8 @@ it('遅い旧ランク結果の保存確定は順位だけ更新し、新参加�
     active = { mode: status.mode ?? '', roomId: status.roomId ?? '' };
   });
   const render = () => {
-    h.cursor = 0;
-    h.effects = [];
+    mocks.cursor = 0;
+    mocks.effects = [];
     renderToStaticMarkup(
       createElement(MatchLobby, {
         auth: { user: null, busy: false } as Auth,
@@ -79,7 +79,7 @@ it('遅い旧ランク結果の保存確定は順位だけ更新し、新参加�
         onStatus,
       }),
     );
-    for (const effect of h.effects) effect();
+    for (const effect of mocks.effects) effect();
   };
   render();
   expect(onStatus).toHaveBeenCalledOnce();
@@ -87,7 +87,7 @@ it('遅い旧ランク結果の保存確定は順位だけ更新し、新参加�
   active = { mode: 'casual', roomId: 'new-b' };
   onStatus.mockClear();
 
-  h.match.game.snapshot.result.storage = 'confirmed';
+  mocks.match.game.snapshot.result.storage = 'confirmed';
   render();
   expect(onStatus).not.toHaveBeenCalled();
   expect(active).toEqual({ mode: 'casual', roomId: 'new-b' });
@@ -104,7 +104,7 @@ it.each(['ranked', 'casual'] as const)(
   (mode) => {
     const path = mode === 'ranked' ? '/game/' : '/casual/';
     const markup = (target: string) => {
-      h.url = new URL(`https://quiz.test${path}?instance=${target}`);
+      mocks.url = new URL(`https://quiz.test${path}?instance=${target}`);
       return renderToStaticMarkup(
         mode === 'ranked'
           ? createElement(MatchLobby, {
@@ -125,7 +125,7 @@ it.each(['ranked', 'casual'] as const)(
     const original = markup('instance-a');
     expect(original).toContain('/history/?instance=instance-a&amp;result=result-a');
     expect(original).toContain('対戦履歴');
-    expect(h.match.game.roomId).toBe('old-a');
-    expect(h.match.game.snapshot.result.id).toBe('result-a');
+    expect(mocks.match.game.roomId).toBe('old-a');
+    expect(mocks.match.game.snapshot.result.id).toBe('result-a');
   },
 );

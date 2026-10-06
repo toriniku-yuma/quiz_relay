@@ -171,7 +171,7 @@ export async function overview(
             and(
               inArray(
                 matchmakingSettings.owner,
-                all.map((i) => i.owner),
+                all.map((instance) => instance.owner),
               ),
               eq(matchmakingSettings.profile, profile),
             ),
@@ -250,8 +250,8 @@ export async function overview(
           playerCounts.find((row) => row.owner === instance.owner)?.players ?? 4,
         hasOwnQuestions: authored.some((row) => row.id === instance.id),
         permissions: permissions
-          .filter((p) => p.instanceId === instance.id)
-          .map((p) => p.permission),
+          .filter((grant) => grant.instanceId === instance.id)
+          .map((grant) => grant.permission),
       }))
       .filter(
         (instance) =>
@@ -453,7 +453,7 @@ export async function setInstanceGrants(
     input.expected.length > 64 ||
     !Array.isArray(input.permissions) ||
     input.permissions.length > instancePermissions.length ||
-    input.permissions.some((p) => !instancePermissions.includes(p)) ||
+    input.permissions.some((permission) => !instancePermissions.includes(permission)) ||
     new Set(input.permissions).size !== input.permissions.length
   )
     throw new OrganizationError('INVALID_PERMISSION', 400);
@@ -665,7 +665,7 @@ export async function allowedInstanceActors(
             gt(guestSessions.expiresAt, new Date().toISOString()),
           ),
         );
-      allowed.push(...guests.map((g) => g.actorId));
+      allowed.push(...guests.map((guest) => guest.actorId));
     }
     return allowed;
   } finally {

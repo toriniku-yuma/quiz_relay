@@ -62,8 +62,8 @@ type PreparedStart = {
   members: (Participant & { role?: 'presenter' })[];
 };
 const secret = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
-    b.toString(16).padStart(2, '0'),
+  Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) =>
+    byte.toString(16).padStart(2, '0'),
   ).join('');
 async function passwordHash(password: string, salt: string) {
   const key = await crypto.subtle.importKey(
@@ -86,7 +86,7 @@ async function passwordHash(password: string, salt: string) {
         256,
       ),
     ),
-    (b) => b.toString(16).padStart(2, '0'),
+    (byte) => byte.toString(16).padStart(2, '0'),
   ).join('');
 }
 
@@ -183,7 +183,7 @@ export class RoomLobby {
       scope.mode !== 'room'
     )
       return { ok: false as const, code: 'INSTANCE_MISMATCH' };
-    const existing = initial.members.some((m) => m.id === actor.id);
+    const existing = initial.members.some((member) => member.id === actor.id);
     if (!existing && !initial.settings.public && invite !== initial.invite)
       return { ok: false as const, code: 'INVITE_REQUIRED' };
     if (
@@ -207,7 +207,9 @@ export class RoomLobby {
         (await this.ctx.storage.get(`closed:${generation}`))
       )
         return { ok: false as const, code: 'STALE_RESERVATION' };
-      const member = room.members.find((m) => m.id === actor.id);
+      const member = room.members.find(
+        (candidateMember) => candidateMember.id === actor.id,
+      );
       if (member) {
         if (member.generation !== generation || member.token !== token)
           return { ok: false as const, code: 'STALE_RESERVATION' };
@@ -252,7 +254,10 @@ export class RoomLobby {
     const room = await this.read();
     if (
       !room?.members.some(
-        (m) => m.id === actor && (!token || m.token === token) && m.expires > Date.now(),
+        (member) =>
+          member.id === actor &&
+          (!token || member.token === token) &&
+          member.expires > Date.now(),
       )
     )
       throw new OrganizationError('ROOM_NOT_FOUND', 404);
@@ -261,7 +266,11 @@ export class RoomLobby {
   }
   async originals(actor: string) {
     const room = await this.read();
-    if (!room || room.sourceOwner !== actor || !room.members.some((m) => m.id === actor))
+    if (
+      !room ||
+      room.sourceOwner !== actor ||
+      !room.members.some((member) => member.id === actor)
+    )
       throw new OrganizationError('AUTHOR_REQUIRED');
     return { questions: room.original };
   }
@@ -292,7 +301,7 @@ export class RoomLobby {
         return prior.result;
       }
       const room = await this.read(),
-        member = room?.members.find((m) => m.id === actor.id);
+        member = room?.members.find((candidateMember) => candidateMember.id === actor.id);
       if (!room || !member || room.closed)
         throw new OrganizationError('ROOM_NOT_FOUND', 404);
       if (room.starting) throw new OrganizationError('START_PENDING', 409);
@@ -386,12 +395,12 @@ export class RoomLobby {
       )
         throw new OrganizationError('START_PENDING', 409);
       const answerers = room.members.filter(
-        (m) => !room.settings.presenter || m.id !== room.hostId,
+        (member) => !room.settings.presenter || member.id !== room.hostId,
       );
       if (
         answerers.length < 2 ||
         answerers.length > room.settings.capacity ||
-        answerers.some((m) => !m.connected || !m.ready || !m.inLobby)
+        answerers.some((member) => !member.connected || !member.ready || !member.inLobby)
       )
         throw new OrganizationError('ROOM_NOT_READY', 409);
       room.starting ??= {
@@ -416,11 +425,12 @@ export class RoomLobby {
       const allowed = await allowedInstanceActors(
         this.env,
         initial.scope,
-        initial.members.map((m) => m.id),
+        initial.members.map((member) => member.id),
       );
       if (
         initial.members.some(
-          (m) => !allowed.includes(m.id) || (m.guest && !initial.settings.guests),
+          (member) =>
+            !allowed.includes(member.id) || (member.guest && !initial.settings.guests),
         )
       )
         throw new OrganizationError('PARTICIPATION_RESTRICTED', 409);
@@ -432,14 +442,16 @@ export class RoomLobby {
         initial.sourceId,
       );
       definition.playersPerMatch = initial.members.filter(
-        (m) => !initial.settings.presenter || m.id !== initial.hostId,
+        (member) => !initial.settings.presenter || member.id !== initial.hostId,
       ).length;
       try {
         await validateDefinition(definition);
       } catch {
         throw new OrganizationError('INVALID_SETUP', 400);
       }
-      const tokens = Object.fromEntries(initial.members.map((m) => [m.id, secret()]));
+      const tokens = Object.fromEntries(
+        initial.members.map((member) => [member.id, secret()]),
+      );
       // Persist the child identity and credentials before an RPC whose outcome could be unknown.
       const fixed = await this.atomic(async () => {
         const room = await this.read();
@@ -452,12 +464,22 @@ export class RoomLobby {
         this.sweep(room);
         if (
           JSON.stringify(
-            room.members.map((m) => [m.id, m.generation, m.ready, m.inLobby]),
+            room.members.map((member) => [
+              member.id,
+              member.generation,
+              member.ready,
+              member.inLobby,
+            ]),
           ) !==
             JSON.stringify(
-              initial.members.map((m) => [m.id, m.generation, m.ready, m.inLobby]),
+              initial.members.map((member) => [
+                member.id,
+                member.generation,
+                member.ready,
+                member.inLobby,
+              ]),
             ) ||
-          room.members.some((m) => !m.connected)
+          room.members.some((member) => !member.connected)
         )
           throw new OrganizationError('ROOM_NOT_READY', 409);
         const key = `start:${operationId}`;
@@ -469,11 +491,11 @@ export class RoomLobby {
           id: childId,
           definition,
           tokens,
-          members: initial.members.map((m) => ({
-            id: m.id,
-            name: m.name,
-            guest: m.guest,
-            ...(initial.settings.presenter && m.id === initial.hostId
+          members: initial.members.map((member) => ({
+            id: member.id,
+            name: member.name,
+            guest: member.guest,
+            ...(initial.settings.presenter && member.id === initial.hostId
               ? { role: 'presenter' as const }
               : {}),
           })),
@@ -519,24 +541,26 @@ export class RoomLobby {
         throw new OrganizationError('START_PENDING', 409);
       room.match = {
         id: fixed.id,
-        actors: fixed.members.map((m) => m.id),
+        actors: fixed.members.map((member) => member.id),
         tokens: fixed.tokens,
       };
       room.playing = true;
-      for (const m of room.members)
-        if (room.match.actors.includes(m.id)) m.inLobby = false;
+      for (const member of room.members)
+        if (room.match.actors.includes(member.id)) member.inLobby = false;
       const result = { ok: true as const, room: fixed.id };
       const expires = Date.now() + runtime.lobby.sessionLifetimeMs;
       const sessions = Object.fromEntries(
-        fixed.members.map((m) => [
-          `child-session:${m.id}:${fixed.id}`,
+        fixed.members.map((roomMember) => [
+          `child-session:${roomMember.id}:${fixed.id}`,
           {
-            actor: m.id,
+            actor: roomMember.id,
             room: fixed.id,
-            token: fixed.tokens[m.id],
-            parentToken: room.members.find((member) => member.id === m.id)?.token ?? '',
+            token: fixed.tokens[roomMember.id],
+            parentToken:
+              room.members.find((member) => member.id === roomMember.id)?.token ?? '',
             generation:
-              room.members.find((member) => member.id === m.id)?.generation ?? '',
+              room.members.find((member) => member.id === roomMember.id)?.generation ??
+              '',
             expires,
           } satisfies ChildSession,
         ]),
@@ -558,7 +582,10 @@ export class RoomLobby {
   }
   async gameSession(actor: string, token: string) {
     const room = await this.read();
-    const member = room?.members.find((m) => m.id === actor && m.token === token);
+    const member = room?.members.find(
+      (candidateMember) =>
+        candidateMember.id === actor && candidateMember.token === token,
+    );
     if (!room?.match || !member || member.inLobby || !room.match.actors.includes(actor))
       throw new OrganizationError('MATCH_NOT_FOUND', 404);
     return { room: room.match.id, token: room.match.tokens[actor] };
@@ -579,7 +606,7 @@ export class RoomLobby {
       if (latest.match?.id === room.match?.id) {
         latest.playing = playing;
         if (current?.closed && current.phase === 'WAITING') {
-          for (const m of latest.members) m.inLobby = true;
+          for (const member of latest.members) member.inLobby = true;
           latest.match = undefined;
           this.unready(latest);
         }
@@ -592,7 +619,7 @@ export class RoomLobby {
         closed: latest.closed && !playing,
         actors: [
           ...new Set([
-            ...latest.members.map((m) => m.id),
+            ...latest.members.map((member) => member.id),
             ...(playing ? (latest.match?.actors ?? []) : []),
           ]),
         ],
@@ -612,7 +639,7 @@ export class RoomLobby {
       if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
       return true;
     }
-    const member = room.members.find((m) => m.id === actor);
+    const member = room.members.find((candidateMember) => candidateMember.id === actor);
     if (
       member &&
       ((generation && member.generation !== generation) ||
@@ -658,7 +685,9 @@ export class RoomLobby {
       for (const socket of this.sockets())
         if ((socket.deserializeAttachment() as Attachment).actorId === actor)
           this.close(socket, forfeit ? 'MATCH_REPLACED' : undefined);
-      latest.members = latest.members.filter((m) => m.id !== actor);
+      latest.members = latest.members.filter(
+        (remainingMember) => remainingMember.id !== actor,
+      );
       latest.revision++;
       this.sweep(latest);
       await this.save(latest);
@@ -677,9 +706,9 @@ export class RoomLobby {
       prefix: `child-session:${actor}:`,
     });
     const matching = [...sessions].filter(
-      ([, s]) =>
-        (!generation || s.generation === generation) &&
-        (!token || s.parentToken === token),
+      ([, session]) =>
+        (!generation || session.generation === generation) &&
+        (!token || session.parentToken === token),
     );
     for (const [, session] of matching)
       await this.child(session.room).cancelReservation(
@@ -698,13 +727,15 @@ export class RoomLobby {
       const room = await this.read(),
         token = request.headers.get('X-Game-Session');
       const member = room?.members.find(
-        (m) => m.token === token && m.expires > Date.now(),
+        (candidateMember) =>
+          candidateMember.token === token && candidateMember.expires > Date.now(),
       );
       if (!room || !member || room.scope.id !== request.headers.get('X-Game-Instance'))
         return new Response(null, { status: 401 });
       if (
         this.sockets().filter(
-          (s) => (s.deserializeAttachment() as Attachment).actorId === member.id,
+          (socket) =>
+            (socket.deserializeAttachment() as Attachment).actorId === member.id,
         ).length >= runtime.game.maxConnectionsPerActor
       )
         return new Response(null, { status: 429 });
@@ -727,10 +758,10 @@ export class RoomLobby {
       return;
     }
     await this.atomic(async () => {
-      const a = socket.deserializeAttachment() as Attachment;
-      if (!a.live) return;
-      a.lastSeen = Date.now();
-      socket.serializeAttachment(a);
+      const attachment = socket.deserializeAttachment() as Attachment;
+      if (!attachment.live) return;
+      attachment.lastSeen = Date.now();
+      socket.serializeAttachment(attachment);
       const room = await this.read();
       if (!room) return;
       this.sweep(room);
@@ -761,8 +792,8 @@ export class RoomLobby {
         .map(([key]) => key);
       if (expired.length) await this.ctx.storage.delete(expired);
       const deadlines = [...sessions.values()]
-        .filter((s) => s.expires > Date.now())
-        .map((s) => s.expires);
+        .filter((session) => session.expires > Date.now())
+        .map((session) => session.expires);
       room.childSessionExpires = deadlines.length ? Math.min(...deadlines) : undefined;
       await this.save(room);
     });
@@ -801,7 +832,8 @@ export class RoomLobby {
     await this.atomic(async () => {
       const room = await this.read();
       if (!room) return;
-      for (const m of room.members) if (m.id === actor) m.name = '退会ユーザー';
+      for (const member of room.members)
+        if (member.id === actor) member.name = '退会ユーザー';
       if (room.sourceOwner === actor) room.original = [];
       await this.save(room);
       this.broadcast(room);
@@ -810,12 +842,12 @@ export class RoomLobby {
   private sockets() {
     return this.ctx
       .getWebSockets()
-      .filter((s) => (s.deserializeAttachment() as Attachment).live);
+      .filter((socket) => (socket.deserializeAttachment() as Attachment).live);
   }
   private close(socket: WebSocket, reason?: string) {
-    const a = socket.deserializeAttachment() as Attachment;
-    a.live = false;
-    socket.serializeAttachment(a);
+    const attachment = socket.deserializeAttachment() as Attachment;
+    attachment.live = false;
+    socket.serializeAttachment(attachment);
     try {
       socket.close(reason ? 1008 : 1000, reason ?? 'Closed');
     } catch {}
@@ -831,29 +863,31 @@ export class RoomLobby {
       )
         this.close(socket);
     const connected = new Set(
-      this.sockets().map((s) => (s.deserializeAttachment() as Attachment).actorId),
+      this.sockets().map(
+        (socket) => (socket.deserializeAttachment() as Attachment).actorId,
+      ),
     );
     const expired = room.members.filter(
-      (m) =>
-        m.expires <= now &&
+      (member) =>
+        member.expires <= now &&
         !room.starting &&
-        (!room.playing || !room.match?.actors.includes(m.id)),
+        (!room.playing || !room.match?.actors.includes(member.id)),
     );
     if (expired.length) {
-      const ids = new Set(expired.map((m) => m.id));
-      room.members = room.members.filter((m) => !ids.has(m.id));
+      const ids = new Set(expired.map((member) => member.id));
+      room.members = room.members.filter((member) => !ids.has(member.id));
       for (const socket of this.sockets())
         if (ids.has((socket.deserializeAttachment() as Attachment).actorId))
           this.close(socket);
       room.revision++;
     }
-    for (const m of room.members) {
-      m.connected = connected.has(m.id) && m.expires > now;
-      if (m.guest && now >= m.joinedAt + 30 * 86400000) m.name = 'ゲスト';
+    for (const member of room.members) {
+      member.connected = connected.has(member.id) && member.expires > now;
+      if (member.guest && now >= member.joinedAt + 30 * 86400000) member.name = 'ゲスト';
     }
-    const host = room.members.find((m) => m.id === room.hostId);
+    const host = room.members.find((member) => member.id === room.hostId);
     if (!host?.connected) {
-      const next = room.members.find((m) => m.connected);
+      const next = room.members.find((member) => member.connected);
       if (next && next.id !== room.hostId) {
         room.hostId = next.id;
         room.settings.presenter = false;
@@ -868,7 +902,7 @@ export class RoomLobby {
     }
   }
   private unready(room: UserRoom) {
-    for (const m of room.members) m.ready = false;
+    for (const member of room.members) member.ready = false;
   }
   private isPlaying(status: { phase: Snapshot['phase']; closed: boolean } | null) {
     return (
@@ -878,7 +912,7 @@ export class RoomLobby {
     );
   }
   private view(room: UserRoom, actor: string, playing = room.playing): RoomView {
-    const member = room.members.find((m) => m.id === actor);
+    const member = room.members.find((candidateMember) => candidateMember.id === actor);
     return {
       id: room.id,
       instanceId: room.scope.id,
@@ -920,19 +954,20 @@ export class RoomLobby {
     remove: string[] = [],
   ) {
     const deadlines = this.sockets().map(
-      (s) =>
-        (s.deserializeAttachment() as Attachment).lastSeen +
+      (socket) =>
+        (socket.deserializeAttachment() as Attachment).lastSeen +
         runtime.connection.heartbeatTimeoutMs,
     );
     if (!room.closed && room.emptySince !== undefined)
       deadlines.push(room.emptySince + 600000);
     if (room.original.length) deadlines.push(room.originalExpires);
     if (room.childSessionExpires) deadlines.push(room.childSessionExpires);
-    for (const m of room.members)
-      if (!room.starting && (!room.playing || !room.match?.actors.includes(m.id)))
-        deadlines.push(m.expires);
-    for (const m of room.members)
-      if (m.guest && m.name !== 'ゲスト') deadlines.push(m.joinedAt + 30 * 86400000);
+    for (const member of room.members)
+      if (!room.starting && (!room.playing || !room.match?.actors.includes(member.id)))
+        deadlines.push(member.expires);
+    for (const member of room.members)
+      if (member.guest && member.name !== 'ゲスト')
+        deadlines.push(member.joinedAt + 30 * 86400000);
     if (room.playing || room.starting)
       deadlines.push(Date.now() + runtime.connection.heartbeatTimeoutMs);
     await this.ctx.storage.transaction(async (tx) => {

@@ -107,17 +107,19 @@ export async function publishQuestionCatalog(
         : [`${profile}-band-${band}`];
     const available = current
       .filter(
-        (q) =>
-          q.availability.retiredAt === null &&
-          q.question.difficulty !== undefined &&
+        (catalogEntry) =>
+          catalogEntry.availability.retiredAt === null &&
+          catalogEntry.question.difficulty !== undefined &&
           (casual ||
-            (q.question.difficulty <= band &&
-              (configuration?.config.difficultyWeights?.[band]?.[q.question.difficulty] ??
-                1) > 0 &&
-              (configuration?.config.categoryWeights?.[q.question.categoryId ?? ''] ??
-                1) > 0)),
+            (catalogEntry.question.difficulty <= band &&
+              (configuration?.config.difficultyWeights?.[band]?.[
+                catalogEntry.question.difficulty
+              ] ?? 1) > 0 &&
+              (configuration?.config.categoryWeights?.[
+                catalogEntry.question.categoryId ?? ''
+              ] ?? 1) > 0)),
       )
-      .map((q) => q.question);
+      .map((catalogEntry) => catalogEntry.question);
     const [latest] = await db
       .select({ version: max(competitions.version) })
       .from(competitions)
@@ -155,12 +157,12 @@ export async function publishQuestionCatalog(
           .insert(questionSets)
           .values({ owner, setId, version, manifestHash: await contentHash(chunk) });
       await db.insert(questionSetItems).values(
-        chunk.map((q, index) => ({
+        chunk.map((question, index) => ({
           owner,
           setId,
           setVersion: version,
           ordinal: index + 1,
-          questionId: q.id,
+          questionId: question.id,
           questionVersion: 1,
         })),
       );

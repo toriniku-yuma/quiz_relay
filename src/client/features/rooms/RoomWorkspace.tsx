@@ -71,8 +71,12 @@ export default function RoomWorkspace() {
           .rooms,
       );
       setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '一覧を読み込めませんでした。');
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : '一覧を読み込めませんでした。',
+      );
     }
   }, [instanceId, eligible]);
   useEffect(() => {
@@ -80,11 +84,11 @@ export default function RoomWorkspace() {
     setInfo(null);
     if (id) {
       void playRequest<{ room: RoomView }>(API_PATHS.roomInfo, { room: id, invite })
-        .then((r) => {
-          if (live) setInfo(r.room);
+        .then((response) => {
+          if (live) setInfo(response.room);
         })
-        .catch((e) => {
-          if (live) setError(e.message);
+        .catch((caughtError) => {
+          if (live) setError(caughtError.message);
         });
       if (auth.user || guest?.data?.id)
         void playRequest<{ room: RoomView }>(API_PATHS.roomView, { room: id }, instanceId)
@@ -190,8 +194,8 @@ export default function RoomWorkspace() {
               {(auth.user || info.guestAllowed) && (
                 <form
                   className="mt-4 grid gap-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
+                  onSubmit={(event) => {
+                    event.preventDefault();
                     if (!auth.user && !guest?.data?.name) setNamePrompt(true);
                     else void joined.submit({ room: id, password, invite, instanceId });
                   }}
@@ -206,7 +210,7 @@ export default function RoomWorkspace() {
                       value={password}
                       disabled={joined.busy || joined.uncertain}
                       maxLength={128}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={(event) => setPassword(event.target.value)}
                     />
                   )}
                   <Button type="submit" tone="primary" disabled={joined.busy}>
@@ -256,21 +260,21 @@ export default function RoomWorkspace() {
           ) : (
             <Panel title="公開部屋一覧">
               <DataTable label="公開部屋" columns={['部屋名', '人数', '状態', '参加']}>
-                {rooms.map((r) => (
-                  <tr key={r.id}>
+                {rooms.map((room) => (
+                  <tr key={room.id}>
                     <td>
-                      {r.settings.name}
-                      {r.password ? '（パスワードあり）' : ''}
+                      {room.settings.name}
+                      {room.password ? '（パスワードあり）' : ''}
                     </td>
                     <td>
-                      {r.memberCount} /{' '}
-                      {r.settings.capacity + (r.settings.presenter ? 1 : 0)}
+                      {room.memberCount} /{' '}
+                      {room.settings.capacity + (room.settings.presenter ? 1 : 0)}
                     </td>
-                    <td>{r.playing ? '対戦中' : 'ロビー'}</td>
+                    <td>{room.playing ? '対戦中' : 'ロビー'}</td>
                     <td>
                       <a
                         className="underline"
-                        href={`${ROOMS_PATH}?instance=${instanceId}&room=${r.id}${auth.user ? '' : '&guest=1'}`}
+                        href={`${ROOMS_PATH}?instance=${instanceId}&room=${room.id}${auth.user ? '' : '&guest=1'}`}
                       >
                         ルールを確認して参加
                       </a>

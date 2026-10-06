@@ -67,10 +67,10 @@ export default function QuestionSelectionSettings({
                     value={weight}
                     onChange={(event) =>
                       setWeights(
-                        weights.map((values, b) =>
-                          b === band
-                            ? values.map((value, l) =>
-                                l === level ? Number(event.target.value) : value,
+                        weights.map((values, bandIndex) =>
+                          bandIndex === band
+                            ? values.map((value, levelIndex) =>
+                                levelIndex === level ? Number(event.target.value) : value,
                               )
                             : values,
                         ),

@@ -7,15 +7,21 @@ import { matchResults, resultPlayers } from '../db/schema.ts';
 import type { ResultRecord } from './record.ts';
 
 const average = (values: number[]) =>
-  values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  values.length
+    ? values.reduce((sum, elapsedMs) => sum + elapsedMs, 0) / values.length
+    : null;
 export function resultStatistics(record: ResultRecord, actorId: string): MatchStatistics {
-  const player = record.players.find((p) => p.id === actorId);
+  const player = record.players.find((candidatePlayer) => candidatePlayer.id === actorId);
   if (!player) throw new Error('PLAYER_NOT_FOUND');
-  const stats = record.answerStats?.filter((s) => s.actorId === actorId);
+  const stats = record.answerStats?.filter(
+    (answerStat) => answerStat.actorId === actorId,
+  );
   const times = (result: 'correct' | 'wrong') =>
     stats
-      ?.filter((s) => s.result === result && s.elapsedMs !== null)
-      .map((s) => s.elapsedMs as number) ?? [];
+      ?.filter(
+        (answerStat) => answerStat.result === result && answerStat.elapsedMs !== null,
+      )
+      .map((answerStat) => answerStat.elapsedMs as number) ?? [];
   return {
     resultId: record.result.id,
     finishedAt: new Date(record.result.finishedAt).toISOString(),
@@ -31,15 +37,16 @@ export function resultStatistics(record: ResultRecord, actorId: string): MatchSt
               : '敗北',
     correct: player.correct,
     mistakes: player.mistakes,
-    wrong: stats?.filter((s) => s.result === 'wrong').length ?? null,
-    timeouts: stats?.filter((s) => s.result === 'timeout').length ?? null,
+    wrong: stats?.filter((answerStat) => answerStat.result === 'wrong').length ?? null,
+    timeouts:
+      stats?.filter((answerStat) => answerStat.result === 'timeout').length ?? null,
     correctMs: average(times('correct')),
     wrongMs: average(times('wrong')),
     ratingDelta: player.ratingDelta,
-    players: record.players.map((p) => ({
-      name: p.name,
-      correct: p.correct,
-      mistakes: p.mistakes,
+    players: record.players.map((participant) => ({
+      name: participant.name,
+      correct: participant.correct,
+      mistakes: participant.mistakes,
     })),
   };
 }
@@ -47,23 +54,27 @@ export function aggregateStatistics(
   records: ResultRecord[],
   actorId: string,
 ): Investigation['summary'] {
-  const recorded = records.filter((r) => r.answerStats !== undefined),
+  const recorded = records.filter((result) => result.answerStats !== undefined),
     stats = recorded.flatMap(
-      (r) => r.answerStats?.filter((s) => s.actorId === actorId) ?? [],
+      (result) =>
+        result.answerStats?.filter((answerStat) => answerStat.actorId === actorId) ?? [],
     );
   const times = (result: 'correct' | 'wrong') =>
     stats
-      .filter((s) => s.result === result && s.elapsedMs !== null)
-      .map((s) => s.elapsedMs as number);
+      .filter(
+        (answerStat) => answerStat.result === result && answerStat.elapsedMs !== null,
+      )
+      .map((answerStat) => answerStat.elapsedMs as number);
   return {
     matches: records.length,
     recordedMatches: recorded.length,
     correct: records.reduce(
-      (n, r) => n + (r.players.find((p) => p.id === actorId)?.correct ?? 0),
+      (total, result) =>
+        total + (result.players.find((player) => player.id === actorId)?.correct ?? 0),
       0,
     ),
-    wrong: stats.filter((s) => s.result === 'wrong').length,
-    timeouts: stats.filter((s) => s.result === 'timeout').length,
+    wrong: stats.filter((answerStat) => answerStat.result === 'wrong').length,
+    timeouts: stats.filter((answerStat) => answerStat.result === 'timeout').length,
     correctMs: average(times('correct')),
     wrongMs: average(times('wrong')),
     correctSamples: times('correct').length,
@@ -92,7 +103,7 @@ export async function readInvestigation(
               and(eq(matchResults.owner, owner), eq(matchResults.resultId, resultId)),
             )
         : [];
-      if (resultId && !anchor?.payload.players.some((p) => p.id === actorId))
+      if (resultId && !anchor?.payload.players.some((player) => player.id === actorId))
         throw new Error('RESULT_NOT_FOUND');
       // ponytail: 原本を直接集計。蓄積量で遅くなったらDB内の同一集計へ移す。
       const all = await tx
@@ -111,19 +122,19 @@ export async function readInvestigation(
       return {
         reported: anchor ? resultStatistics(anchor.payload, actorId) : null,
         rows: all
-          .map((r) => resultStatistics(r.payload, actorId))
+          .map((result) => resultStatistics(result.payload, actorId))
           .sort(
-            (a, b) =>
+            (leftMatch, rightMatch) =>
               compareValues(
-                a[sorting.sort as (typeof investigationSortKeys)[number]],
-                b[sorting.sort as (typeof investigationSortKeys)[number]],
+                leftMatch[sorting.sort as (typeof investigationSortKeys)[number]],
+                rightMatch[sorting.sort as (typeof investigationSortKeys)[number]],
                 sorting.direction,
-              ) || b.resultId.localeCompare(a.resultId),
+              ) || rightMatch.resultId.localeCompare(leftMatch.resultId),
           )
           .slice((page - 1) * pageSize, page * pageSize),
         pagination: { page, pageSize, total: all.length },
         summary: aggregateStatistics(
-          (count === null ? all : all.slice(0, count)).map((r) => r.payload),
+          (count === null ? all : all.slice(0, count)).map((result) => result.payload),
           actorId,
         ),
       };

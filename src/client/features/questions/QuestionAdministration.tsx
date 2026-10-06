@@ -41,7 +41,7 @@ export default function QuestionAdministration({
               label="申請・資格変更の理由"
               placeholder="例：地理分野の問題を投稿したいです"
               value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(event) => setReason(event.target.value)}
             />
           )}
           {page === 'qualification' && !data.qualified && (
@@ -124,7 +124,7 @@ export default function QuestionAdministration({
                 label="直接付与するアカウント識別子"
                 placeholder="組織のアカウント一覧にある識別子"
                 value={actor}
-                onChange={(e) => setActor(e.target.value)}
+                onChange={(event) => setActor(event.target.value)}
               />
               <Button
                 disabled={busy || !actor}
@@ -133,7 +133,8 @@ export default function QuestionAdministration({
                     operation: 'author-decision',
                     actorId: actor,
                     revision:
-                      data.authors.find((a) => a.actorId === actor)?.revision ?? 0,
+                      data.authors.find((author) => author.actorId === actor)?.revision ??
+                      0,
                     decision: 'qualified',
                     reason,
                   });
@@ -162,7 +163,7 @@ export default function QuestionAdministration({
                     label="新しいカテゴリ名"
                     placeholder="例：地理"
                     value={category}
-                    onChange={(e) => setCategory(e.target.value)}
+                    onChange={(event) => setCategory(event.target.value)}
                   />
                   <Button
                     disabled={busy || !category.trim()}
@@ -176,36 +177,49 @@ export default function QuestionAdministration({
                 </>
               )}
               {data.categories
-                .filter((c) => !selectedId || c.id === selectedId)
-                .map((c) => (
-                  <div key={c.id} className="flex flex-wrap items-center gap-3">
+                .filter(
+                  (availableCategory) =>
+                    !selectedId || availableCategory.id === selectedId,
+                )
+                .map((availableCategory) => (
+                  <div
+                    key={availableCategory.id}
+                    className="flex flex-wrap items-center gap-3"
+                  >
                     <span>
-                      {c.name}（{c.active ? '有効' : '廃止'}）
+                      {availableCategory.name}（
+                      {availableCategory.active ? '有効' : '廃止'}）
                     </span>
                     {!selectedId ? (
                       <a
                         className="underline"
-                        href={questionHref('categories', instanceId, c.id)}
+                        href={questionHref(
+                          'categories',
+                          instanceId,
+                          availableCategory.id,
+                        )}
                       >
                         変更する
                       </a>
                     ) : (
                       <Button
                         disabled={
-                          busy || (c.active && (!destination || destination === c.id))
+                          busy ||
+                          (availableCategory.active &&
+                            (!destination || destination === availableCategory.id))
                         }
                         onClick={() => {
                           void mutate({
                             operation: 'category',
-                            id: c.id,
-                            revision: c.revision,
-                            name: c.name,
-                            active: !c.active,
+                            id: availableCategory.id,
+                            revision: availableCategory.revision,
+                            name: availableCategory.name,
+                            active: !availableCategory.active,
                             destination,
                           });
                         }}
                       >
-                        {c.active ? '廃止する' : '有効にする'}
+                        {availableCategory.active ? '廃止する' : '有効にする'}
                       </Button>
                     )}
                   </div>
@@ -246,7 +260,7 @@ export default function QuestionAdministration({
                 投稿方式
                 <select
                   value={mode}
-                  onChange={(e) => setMode(e.target.value as SubmissionMode)}
+                  onChange={(event) => setMode(event.target.value as SubmissionMode)}
                   className="border border-line p-3"
                 >
                   <option value="admin">管理者限定</option>
@@ -266,12 +280,12 @@ export default function QuestionAdministration({
                 label="資格不承認後の再申請待機日数"
                 placeholder="例：30"
                 value={waitDays}
-                onChange={(e) => setWaitDays(Number(e.target.value))}
+                onChange={(event) => setWaitDays(Number(event.target.value))}
               />
               <label>
                 <Checkbox
                   checked={showAuthor}
-                  onChange={(e) => setShowAuthor(e.target.checked)}
+                  onChange={(event) => setShowAuthor(event.target.checked)}
                 />{' '}
                 問題終了後に作問者名を表示
               </label>

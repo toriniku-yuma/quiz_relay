@@ -61,7 +61,7 @@ beforeEach(async () => {
     }),
   );
   mocks.allowed.mockImplementation(async (_env: Env, _scope: unknown, actors: string[]) =>
-    actors.filter((a) => !mocks.blocked.has(a)),
+    actors.filter((actorId) => !mocks.blocked.has(actorId)),
   );
   mocks.user.mockImplementation(async () => ({
     data: { user: { id: actor, email_confirmed_at: 'yes' } },
@@ -127,51 +127,55 @@ async function state(room: string) {
   );
 }
 it('権限取消の通知で待機を解除し、古いcookie・再参加を拒否する', async () => {
-  const a = await join('a');
-  expect((await socket(a)).status).toBe(101);
+  const firstAdmission = await join('a');
+  expect((await socket(firstAdmission)).status).toBe(101);
   mocks.blocked.add('a');
   await runtime.MATCHMAKER.getByName(org).refreshWaiting('a', id);
-  expect((await state(a.room)).players).toEqual([]);
-  expect((await socket(a)).status).toBe(401);
+  expect((await state(firstAdmission.room)).players).toEqual([]);
+  expect((await socket(firstAdmission)).status).toBe(401);
   expect((await post('join', { name: 'a' })).status).toBe(409);
   expect((await post('resume', {})).status).toBe(409);
 });
 it('通知が失敗しても開始直前に全員の権限を確認し、取消対象を除外する', async () => {
-  const a = await join('a');
-  const b = await join('b');
-  expect(b.room).toBe(a.room);
-  expect((await socket(a)).status).toBe(101);
+  const firstAdmission = await join('a');
+  const secondAdmission = await join('b');
+  expect(secondAdmission.room).toBe(firstAdmission.room);
+  expect((await socket(firstAdmission)).status).toBe(101);
   mocks.blocked.add('a');
-  expect((await socket(b)).status).toBe(101);
-  expect((await state(a.room)).phase).toBe('WAITING');
-  expect((await state(a.room)).players.map((p) => p.id)).toEqual(['b']);
+  expect((await socket(secondAdmission)).status).toBe(101);
+  expect((await state(firstAdmission.room)).phase).toBe('WAITING');
+  expect((await state(firstAdmission.room)).players.map((player) => player.id)).toEqual([
+    'b',
+  ]);
 });
 it('準備中の権限を失っても自分の待機を取り消せる', async () => {
-  const a = await join('a');
+  const firstAdmission = await join('a');
   mocks.blocked.add('a');
-  expect((await post('cancel', { room: a.room })).status).toBe(200);
-  expect((await state(a.room)).players).toEqual([]);
+  expect((await post('cancel', { room: firstAdmission.room })).status).toBe(200);
+  expect((await state(firstAdmission.room)).players).toEqual([]);
   expect(mocks.resolve).toHaveBeenLastCalledWith({}, 'a', id, true);
 });
 it('開始済み試合は権限取消後も維持し、resumeと再接続を許可する', async () => {
-  const a = await join('a');
-  const b = await join('b');
-  await socket(a);
-  await socket(b);
-  expect((await state(a.room)).phase).not.toBe('WAITING');
+  const firstAdmission = await join('a');
+  const secondAdmission = await join('b');
+  await socket(firstAdmission);
+  await socket(secondAdmission);
+  expect((await state(firstAdmission.room)).phase).not.toBe('WAITING');
   mocks.blocked.add('a');
   actor = 'a';
   await runtime.MATCHMAKER.getByName(org).refreshWaiting('a', id);
-  expect((await state(a.room)).players.map((p) => p.id)).toContain('a');
+  expect((await state(firstAdmission.room)).players.map((player) => player.id)).toContain(
+    'a',
+  );
   expect((await post('resume', {})).status).toBe(200);
-  expect((await socket(a)).status).toBe(101);
+  expect((await socket(firstAdmission)).status).toBe(101);
 });
 it('通知が届かなくても待機列の定期確認で取消対象を解除する', async () => {
-  const a = await join('a');
-  await socket(a);
+  const firstAdmission = await join('a');
+  await socket(firstAdmission);
   mocks.blocked.add('a');
   await runDurableObjectAlarm(runtime.MATCHMAKER.getByName(org));
-  expect((await state(a.room)).players).toEqual([]);
+  expect((await state(firstAdmission.room)).players).toEqual([]);
 });
 it('受付後に権限が変わった遅延reserveを拒否する', async () => {
   mocks.blocked.add('a');
@@ -188,42 +192,44 @@ it('受付後に権限が変わった遅延reserveを拒否する', async () => 
 });
 
 it('インスタンス全体の再確認で一般待機だけを解除し、許可された運営者は残す', async () => {
-  const a = await join('a');
-  const b = await join('b');
+  const firstAdmission = await join('a');
+  const secondAdmission = await join('b');
   mocks.blocked.add('a');
   await runtime.MATCHMAKER.getByName(org).refreshInstanceWaiting(id);
-  expect((await state(a.room)).players.map((p) => p.id)).toEqual(['b']);
+  expect((await state(firstAdmission.room)).players.map((player) => player.id)).toEqual([
+    'b',
+  ]);
   actor = 'b';
   expect((await post('resume', {})).status).toBe(200);
-  expect(b.room).toBe(a.room);
+  expect(secondAdmission.room).toBe(firstAdmission.room);
 });
 
 it('アーカイブの全体再確認でも開始済み試合・再接続を維持する', async () => {
-  const a = await join('a');
-  const b = await join('b');
-  await socket(a);
-  await socket(b);
+  const firstAdmission = await join('a');
+  const secondAdmission = await join('b');
+  await socket(firstAdmission);
+  await socket(secondAdmission);
   mocks.blocked.add('a');
   mocks.blocked.add('b');
   await runtime.MATCHMAKER.getByName(org).refreshInstanceWaiting(id);
-  expect((await state(a.room)).players).toHaveLength(2);
+  expect((await state(firstAdmission.room)).players).toHaveLength(2);
   actor = 'a';
   expect((await post('resume', {})).status).toBe(200);
-  expect((await socket(a)).status).toBe(101);
+  expect((await socket(firstAdmission)).status).toBe(101);
 });
 
 it('退会の受付停止は待機・試合中を拒否し、同じ操作IDだけが解除できる', async () => {
   const maker = runtime.MATCHMAKER.getByName(org);
   const operationId = crypto.randomUUID();
-  const a = await join('a');
+  const firstAdmission = await join('a');
   expect(await maker.beginWithdrawal('a', operationId)).toEqual({
     ok: false,
     code: 'CANCEL_WAITING_FIRST',
   });
   await maker.cancelWithdrawal('a', operationId);
-  const b = await join('b');
-  await socket(a);
-  await socket(b);
+  const secondAdmission = await join('b');
+  await socket(firstAdmission);
+  await socket(secondAdmission);
   expect(await maker.beginWithdrawal('a', operationId)).toEqual({
     ok: false,
     code: 'MATCH_STARTED',
@@ -241,11 +247,11 @@ it('退会の受付停止は待機・試合中を拒否し、同じ操作IDだ�
 });
 
 it('完全削除は進行中・未保存結果を拒否し、保存済み部屋だけを消去する', async () => {
-  const a = await join('a'),
-    b = await join('b');
-  const room = runtime.GAME_ROOM.getByName(`1c:${a.room}`);
-  await socket(a);
-  await socket(b);
+  const firstAdmission = await join('a'),
+    secondAdmission = await join('b');
+  const room = runtime.GAME_ROOM.getByName(`1c:${firstAdmission.room}`);
+  await socket(firstAdmission);
+  await socket(secondAdmission);
   await runInDurableObject(room, async (_instance, ctx) => {
     const saved = await ctx.storage.get<{ state: State }>('room');
     if (!saved) throw new Error('MISSING_ROOM');

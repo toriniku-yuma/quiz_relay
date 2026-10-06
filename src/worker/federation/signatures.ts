@@ -125,42 +125,42 @@ export async function verifyDelivery(
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('DELIVERY_SCHEMA');
 
-  const d = value as Delivery;
+  const delivery = value as Delivery;
   const fields =
     'audience,body,bodyHash,expiresAt,issuedAt,issuer,messageType,method,nonce,path,protocolVersion';
   if (
-    Object.keys(d).sort().join(',') !== fields ||
-    d.protocolVersion !== 1 ||
-    d.messageType !== 'probe' ||
-    d.method !== 'POST' ||
-    d.path !== INBOX_PATH ||
-    typeof d.nonce !== 'string' ||
-    !/^[0-9a-f-]{36}$/.test(d.nonce) ||
-    typeof d.bodyHash !== 'string'
+    Object.keys(delivery).sort().join(',') !== fields ||
+    delivery.protocolVersion !== 1 ||
+    delivery.messageType !== 'probe' ||
+    delivery.method !== 'POST' ||
+    delivery.path !== INBOX_PATH ||
+    typeof delivery.nonce !== 'string' ||
+    !/^[0-9a-f-]{36}$/.test(delivery.nonce) ||
+    typeof delivery.bodyHash !== 'string'
   )
     throw new Error('DELIVERY_SCHEMA');
 
   if (
-    origin(d.issuer) !== origin(options.issuer) ||
-    origin(d.audience) !== origin(options.audience)
+    origin(delivery.issuer) !== origin(options.issuer) ||
+    origin(delivery.audience) !== origin(options.audience)
   )
     throw new Error('DELIVERY_TARGET');
 
   if (
-    !Number.isSafeInteger(d.issuedAt) ||
-    !Number.isSafeInteger(d.expiresAt) ||
-    d.expiresAt <= d.issuedAt ||
-    d.expiresAt - d.issuedAt > DELIVERY_TTL ||
-    d.issuedAt > options.now + CLOCK_SKEW ||
-    options.now >= d.expiresAt + CLOCK_SKEW
+    !Number.isSafeInteger(delivery.issuedAt) ||
+    !Number.isSafeInteger(delivery.expiresAt) ||
+    delivery.expiresAt <= delivery.issuedAt ||
+    delivery.expiresAt - delivery.issuedAt > DELIVERY_TTL ||
+    delivery.issuedAt > options.now + CLOCK_SKEW ||
+    options.now >= delivery.expiresAt + CLOCK_SKEW
   )
     throw new Error('DELIVERY_TIME');
 
-  if ((await bodyHash(d.body)) !== d.bodyHash) throw new Error('BODY_HASH');
-  if (!(await options.consumeNonce(d.nonce, d.expiresAt + CLOCK_SKEW)))
+  if ((await bodyHash(delivery.body)) !== delivery.bodyHash) throw new Error('BODY_HASH');
+  if (!(await options.consumeNonce(delivery.nonce, delivery.expiresAt + CLOCK_SKEW)))
     throw new Error('REPLAY');
 
-  return d;
+  return delivery;
 }
 
 // 0B probe only: no production inbox or event authorization is exposed.

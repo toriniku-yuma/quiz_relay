@@ -43,7 +43,9 @@ export function useNotifications() {
     setRows(
       results
         .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .sort((leftNotification, rightNotification) =>
+          rightNotification.createdAt.localeCompare(leftNotification.createdAt),
+        )
         .slice(0, 5),
     );
     setError(

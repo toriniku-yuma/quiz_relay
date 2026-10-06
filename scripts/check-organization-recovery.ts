@@ -75,11 +75,11 @@ async function main() {
     assert.equal((await first`select current_user`)[0].current_user, 'quiz_organization');
     await assert.rejects(
       first`select * from quiz_game.match_results`,
-      (e: unknown) => (e as { code: string }).code === '42501',
+      (error: unknown) => (error as { code: string }).code === '42501',
     );
     await assert.rejects(
       first`update quiz_game.organizations set identity_namespace = 'changed'`,
-      (e: unknown) => (e as { code: string }).code === '42501',
+      (error: unknown) => (error as { code: string }).code === '42501',
     );
 
     phase = 'concurrency';
@@ -128,10 +128,11 @@ async function main() {
       await holder;
     }
     const results = await requests;
-    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
     assert.equal(
       results.filter(
-        (r) => r.status === 'rejected' && r.reason.code === 'ALREADY_CONFIGURED',
+        (result) =>
+          result.status === 'rejected' && result.reason.code === 'ALREADY_CONFIGURED',
       ).length,
       1,
     );
@@ -153,10 +154,12 @@ async function main() {
         permissions: ['users'],
       }),
     ]);
-    assert.equal(grants.filter((r) => r.status === 'fulfilled').length, 1);
+    assert.equal(grants.filter((result) => result.status === 'fulfilled').length, 1);
     assert.equal(
-      grants.filter((r) => r.status === 'rejected' && r.reason.code === 'EDIT_CONFLICT')
-        .length,
+      grants.filter(
+        (result) =>
+          result.status === 'rejected' && result.reason.code === 'EDIT_CONFLICT',
+      ).length,
       1,
     );
     console.log(
@@ -182,7 +185,7 @@ async function main() {
       [],
     );
     const previous = (await one.select().from(schema.instanceGrants)).map(
-      (row) => row.permission,
+      (result) => result.permission,
     );
     await setInstanceGrants(one, 'installer', {
       id: instance.id,
@@ -307,7 +310,7 @@ async function main() {
     );
     await assert.rejects(
       restoredService`select * from quiz_game.match_results`,
-      (e: unknown) => (e as { code: string }).code === '42501',
+      (error: unknown) => (error as { code: string }).code === '42501',
     );
     await assert.rejects(
       restored`update quiz_game.organizations set identity_namespace = 'changed'`,

@@ -192,7 +192,7 @@ export function validateQuestion(
     (!Array.isArray(item.readings) ||
       item.readings.length < 1 ||
       item.readings.length > 8 ||
-      item.readings.some((r) => typeof r !== 'string') ||
+      item.readings.some((reading) => typeof reading !== 'string') ||
       !item.readings.includes(answer) ||
       readingIssues(item.readings).length)
   )
@@ -204,11 +204,11 @@ export function validateQuestion(
     (!Array.isArray(item.traps) ||
       item.traps.length > 16 ||
       item.traps.some(
-        (t) =>
-          !record(t) ||
-          !text(t.answer, 80) ||
-          typeof t.reading !== 'string' ||
-          readingIssues([t.reading]).length,
+        (trap) =>
+          !record(trap) ||
+          !text(trap.answer, 80) ||
+          typeof trap.reading !== 'string' ||
+          readingIssues([trap.reading]).length,
       ))
   )
     throw new Error('INVALID_CHOICES');

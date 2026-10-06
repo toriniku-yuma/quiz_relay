@@ -47,7 +47,7 @@ it('タイムアウトの1分・30日境界と組織全体のBAN専用を検査�
   ).toThrow();
 });
 it('期限切れ・解除は別の独立した制限を解除しない', () => {
-  const a = {
+  const timeoutSanction = {
     ...timeout,
     id: 'a',
     instanceId: 'i',
@@ -56,18 +56,18 @@ it('期限切れ・解除は別の独立した制限を解除しない', () => {
     revokedAt: null,
     revision: 1,
   } as Sanction;
-  const b = {
-    ...a,
+  const partialSanction = {
+    ...timeoutSanction,
     id: 'b',
     kind: 'partial',
     restrictions: ['submit'],
     expiresAt: null,
   } as Sanction;
-  expect(blocks(a, 'ranked', now)).toBe(true);
-  expect(activeSanction(a, now + 60000)).toBe(false);
-  expect(blocks(b, 'submit', now + 60000)).toBe(true);
-  expect(blocks(b, 'ranked', now)).toBe(false);
-  expect(activeSanction({ ...b, revokedAt: new Date(now).toISOString() }, now)).toBe(
-    false,
-  );
+  expect(blocks(timeoutSanction, 'ranked', now)).toBe(true);
+  expect(activeSanction(timeoutSanction, now + 60000)).toBe(false);
+  expect(blocks(partialSanction, 'submit', now + 60000)).toBe(true);
+  expect(blocks(partialSanction, 'ranked', now)).toBe(false);
+  expect(
+    activeSanction({ ...partialSanction, revokedAt: new Date(now).toISOString() }, now),
+  ).toBe(false);
 });

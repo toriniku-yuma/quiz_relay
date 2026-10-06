@@ -29,8 +29,8 @@ export default function CasualSettings({
   return (
     <form
       className="my-5 grid gap-3 border-y border-line py-4"
-      onSubmit={(e) => {
-        e.preventDefault();
+      onSubmit={(event) => {
+        event.preventDefault();
         void mutation.submit({
           id: instance.id,
           config,
@@ -49,7 +49,7 @@ export default function CasualSettings({
           min={2}
           max={4}
           value={rankedPlayers}
-          onChange={(e) => setRankedPlayers(e.target.valueAsNumber)}
+          onChange={(event) => setRankedPlayers(event.target.valueAsNumber)}
         />
         <p>
           人数の変更は新しい待機に適用します。変更前からの待機は取り消して、参加し直してください。
@@ -57,7 +57,7 @@ export default function CasualSettings({
         <label className="flex gap-3">
           <Checkbox
             checked={config.enabled}
-            onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
+            onChange={(event) => setConfig({ ...config, enabled: event.target.checked })}
           />
           カジュアルマッチを有効にする
         </label>
@@ -69,19 +69,25 @@ export default function CasualSettings({
           min={2}
           max={4}
           value={config.players}
-          onChange={(e) => setConfig({ ...config, players: e.target.valueAsNumber })}
+          onChange={(event) =>
+            setConfig({ ...config, players: event.target.valueAsNumber })
+          }
         />
         <label className="flex gap-3">
           <Checkbox
             checked={config.casualGuests}
-            onChange={(e) => setConfig({ ...config, casualGuests: e.target.checked })}
+            onChange={(event) =>
+              setConfig({ ...config, casualGuests: event.target.checked })
+            }
           />
           カジュアルマッチへのゲスト参加を許可
         </label>
         <label className="flex gap-3">
           <Checkbox
             checked={config.roomGuests}
-            onChange={(e) => setConfig({ ...config, roomGuests: e.target.checked })}
+            onChange={(event) =>
+              setConfig({ ...config, roomGuests: event.target.checked })
+            }
           />
           部屋へのゲスト参加を許可
         </label>

@@ -8,7 +8,7 @@ export function reviewDeadline(state: State) {
     deadlines.push(
       state.result.finishedAt + (state.definition?.original ? 30 : 365) * 86400000,
     );
-  if (!state.guestNamesExpired && state.players.some((p) => p.guest))
+  if (!state.guestNamesExpired && state.players.some((player) => player.guest))
     deadlines.push(state.result.finishedAt + 30 * 86400000);
   return deadlines.length ? Math.min(...deadlines) : undefined;
 }
@@ -18,7 +18,7 @@ export function expireReview(state: State, now: number) {
   if (deadline === undefined || now < deadline || !state.result) return false;
   if (
     !state.guestNamesExpired &&
-    state.players.some((p) => p.guest) &&
+    state.players.some((player) => player.guest) &&
     now >= state.result.finishedAt + 30 * 86400000
   ) {
     for (const player of [...state.players, ...(state.completed?.players ?? [])])

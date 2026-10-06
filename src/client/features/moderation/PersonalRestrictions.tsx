@@ -42,7 +42,7 @@ export default function PersonalRestrictions() {
                 title="異議を申し立てる"
                 input={{ action: 'appeal', id: row.id }}
                 disabled={model.details?.appeals.some(
-                  (a) => a.sanctionId === row.id && !a.resolvedAt,
+                  (appeal) => appeal.sanctionId === row.id && !appeal.resolvedAt,
                 )}
               />
             )}
@@ -50,19 +50,19 @@ export default function PersonalRestrictions() {
         ))}
       </ul>
       <h3 className="mt-6 font-bold">異議申し立ての履歴</h3>
-      {model.details?.appeals.map((a) => (
-        <div key={a.id} className="my-3 border border-line p-3">
+      {model.details?.appeals.map((appeal) => (
+        <div key={appeal.id} className="my-3 border border-line p-3">
           <p>
-            {new Date(a.createdAt).toLocaleString()} /{' '}
-            {a.resolvedAt
-              ? a.decision === 'revoke'
+            {new Date(appeal.createdAt).toLocaleString()} /{' '}
+            {appeal.resolvedAt
+              ? appeal.decision === 'revoke'
                 ? 'BANを取り消しました'
                 : 'BANを維持しました'
               : '対応待ち'}
           </p>
-          <p className="whitespace-pre-wrap">申立理由：{a.reason}</p>
-          {a.resolution && (
-            <p className="whitespace-pre-wrap">対応理由：{a.resolution}</p>
+          <p className="whitespace-pre-wrap">申立理由：{appeal.reason}</p>
+          {appeal.resolution && (
+            <p className="whitespace-pre-wrap">対応理由：{appeal.resolution}</p>
           )}
         </div>
       ))}

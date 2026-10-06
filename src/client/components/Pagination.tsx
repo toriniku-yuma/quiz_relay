@@ -19,11 +19,13 @@ export default function Pagination({
         <select
           className="min-h-12 border border-line bg-paper p-2"
           value={pageSize}
-          onChange={(e) => onChange({ pageSize: Number(e.target.value), page: 1 })}
+          onChange={(event) =>
+            onChange({ pageSize: Number(event.target.value), page: 1 })
+          }
         >
-          {pageSizes.map((n) => (
-            <option key={n} value={n}>
-              {n}件
+          {pageSizes.map((optionPageSize) => (
+            <option key={optionPageSize} value={optionPageSize}>
+              {optionPageSize}件
             </option>
           ))}
         </select>

@@ -91,7 +91,7 @@ export async function verifyRooms(
     authorSubject = 'qa-room-author';
   const subjects = [adminSubject, authorSubject, 'qa-room-reviewer'];
   actors = await Promise.all(
-    subjects.map((s) => actorForSubject(organization.identityNamespace, s)),
+    subjects.map((subject) => actorForSubject(organization.identityNamespace, subject)),
   );
   await db.insert(organizationAccounts).values(
     subjects.map((subject, i) => ({
@@ -241,20 +241,24 @@ export async function verifyRooms(
       undefined,
       'local',
     );
-    assert.equal(data.instances.find((i) => i.id === instanceId)?.rankedPlayers, 2);
+    assert.equal(
+      data.instances.find((candidateInstance) => candidateInstance.id === instanceId)
+        ?.rankedPlayers,
+      2,
+    );
   } finally {
     await organizationConnection.close();
   }
   const categories = await roomOptions(env, instanceId);
   assert.deepEqual(
-    categories.map((c) => c.id).sort(),
+    categories.map((availableCategory) => availableCategory.id).sort(),
     (
       await db
         .select()
         .from(questionCategories)
         .where(eq(questionCategories.instanceId, instanceId))
     )
-      .map((c) => c.id)
+      .map((availableCategory) => availableCategory.id)
       .sort(),
   );
   assert.ok(categories.length);
@@ -323,11 +327,15 @@ export async function verifyRooms(
   await mutatePersonalSet(env, authorSubject, set);
   await mutatePersonalSet(env, authorSubject, set);
   assert.equal(
-    (await personalSets(env, authorSubject)).filter((s) => s.id === set.id).length,
+    (await personalSets(env, authorSubject)).filter(
+      (questionSet) => questionSet.id === set.id,
+    ).length,
     1,
   );
   assert.equal(
-    (await personalSets(env, adminSubject)).some((s) => s.id === set.id),
+    (await personalSets(env, adminSubject)).some(
+      (questionSet) => questionSet.id === set.id,
+    ),
     false,
   );
   await assert.rejects(
@@ -347,7 +355,9 @@ export async function verifyRooms(
   await mutatePersonalSet(env, authorSubject, remove);
   await mutatePersonalSet(env, authorSubject, remove);
   assert.equal(
-    (await personalSets(env, authorSubject)).some((s) => s.id === set.id),
+    (await personalSets(env, authorSubject)).some(
+      (questionSet) => questionSet.id === set.id,
+    ),
     false,
   );
   const original = await roomDefinition(
@@ -460,7 +470,7 @@ export async function verifyRooms(
   await assert.rejects(
     commitResult(db, {
       ...record,
-      players: record.players.map((p) => ({ ...p, correct: 4 })),
+      players: record.players.map((participant) => ({ ...participant, correct: 4 })),
     }),
     /RESULT_CONFLICT/,
   );
@@ -548,7 +558,9 @@ export async function verifyRooms(
   assert.equal(stored.payload.completedQuestions, undefined);
   assert.equal(stored.payload.players[1].name, 'ゲスト');
   assert.equal(
-    (await history(env, identity)).history.some((h) => h.resultId === old.result.id),
+    (await history(env, identity)).history.some(
+      (historyEntry) => historyEntry.resultId === old.result.id,
+    ),
     false,
   );
   await commitResult(db, old);
@@ -556,7 +568,10 @@ export async function verifyRooms(
     .select()
     .from(resultPlayers)
     .where(eq(resultPlayers.resultId, old.result.id));
-  assert.equal(indexed.find((p) => p.actorId === guest.actorId)?.name, 'ゲスト');
+  assert.equal(
+    indexed.find((indexedPlayer) => indexedPlayer.actorId === guest.actorId)?.name,
+    'ゲスト',
+  );
   const detail = await history(env, identity, {
     section: 'history',
     resultId: record.result.id,

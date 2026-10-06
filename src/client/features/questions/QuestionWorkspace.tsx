@@ -182,7 +182,10 @@ export default function QuestionWorkspace({
     : undefined;
   const visible = filtered ?? [];
   const allSelected =
-    visible.length > 0 && visible.every((r) => selection.rows.some((s) => s.id === r.id));
+    visible.length > 0 &&
+    visible.every((submission) =>
+      selection.rows.some((selectedRow) => selectedRow.id === submission.id),
+    );
   if (data && !canOpenQuestionPage(page, data))
     return <p role="alert">このページを利用する権限がありません。</p>;
   return (
@@ -282,8 +285,10 @@ export default function QuestionWorkspace({
                   anchor.click();
                   setTimeout(() => URL.revokeObjectURL(url), 10000);
                 }
-              } catch (e) {
-                model.setError(e instanceof Error ? e.message : '出力できませんでした。');
+              } catch (error) {
+                model.setError(
+                  error instanceof Error ? error.message : '出力できませんでした。',
+                );
               }
             }}
           >
@@ -314,8 +319,8 @@ export default function QuestionWorkspace({
             placeholder="例：富士山"
             value={query}
             maxLength={150}
-            onChange={(e) => {
-              updateList({ query: e.target.value });
+            onChange={(event) => {
+              updateList({ query: event.target.value });
             }}
           />
           <div className="flex flex-wrap gap-3">
@@ -324,8 +329,8 @@ export default function QuestionWorkspace({
                 状態{' '}
                 <select
                   value={status}
-                  onChange={(e) => {
-                    updateList({ status: e.target.value });
+                  onChange={(event) => {
+                    updateList({ status: event.target.value });
                   }}
                   className="border border-line p-2"
                 >
@@ -345,8 +350,8 @@ export default function QuestionWorkspace({
               <select
                 value={category}
                 disabled={!data}
-                onChange={(e) => {
-                  updateList({ category: e.target.value });
+                onChange={(event) => {
+                  updateList({ category: event.target.value });
                 }}
                 className="border border-line p-2"
               >
@@ -357,9 +362,9 @@ export default function QuestionWorkspace({
                       ? '取得できませんでした'
                       : 'カテゴリを読み込み中'}
                 </option>
-                {data?.categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
+                {data?.categories.map((availableCategory) => (
+                  <option key={availableCategory.id} value={availableCategory.id}>
+                    {availableCategory.name}
                   </option>
                 ))}
               </select>
@@ -380,16 +385,19 @@ export default function QuestionWorkspace({
                   <select
                     className="m-2 border border-line p-2"
                     value={band}
-                    onChange={(e) =>
+                    onChange={(event) =>
                       updateList({
-                        band: e.target.value === 'all' ? 'all' : Number(e.target.value),
+                        band:
+                          event.target.value === 'all'
+                            ? 'all'
+                            : Number(event.target.value),
                       })
                     }
                   >
                     <option value="all">すべて</option>
-                    {['初級帯', '中級帯', '上級帯'].map((s, i) => (
-                      <option key={s} value={i}>
-                        {s}
+                    {['初級帯', '中級帯', '上級帯'].map((label, i) => (
+                      <option key={label} value={i}>
+                        {label}
                       </option>
                     ))}
                   </select>
@@ -399,17 +407,19 @@ export default function QuestionWorkspace({
                   <select
                     className="m-2 border border-line p-2"
                     value={players}
-                    onChange={(e) =>
+                    onChange={(event) =>
                       updateList({
                         players:
-                          e.target.value === 'all' ? 'all' : Number(e.target.value),
+                          event.target.value === 'all'
+                            ? 'all'
+                            : Number(event.target.value),
                       })
                     }
                   >
                     <option value="all">すべて</option>
-                    {[2, 3, 4].map((n) => (
-                      <option key={n} value={n}>
-                        {n}人
+                    {[2, 3, 4].map((playerCount) => (
+                      <option key={playerCount} value={playerCount}>
+                        {playerCount}人
                       </option>
                     ))}
                   </select>
@@ -449,7 +459,7 @@ export default function QuestionWorkspace({
               {exportOpen && (
                 <QuestionExport
                   instanceId={instanceId}
-                  ids={selection.rows.map((r) => r.id)}
+                  ids={selection.rows.map((selectedRow) => selectedRow.id)}
                   onClose={() => setExportOpen(false)}
                 />
               )}
@@ -470,9 +480,13 @@ export default function QuestionWorkspace({
                   checked={allSelected}
                   mixed={
                     !allSelected &&
-                    visible.some((r) => selection.rows.some((s) => s.id === r.id))
+                    visible.some((submission) =>
+                      selection.rows.some(
+                        (selectedRow) => selectedRow.id === submission.id,
+                      ),
+                    )
                   }
-                  onChange={(e) => selection.select(visible, e.target.checked)}
+                  onChange={(event) => selection.select(visible, event.target.checked)}
                 />
               ) : undefined
             }
@@ -506,8 +520,10 @@ export default function QuestionWorkspace({
                   <td>
                     <Checkbox
                       aria-label={`${row.input.text || '未入力'}を選択`}
-                      checked={selection.rows.some((r) => r.id === row.id)}
-                      onChange={(e) => selection.select([row], e.target.checked)}
+                      checked={selection.rows.some(
+                        (selectedRow) => selectedRow.id === row.id,
+                      )}
+                      onChange={(event) => selection.select([row], event.target.checked)}
                     />
                   </td>
                 )}
@@ -533,8 +549,9 @@ export default function QuestionWorkspace({
                       : ''}
                 </td>
                 <td>
-                  {data?.categories.find((c) => c.id === row.input.categoryId)?.name ??
-                    '未設定'}
+                  {data?.categories.find(
+                    (availableCategory) => availableCategory.id === row.input.categoryId,
+                  )?.name ?? '未設定'}
                 </td>
                 <td>
                   {row.provenance?.author ??
@@ -676,8 +693,10 @@ export default function QuestionWorkspace({
                         history: NonNullable<typeof history>;
                       }>(instanceId, { operation: 'history', id: selected.id });
                       setHistory(result.history);
-                    } catch (e) {
-                      model.setError(e instanceof Error ? e.message : '履歴取得失敗');
+                    } catch (error) {
+                      model.setError(
+                        error instanceof Error ? error.message : '履歴取得失敗',
+                      );
                     }
                   }}
                 >
@@ -694,7 +713,7 @@ export default function QuestionWorkspace({
                       label="審査・停止の理由（差戻し・却下・停止／解除は必須）"
                       placeholder="例：正答の根拠を補足してください"
                       value={reason}
-                      onChange={(e) => setReason(e.target.value)}
+                      onChange={(event) => setReason(event.target.value)}
                     />
                     <div className="flex flex-wrap gap-3">
                       {selected.status === 'pending' &&

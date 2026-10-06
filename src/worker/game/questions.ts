@@ -43,7 +43,9 @@ export function orderQuestions(
   const random = () => crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
   while (remaining.length) {
     const levels = [0, 1, 2].filter(
-      (level) => weights[level] > 0 && remaining.some((q) => q.difficulty === level),
+      (level) =>
+        weights[level] > 0 &&
+        remaining.some((candidateQuestion) => candidateQuestion.difficulty === level),
     );
     if (!levels.length) break;
     let draw = random() * levels.reduce((sum, level) => sum + weights[level], 0);
@@ -54,11 +56,13 @@ export function orderQuestions(
       }) ?? levels[levels.length - 1];
     const categories = [
       ...new Set(
-        remaining.filter((q) => q.difficulty === difficulty).map((q) => q.categoryId),
+        remaining
+          .filter((candidateQuestion) => candidateQuestion.difficulty === difficulty)
+          .map((candidateQuestion) => candidateQuestion.categoryId),
       ),
     ];
     const eligibleCategories = categories.filter(
-      (c) => (categoryWeights[c ?? ''] ?? 1) > 0,
+      (categoryId) => (categoryWeights[categoryId ?? ''] ?? 1) > 0,
     );
     if (!eligibleCategories.length) {
       for (let i = remaining.length - 1; i >= 0; i--)
@@ -67,14 +71,19 @@ export function orderQuestions(
     }
     let categoryDraw =
       random() *
-      eligibleCategories.reduce((sum, c) => sum + (categoryWeights[c ?? ''] ?? 1), 0);
+      eligibleCategories.reduce(
+        (sum, categoryId) => sum + (categoryWeights[categoryId ?? ''] ?? 1),
+        0,
+      );
     const category =
-      eligibleCategories.find((c) => {
-        categoryDraw -= categoryWeights[c ?? ''] ?? 1;
+      eligibleCategories.find((categoryId) => {
+        categoryDraw -= categoryWeights[categoryId ?? ''] ?? 1;
         return categoryDraw < 0;
       }) ?? eligibleCategories[eligibleCategories.length - 1];
     const candidates = remaining.filter(
-      (q) => q.difficulty === difficulty && q.categoryId === category,
+      (candidateQuestion) =>
+        candidateQuestion.difficulty === difficulty &&
+        candidateQuestion.categoryId === category,
     );
     const question = candidates[Math.floor(random() * candidates.length)];
     ordered.push(question);
@@ -88,8 +97,8 @@ export function readingChoices(question: Question, prefix: string) {
   const correct = [
     ...new Set(
       answerReadings(question)
-        .filter((r) => r.startsWith(prefix))
-        .map((r) => graphemes(r)[position])
+        .filter((reading) => reading.startsWith(prefix))
+        .map((reading) => graphemes(reading)[position])
         .filter(Boolean),
     ),
   ];
@@ -100,7 +109,7 @@ export function readingChoices(question: Question, prefix: string) {
     .filter(Boolean);
   const candidates = [
     ...new Set([...traps, ...(question.distractors ?? []), ...dummyCharacters]),
-  ].filter((c) => !correct.includes(c));
+  ].filter((character) => !correct.includes(character));
   const sample = [...correct];
   while (sample.length < 4) {
     const index = Math.floor(

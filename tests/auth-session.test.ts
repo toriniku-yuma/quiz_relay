@@ -9,7 +9,7 @@ import { publicPlayEntry } from '../src/client/features/auth/publicEntry';
 import { useAuth } from '../src/client/features/auth/useAuth';
 import { withdrawalReceiptKey } from '../src/client/features/profile/withdrawalReceipt';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
   effects: [] as (() => (() => void) | undefined)[],
@@ -20,20 +20,20 @@ const h = vi.hoisted(() => ({
 vi.mock('react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react')>()),
   useState: (value: unknown) => {
-    const index = h.cursor++;
-    if (index >= h.slots.length) h.slots[index] = value;
+    const index = mocks.cursor++;
+    if (index >= mocks.slots.length) mocks.slots[index] = value;
     return [
-      h.slots[index],
+      mocks.slots[index],
       (next: unknown) => {
-        h.slots[index] = next;
+        mocks.slots[index] = next;
       },
     ];
   },
-  useEffect: (callback: () => (() => void) | undefined) => h.effects.push(callback),
+  useEffect: (callback: () => (() => void) | undefined) => mocks.effects.push(callback),
 }));
 vi.mock('../src/client/features/auth/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/client/features/auth/client')>()),
-  setupAuth: async () => h.client,
+  setupAuth: async () => mocks.client,
 }));
 
 const subject = '00000000-0000-4000-8000-000000000001';
@@ -58,14 +58,14 @@ const user: User = {
   created_at: '2026-01-01T00:00:00Z',
 };
 function render() {
-  h.cursor = 0;
-  h.effects = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
   // biome-ignore lint/correctness/useHookAtTopLevel: 既存の状態保持ハーネスでSDK通知後の再描画を検証する。
   return useAuth();
 }
 async function mount() {
   render();
-  h.cleanup = h.effects[0]() ?? undefined;
+  mocks.cleanup = mocks.effects[0]() ?? undefined;
   await vi.waitFor(() => expect(render().ready).toBe(true));
 }
 function configure(expired = false) {
@@ -85,7 +85,7 @@ function configure(expired = false) {
       }),
     ],
   ]);
-  h.client = createClient('https://review-auth.invalid', 'dummy-public-key', {
+  mocks.client = createClient('https://review-auth.invalid', 'dummy-public-key', {
     auth: {
       storageKey: 'auth-session-review',
       storage: {
@@ -100,9 +100,9 @@ function configure(expired = false) {
       autoRefreshToken: false,
       detectSessionInUrl: false,
     },
-    global: { fetch: h.request },
+    global: { fetch: mocks.request },
   });
-  return h.client;
+  return mocks.client;
 }
 async function expire(client: SupabaseClient) {
   vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 7200000);
@@ -118,9 +118,9 @@ function expectLogin() {
 }
 
 beforeEach(() => {
-  h.slots = [];
-  h.cleanup = undefined;
-  h.request.mockReset().mockImplementation(async (input: RequestInfo | URL) => {
+  mocks.slots = [];
+  mocks.cleanup = undefined;
+  mocks.request.mockReset().mockImplementation(async (input: RequestInfo | URL) => {
     const url = new URL(
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
     );
@@ -152,8 +152,8 @@ beforeEach(() => {
   vi.stubGlobal('PopStateEvent', Event);
 });
 afterEach(async () => {
-  h.cleanup?.();
-  await h.client?.auth.dispose();
+  mocks.cleanup?.();
+  await mocks.client?.auth.dispose();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -214,7 +214,7 @@ it('認証切れ後に古い本人確認が届いてもログイン状態を復�
       }),
   );
   render();
-  h.cleanup = h.effects[0]() ?? undefined;
+  mocks.cleanup = mocks.effects[0]() ?? undefined;
   await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
   await client.auth.signOut();
   complete({ data: { user }, error: null });

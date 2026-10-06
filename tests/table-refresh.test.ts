@@ -5,7 +5,7 @@ import { useModeration } from '../src/client/features/moderation/useModeration';
 import { useQuestionOperation } from '../src/client/features/questions/useQuestionOperation';
 import { useQuestions } from '../src/client/features/questions/useQuestions';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
   effects: [] as (() => unknown)[],
@@ -15,34 +15,34 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('react', () => ({
   useState: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = value;
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length) mocks.slots[i] = value;
     return [
-      h.slots[i],
+      mocks.slots[i],
       (next: unknown) => {
-        h.slots[i] = typeof next === 'function' ? next(h.slots[i]) : next;
+        mocks.slots[i] = typeof next === 'function' ? next(mocks.slots[i]) : next;
       },
     ];
   },
   useRef: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = { current: value };
-    return h.slots[i];
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length) mocks.slots[i] = { current: value };
+    return mocks.slots[i];
   },
   useCallback: (callback: unknown) => callback,
   useEffect: (callback: () => unknown) => {
-    h.effects.push(callback);
+    mocks.effects.push(callback);
   },
 }));
 vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
-    url: h.url,
+    url: mocks.url,
     auth: { user: { id: 'admin' } },
     organization: { data: { account: {}, instances: [] } },
   }),
 }));
 vi.mock('../src/client/features/organization/useOrganization', () => ({
-  organizationRequest: h.request,
+  organizationRequest: mocks.request,
   OrganizationRequestError: class extends Error {},
 }));
 vi.mock('../src/client/features/auth/client', () => ({
@@ -51,8 +51,8 @@ vi.mock('../src/client/features/auth/client', () => ({
   }),
 }));
 function draw<T>(fn: () => T) {
-  h.cursor = 0;
-  h.effects = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
   return fn();
 }
 function deferred() {
@@ -66,34 +66,34 @@ function deferred() {
 }
 afterEach(() => vi.unstubAllGlobals());
 beforeEach(() => {
-  h.slots = [];
-  h.request.mockReset();
-  h.fetch.mockReset();
-  h.url = new URL('https://quiz.example/users/?instance=one');
-  vi.stubGlobal('fetch', h.fetch);
+  mocks.slots = [];
+  mocks.request.mockReset();
+  mocks.fetch.mockReset();
+  mocks.url = new URL('https://quiz.example/users/?instance=one');
+  vi.stubGlobal('fetch', mocks.fetch);
 });
 it('ユーザー一覧はソート中も旧行・旧方向を保持し、遅れた応答を捨てる', async () => {
   const hook = () => draw(() => useModeration());
-  h.request.mockResolvedValueOnce({ users: ['old'] });
+  mocks.request.mockResolvedValueOnce({ users: ['old'] });
   await hook().refresh();
-  h.url.searchParams.set('sort', 'name');
-  h.url.searchParams.set('direction', 'asc');
+  mocks.url.searchParams.set('sort', 'name');
+  mocks.url.searchParams.set('direction', 'asc');
   const first = deferred();
-  h.request.mockReturnValueOnce(first.promise);
-  const a = hook().refresh();
+  mocks.request.mockReturnValueOnce(first.promise);
+  const firstRefresh = hook().refresh();
   expect(hook().data?.users).toEqual(['old']);
   expect(hook().displaySorting?.sort).toBe('reports');
-  h.url.searchParams.set('direction', 'desc');
+  mocks.url.searchParams.set('direction', 'desc');
   const second = deferred();
-  h.request.mockReturnValueOnce(second.promise);
-  const b = hook().refresh();
+  mocks.request.mockReturnValueOnce(second.promise);
+  const secondRefresh = hook().refresh();
   second.resolve({ users: ['new'] });
-  await b;
+  await secondRefresh;
   first.resolve({ users: ['late'] });
-  await a;
+  await firstRefresh;
   expect(hook().data?.users).toEqual(['new']);
   expect(hook().displaySorting?.direction).toBe('desc');
-  h.url.searchParams.set('actor', 'other');
+  mocks.url.searchParams.set('actor', 'other');
   expect(hook().data).toBeNull();
 });
 it('問題一覧はソート失敗でも表示を保持し、再試行で更新、検索変更では旧結果を隠す', async () => {
@@ -112,11 +112,11 @@ it('問題一覧はソート失敗でも表示を保持し、再試行で更新�
         direction: 'asc',
       }),
     );
-  h.fetch.mockResolvedValueOnce(Response.json({ submissions: ['old'] }));
+  mocks.fetch.mockResolvedValueOnce(Response.json({ submissions: ['old'] }));
   await hook().refresh();
   sort = 'text';
   const pending = deferred();
-  h.fetch.mockReturnValueOnce(pending.promise);
+  mocks.fetch.mockReturnValueOnce(pending.promise);
   const request = hook().refresh();
   expect(hook().retaining).toBe(true);
   expect(hook().data?.submissions).toEqual(['old']);
@@ -125,7 +125,7 @@ it('問題一覧はソート失敗でも表示を保持し、再試行で更新�
   await request;
   expect(hook().stale).toBe(false);
   expect(hook().loadFailed).toBe(true);
-  h.fetch.mockResolvedValueOnce(Response.json({ submissions: ['new'] }));
+  mocks.fetch.mockResolvedValueOnce(Response.json({ submissions: ['new'] }));
   await hook().refresh();
   expect(hook().data?.submissions).toEqual(['new']);
   expect(hook().displaySorting.sort).toBe('text');
@@ -136,15 +136,15 @@ it('問題一覧はソート失敗でも表示を保持し、再試行で更新�
 it('調査戦績はソート取得中も表を保持し、成功時にだけ行と方向を更新する', async () => {
   let actor = 'one';
   const hook = () => draw(() => useInvestigation('instance', actor));
-  h.request.mockResolvedValueOnce({ rows: ['old'] });
+  mocks.request.mockResolvedValueOnce({ rows: ['old'] });
   hook();
-  h.effects[0]();
+  mocks.effects[0]();
   await Promise.resolve();
   hook().sort({ sort: 'correct', direction: 'desc' });
   hook();
   const pending = deferred();
-  h.request.mockReturnValueOnce(pending.promise);
-  h.effects[0]();
+  mocks.request.mockReturnValueOnce(pending.promise);
+  mocks.effects[0]();
   expect(hook().data?.rows).toEqual(['old']);
   expect(hook().displaySorting.sort).toBe('finishedAt');
   pending.resolve({ rows: ['new'] });
@@ -159,9 +159,9 @@ it('選択は同じ一覧の再描画をまたぎ、条件を変えて元に戻�
   const hook = (scope: string) => draw(() => useTableSelection<{ id: string }>(scope));
   hook('a').select([{ id: '1' }], true);
   hook('a').select([{ id: '2' }], true);
-  expect(hook('a').rows.map((r) => r.id)).toEqual(['1', '2']);
+  expect(hook('a').rows.map((row) => row.id)).toEqual(['1', '2']);
   hook('a').select([{ id: '1' }], false);
-  expect(hook('a').rows.map((r) => r.id)).toEqual(['2']);
+  expect(hook('a').rows.map((row) => row.id)).toEqual(['2']);
   expect(hook('b').rows).toEqual([]);
   expect(hook('a').rows).toEqual([]);
 });
@@ -175,12 +175,12 @@ it('問題操作の通信結果が不明なら入力を固定して同じID・�
     requestId: 'same',
     changes: [{ id: 'one', revision: 1 }],
   };
-  h.fetch.mockRejectedValueOnce(new Error('offline'));
+  mocks.fetch.mockRejectedValueOnce(new Error('offline'));
   expect(await hook().submit(body)).toBe(false);
   expect(hook().uncertain).toBe(true);
-  h.fetch.mockResolvedValueOnce(new Response('{}'));
+  mocks.fetch.mockResolvedValueOnce(new Response('{}'));
   expect(await hook().submit({ operation: 'different' })).toBe(true);
-  expect(JSON.parse(h.fetch.mock.calls[1][1].body)).toEqual(body);
+  expect(JSON.parse(mocks.fetch.mock.calls[1][1].body)).toEqual(body);
   expect(hook().uncertain).toBe(false);
   expect(saved).toHaveBeenCalledOnce();
 });

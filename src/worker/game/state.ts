@@ -173,7 +173,7 @@ export function createState(
 
 export function snapshot(state: State): Snapshot {
   const completedQuestion = state.completedQuestions?.find(
-    (q) => q.id === state.question.id,
+    (candidateQuestion) => candidateQuestion.id === state.question.id,
   );
   return {
     ...(state.matchKind === 'room'
@@ -248,8 +248,10 @@ function judge(
 ) {
   const player = state.players.find(({ id }) => id === state.holder);
   state.questionParticipants ??= state.players
-    .filter((p) => !p.disqualified && p.role !== 'presenter')
-    .map((p) => p.id);
+    .filter(
+      (participant) => !participant.disqualified && participant.role !== 'presenter',
+    )
+    .map((participant) => participant.id);
   if (player && result !== 'unanswered' && state.answerStats)
     state.answerStats.push({
       actorId: player.id,
@@ -275,11 +277,16 @@ function judge(
       result === 'unanswered' ||
       answeringPlayers(state).every((player) => player.locked || player.disqualified) ||
       (state.matchKind === 'room' &&
-        answeringPlayers(state).filter((p) => !p.disqualified).length === 1))
+        answeringPlayers(state).filter((participant) => !participant.disqualified)
+          .length === 1))
   ) {
     const question = state.question;
     state.completedQuestions ??= [];
-    if (!state.completedQuestions.some((q) => q.id === question.id))
+    if (
+      !state.completedQuestions.some(
+        (candidateQuestion) => candidateQuestion.id === question.id,
+      )
+    )
       state.completedQuestions.push({
         ...(question.authorName ? { authorName: question.authorName } : {}),
         id: question.id,
@@ -322,7 +329,7 @@ export function advance(state: State, now: number, nextByPresenter = false) {
     state.phase === 'JUDGED' &&
     questionEnded(state) &&
     !nextByPresenter &&
-    state.players.some((p) => p.role === 'presenter' && p.connected)
+    state.players.some((player) => player.role === 'presenter' && player.connected)
   )
     return false;
 
@@ -574,7 +581,7 @@ export function updateConnections(state: State, connected: Set<string>, now: num
   updated = checkInvalid(state, now) || updated;
   if (isActive(state)) {
     const answerersConnected = answeringPlayers(state).filter(
-      (p) => !p.forfeited && connected.has(p.id),
+      (player) => !player.forfeited && connected.has(player.id),
     ).length;
     if (answerersConnected <= 1 && !state.reconnect) {
       state.reconnect = {
@@ -595,10 +602,10 @@ export function updateConnections(state: State, connected: Set<string>, now: num
 }
 
 export const answeringPlayers = (state: State) =>
-  state.players.filter((p) => p.role !== 'presenter');
+  state.players.filter((player) => player.role !== 'presenter');
 export function forfeitPlayer(state: State, actor: string, now: number) {
   if (!isActive(state)) return;
-  const player = state.players.find((p) => p.id === actor);
+  const player = state.players.find((candidatePlayer) => candidatePlayer.id === actor);
   if (!player || player.forfeited) return;
   player.forfeited = true;
   player.connected = false;
@@ -624,6 +631,6 @@ export function questionEnded(state: State) {
   return (
     state.judgment?.result === 'correct' ||
     state.judgment?.result === 'unanswered' ||
-    answeringPlayers(state).every((p) => p.locked || p.disqualified)
+    answeringPlayers(state).every((player) => player.locked || player.disqualified)
   );
 }

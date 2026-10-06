@@ -65,7 +65,7 @@ export default function SanctionEditor({
         <div className="grid gap-5">
           {batch && (
             <p>
-              選択中 {batch.length}人：{batch.map((u) => u.name).join('、')}
+              選択中 {batch.length}人：{batch.map((user) => user.name).join('、')}
             </p>
           )}
           <div className="grid gap-3">
@@ -111,8 +111,8 @@ export default function SanctionEditor({
           </div>
           <form
             className="grid gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               model.preview(true);
             }}
           >
@@ -127,7 +127,7 @@ export default function SanctionEditor({
                   required
                   value={model.kind}
                   disabled={model.revoke && !batch}
-                  onChange={(e) => model.setKind(e.target.value as SanctionKind)}
+                  onChange={(event) => model.setKind(event.target.value as SanctionKind)}
                 >
                   <option value="">選択してください</option>
                   {Object.entries(sanctionLabels)
@@ -137,9 +137,9 @@ export default function SanctionEditor({
                           model.before?.kind !== 'ban') ||
                         kind === 'ban',
                     )
-                    .map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
+                    .map(([kind, label]) => (
+                      <option key={kind} value={kind}>
+                        {label}
                       </option>
                     ))}
                 </select>
@@ -149,7 +149,7 @@ export default function SanctionEditor({
                   <Checkbox
                     checked={model.organizationWide}
                     disabled={!!model.before}
-                    onChange={(e) => model.setOrganizationWide(e.target.checked)}
+                    onChange={(event) => model.setOrganizationWide(event.target.checked)}
                   />{' '}
                   組織全体に適用
                 </label>
@@ -157,19 +157,22 @@ export default function SanctionEditor({
               {model.kind === 'partial' && !model.revoke && (
                 <fieldset className="grid gap-2">
                   <legend>制限対象</legend>
-                  {Object.entries(restrictionLabels).map(([k, v]) => (
-                    <label key={k}>
+                  {Object.entries(restrictionLabels).map(([restriction, label]) => (
+                    <label key={restriction}>
                       <Checkbox
-                        checked={model.restrictions.includes(k as Restriction)}
-                        onChange={(e) =>
+                        checked={model.restrictions.includes(restriction as Restriction)}
+                        onChange={(event) =>
                           model.setRestrictions(
-                            e.target.checked
-                              ? [...model.restrictions, k as Restriction]
-                              : model.restrictions.filter((r) => r !== k),
+                            event.target.checked
+                              ? [...model.restrictions, restriction as Restriction]
+                              : model.restrictions.filter(
+                                  (selectedRestriction) =>
+                                    selectedRestriction !== restriction,
+                                ),
                           )
                         }
                       />{' '}
-                      {v}
+                      {label}
                     </label>
                   ))}
                 </fieldset>
@@ -182,7 +185,7 @@ export default function SanctionEditor({
                       required
                       className="h-12 border border-line bg-paper p-3"
                       value={model.timing}
-                      onChange={(e) => model.setTiming(e.target.value)}
+                      onChange={(event) => model.setTiming(event.target.value)}
                     >
                       <option value="">選択してください</option>
                       <option value="duration">期間から指定</option>
@@ -199,7 +202,7 @@ export default function SanctionEditor({
                         min="1"
                         required
                         value={model.duration}
-                        onChange={(e) => model.setDuration(e.target.value)}
+                        onChange={(event) => model.setDuration(event.target.value)}
                       />
                       <label className="grid gap-2">
                         単位
@@ -207,7 +210,7 @@ export default function SanctionEditor({
                           required
                           className="h-12 border border-line bg-paper p-3"
                           value={model.unit}
-                          onChange={(e) => model.setUnit(e.target.value)}
+                          onChange={(event) => model.setUnit(event.target.value)}
                         >
                           <option value="">選択</option>
                           <option value="1">分</option>
@@ -224,7 +227,7 @@ export default function SanctionEditor({
                       type="datetime-local"
                       required
                       value={model.end}
-                      onChange={(e) => model.setEnd(e.target.value)}
+                      onChange={(event) => model.setEnd(event.target.value)}
                     />
                   )}
                   <p>1分〜30日以内で指定してください。</p>
@@ -237,7 +240,7 @@ export default function SanctionEditor({
                 required
                 maxLength={1000}
                 value={model.reason}
-                onChange={(e) => model.setReason(e.target.value)}
+                onChange={(event) => model.setReason(event.target.value)}
               />
             </fieldset>
             <p>

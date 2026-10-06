@@ -22,8 +22,10 @@ export default function PersonalSets() {
   const refresh = useCallback(async () => {
     try {
       setSets((await playRequest<{ sets: PersonalSet[] }>(API_PATHS.personalSets)).sets);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '読み込めませんでした。');
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : '読み込めませんでした。',
+      );
     }
   }, []);
   useEffect(() => {
@@ -52,12 +54,15 @@ export default function PersonalSets() {
         新しいセット
       </Button>
       <DataTable label="自分の問題セット" columns={['名前', '問題数', '操作']}>
-        {sets.map((s) => (
-          <tr key={s.id}>
-            <td>{s.name}</td>
-            <td>{s.questions.length}</td>
+        {sets.map((questionSet) => (
+          <tr key={questionSet.id}>
+            <td>{questionSet.name}</td>
+            <td>{questionSet.questions.length}</td>
             <td>
-              <Button disabled={locked} onClick={() => setCurrent(structuredClone(s))}>
+              <Button
+                disabled={locked}
+                onClick={() => setCurrent(structuredClone(questionSet))}
+              >
                 編集・再利用
               </Button>
               <Button
@@ -66,7 +71,13 @@ export default function PersonalSets() {
                   const link = document.createElement('a');
                   const url = URL.createObjectURL(
                     new Blob(
-                      [JSON.stringify({ version: 1, questions: s.questions }, null, 2)],
+                      [
+                        JSON.stringify(
+                          { version: 1, questions: questionSet.questions },
+                          null,
+                          2,
+                        ),
+                      ],
                       { type: 'application/json' },
                     ),
                   );
@@ -82,8 +93,8 @@ export default function PersonalSets() {
                 disabled={locked}
                 onClick={() =>
                   void mutation.submit({
-                    id: s.id,
-                    revision: s.revision,
+                    id: questionSet.id,
+                    revision: questionSet.revision,
                     action: 'delete',
                   })
                 }
@@ -97,8 +108,8 @@ export default function PersonalSets() {
       {current && (
         <form
           className="mt-5 grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
+          onSubmit={(event) => {
+            event.preventDefault();
             try {
               const questions = validateBroughtSet(current.questions);
               setError('');
@@ -109,8 +120,12 @@ export default function PersonalSets() {
                 revision: current.revision,
                 action: 'save',
               });
-            } catch (e) {
-              setError(e instanceof Error ? e.message : '入力を確認してください。');
+            } catch (caughtError) {
+              setError(
+                caughtError instanceof Error
+                  ? caughtError.message
+                  : '入力を確認してください。',
+              );
             }
           }}
         >
@@ -122,7 +137,7 @@ export default function PersonalSets() {
             maxLength={80}
             value={current.name}
             disabled={locked}
-            onChange={(e) => setCurrent({ ...current, name: e.target.value })}
+            onChange={(event) => setCurrent({ ...current, name: event.target.value })}
           />
           <BroughtEditor
             questions={current.questions}

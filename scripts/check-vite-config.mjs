@@ -52,7 +52,7 @@ const config = new Function(
     reads++;
     throw new Error('ENOENT');
   },
-  (x) => x,
+  (value) => value,
   () => ({}),
   () => ({}),
   (options) => {

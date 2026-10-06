@@ -19,7 +19,9 @@ export function parseTransfer(source: string): TransferQuestion[] {
     if (!row || typeof row !== 'object') throw Error('問題の形式を確認してください。');
     const parsed = validateQuestionInput(row.input, false);
     if (parsed.issues.length)
-      throw Error(`問題${index + 1}：${parsed.issues.map((i) => i.message).join(' ')}`);
+      throw Error(
+        `問題${index + 1}：${parsed.issues.map((issue) => issue.message).join(' ')}`,
+      );
     if (
       typeof row.category !== 'string' ||
       row.category.length > 80 ||
@@ -41,9 +43,9 @@ export function parseTransfer(source: string): TransferQuestion[] {
 }
 export function exportTransfer(rows: TransferQuestion[]): string[] {
   const files: string[] = [],
-    encode = (q: TransferQuestion[]) =>
-      JSON.stringify({ version: 2, questions: q }, null, 2),
-    bytes = (s: string) => new TextEncoder().encode(s).length;
+    encode = (questions: TransferQuestion[]) =>
+      JSON.stringify({ version: 2, questions: questions }, null, 2),
+    bytes = (text: string) => new TextEncoder().encode(text).length;
   let part: TransferQuestion[] = [];
   for (const row of rows) {
     if (bytes(encode([row])) > 2000000) throw Error('1問が出力上限を超えています。');

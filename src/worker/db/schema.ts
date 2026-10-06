@@ -577,16 +577,19 @@ export const moderationSanctions = quizGame
       revokedAt: timestamp('revoked_at', { withTimezone: true, mode: 'string' }),
       revision: integer().notNull().default(1),
     },
-    (t) => [
+    (table) => [
       organizationAccess(),
-      index().on(t.actorId, t.instanceId),
-      check('sanction_kind', sql`${t.kind} IN ('timeout','ban','partial')`),
-      check('sanction_scope', sql`${t.instanceId} IS NOT NULL OR ${t.kind} = 'ban'`),
+      index().on(table.actorId, table.instanceId),
+      check('sanction_kind', sql`${table.kind} IN ('timeout','ban','partial')`),
+      check(
+        'sanction_scope',
+        sql`${table.instanceId} IS NOT NULL OR ${table.kind} = 'ban'`,
+      ),
       check(
         'sanction_expiry',
-        sql`(${t.kind} = 'timeout') = (${t.expiresAt} IS NOT NULL)`,
+        sql`(${table.kind} = 'timeout') = (${table.expiresAt} IS NOT NULL)`,
       ),
-      check('sanction_revision', sql`${t.revision} > 0`),
+      check('sanction_revision', sql`${table.revision} > 0`),
     ],
   )
   .enableRLS();
@@ -611,10 +614,13 @@ export const moderationEvents = quizGame
         .defaultNow(),
       readAt: timestamp('read_at', { withTimezone: true, mode: 'string' }),
     },
-    (t) => [
+    (table) => [
       organizationAccess(),
-      index().on(t.actorId, t.createdAt),
-      check('moderation_action', sql`${t.action} IN ('add','change','revoke','inspect')`),
+      index().on(table.actorId, table.createdAt),
+      check(
+        'moderation_action',
+        sql`${table.action} IN ('add','change','revoke','inspect')`,
+      ),
     ],
   )
   .enableRLS();
@@ -627,15 +633,15 @@ export const organizations = quizGame
       name: text().notNull(),
       identityNamespace: text('identity_namespace').notNull().unique(),
     },
-    (t) => [
-      check('one_organization', sql`${t.singleton} = true`),
+    (table) => [
+      check('one_organization', sql`${table.singleton} = true`),
       check(
         'organization_name_length',
-        sql`char_length(btrim(${t.name})) BETWEEN 1 AND 80`,
+        sql`char_length(btrim(${table.name})) BETWEEN 1 AND 80`,
       ),
       check(
         'organization_namespace_length',
-        sql`char_length(btrim(${t.identityNamespace})) BETWEEN 1 AND 256`,
+        sql`char_length(btrim(${table.identityNamespace})) BETWEEN 1 AND 256`,
       ),
       organizationAccess(),
     ],
@@ -655,15 +661,18 @@ export const organizationAccounts = quizGame
       profileRevision: integer('profile_revision').notNull().default(0),
       withdrawnAt: timestamp('withdrawn_at', { withTimezone: true, mode: 'string' }),
     },
-    (t) => [
-      unique().on(t.organizationId, t.subject),
-      unique('organization_display_name_unique').on(t.organizationId, t.displayName),
-      check('profile_revision_valid', sql`${t.profileRevision} >= 0`),
+    (table) => [
+      unique().on(table.organizationId, table.subject),
+      unique('organization_display_name_unique').on(
+        table.organizationId,
+        table.displayName,
+      ),
+      check('profile_revision_valid', sql`${table.profileRevision} >= 0`),
       check(
         'account_subject_length',
-        sql`char_length(btrim(${t.subject})) BETWEEN 1 AND 256`,
+        sql`char_length(btrim(${table.subject})) BETWEEN 1 AND 256`,
       ),
-      check('account_actor_hash', sql`${t.actorId} ~ '^[0-9a-f]{64}$'`),
+      check('account_actor_hash', sql`${table.actorId} ~ '^[0-9a-f]{64}$'`),
       organizationAccess(),
     ],
   )
@@ -722,14 +731,20 @@ export const instances = quizGame
         .default(defaultCasualSettings),
       roomInventoryComplete: boolean('room_inventory_complete').notNull().default(false),
     },
-    (t) => [
-      check('instance_name_length', sql`char_length(btrim(${t.name})) BETWEEN 1 AND 80`),
+    (table) => [
+      check(
+        'instance_name_length',
+        sql`char_length(btrim(${table.name})) BETWEEN 1 AND 80`,
+      ),
       check(
         'instance_owner_length',
-        sql`char_length(btrim(${t.owner})) BETWEEN 1 AND 256`,
+        sql`char_length(btrim(${table.owner})) BETWEEN 1 AND 256`,
       ),
-      index().on(t.organizationId),
-      check('instance_state', sql`${t.state} IN ('preparing', 'published', 'archived')`),
+      index().on(table.organizationId),
+      check(
+        'instance_state',
+        sql`${table.state} IN ('preparing', 'published', 'archived')`,
+      ),
       organizationAccess(),
     ],
   )
@@ -745,9 +760,9 @@ export const accountInstanceSelections = quizGame
         .notNull()
         .references(() => instances.id, { onDelete: 'cascade' }),
     },
-    (t) => [
-      primaryKey({ columns: [t.actorId, t.instanceId] }),
-      index().on(t.instanceId),
+    (table) => [
+      primaryKey({ columns: [table.actorId, table.instanceId] }),
+      index().on(table.instanceId),
       organizationAccess(),
     ],
   )
@@ -768,7 +783,7 @@ export const instanceRooms = quizGame
         .notNull()
         .default(sql`'epoch'::timestamptz`),
     },
-    (t) => [index().on(t.reviewAttemptedAt, t.roomId), organizationAccess()],
+    (table) => [index().on(table.reviewAttemptedAt, table.roomId), organizationAccess()],
   )
   .enableRLS();
 
@@ -822,12 +837,12 @@ export const instanceGrants = quizGame
         .references(() => organizationAccounts.actorId),
       permission: text().$type<InstancePermission>().notNull(),
     },
-    (t) => [
-      primaryKey({ columns: [t.instanceId, t.actorId, t.permission] }),
-      index().on(t.actorId),
+    (table) => [
+      primaryKey({ columns: [table.instanceId, table.actorId, table.permission] }),
+      index().on(table.actorId),
       check(
         'instance_permission',
-        sql`${t.permission} IN ('questions', 'authors', 'users')`,
+        sql`${table.permission} IN ('questions', 'authors', 'users')`,
       ),
       organizationAccess(),
     ],
@@ -848,13 +863,13 @@ export const organizationEvents = quizGame
         .notNull(),
       details: jsonb().$type<Record<string, unknown>>().notNull(),
     },
-    (t) => [
-      check('organization_event_actor_hash', sql`${t.actorId} ~ '^[0-9a-f]{64}$'`),
+    (table) => [
+      check('organization_event_actor_hash', sql`${table.actorId} ~ '^[0-9a-f]{64}$'`),
       check(
         'organization_event_action',
-        sql`${t.action} IN ('setup', 'add', 'publish', 'rename', 'grants')`,
+        sql`${table.action} IN ('setup', 'add', 'publish', 'rename', 'grants')`,
       ),
-      index().on(t.occurredAt),
+      index().on(table.occurredAt),
       organizationAccess(),
     ],
   )
@@ -878,9 +893,9 @@ export const questionSettings = quizGame
       revision: integer().notNull().default(1),
       config: jsonb().$type<QuestionSettings>().notNull(),
     },
-    (t) => [
+    (table) => [
       questionOrganizationAccess(),
-      check('question_settings_revision', sql`${t.revision} > 0`),
+      check('question_settings_revision', sql`${table.revision} > 0`),
     ],
   )
   .enableRLS();
@@ -897,10 +912,10 @@ export const questionCategories = quizGame
       active: boolean().notNull().default(true),
       revision: integer().notNull().default(1),
     },
-    (t) => [
+    (table) => [
       questionOrganizationAccess(),
-      unique().on(t.instanceId, t.name),
-      unique().on(t.instanceId, t.id),
+      unique().on(table.instanceId, table.name),
+      unique().on(table.instanceId, table.id),
     ],
   )
   .enableRLS();
@@ -934,14 +949,14 @@ export const questionSubmissions = quizGame
         .notNull()
         .defaultNow(),
     },
-    (t) => [
+    (table) => [
       questionOrganizationAccess(),
-      index().on(t.instanceId, t.authorId),
-      index().on(t.instanceId, t.status),
-      check('question_submission_revision', sql`${t.revision} > 0`),
+      index().on(table.instanceId, table.authorId),
+      index().on(table.instanceId, table.status),
+      check('question_submission_revision', sql`${table.revision} > 0`),
       check(
         'question_submission_status',
-        sql`${t.status} IN ('draft','pending','returned','approved','rejected','ended')`,
+        sql`${table.status} IN ('draft','pending','returned','approved','rejected','ended')`,
       ),
     ],
   )
@@ -967,7 +982,10 @@ export const questionSubmissionEvents = quizGame
         .notNull()
         .defaultNow(),
     },
-    (t) => [questionOrganizationAccess(), index().on(t.submissionId, t.revision)],
+    (table) => [
+      questionOrganizationAccess(),
+      index().on(table.submissionId, table.revision),
+    ],
   )
   .enableRLS();
 
@@ -986,12 +1004,12 @@ export const questionAuthors = quizGame
       retryAt: timestamp('retry_at', { withTimezone: true, mode: 'string' }),
       revision: integer().notNull().default(1),
     },
-    (t) => [
+    (table) => [
       questionOrganizationAccess(),
-      primaryKey({ columns: [t.instanceId, t.actorId] }),
+      primaryKey({ columns: [table.instanceId, table.actorId] }),
       check(
         'question_author_status',
-        sql`${t.status} IN ('pending','qualified','rejected','revoked')`,
+        sql`${table.status} IN ('pending','qualified','rejected','revoked')`,
       ),
     ],
   )
@@ -1015,7 +1033,10 @@ export const questionNotifications = quizGame
         .notNull()
         .defaultNow(),
     },
-    (t) => [questionOrganizationAccess(), index().on(t.instanceId, t.actorId)],
+    (table) => [
+      questionOrganizationAccess(),
+      index().on(table.instanceId, table.actorId),
+    ],
   )
   .enableRLS();
 
@@ -1030,7 +1051,10 @@ export const questionTags = quizGame
       name: text().notNull(),
       aliases: jsonb().$type<string[]>().notNull().default([]),
     },
-    (t) => [questionOrganizationAccess(), primaryKey({ columns: [t.instanceId, t.key] })],
+    (table) => [
+      questionOrganizationAccess(),
+      primaryKey({ columns: [table.instanceId, table.key] }),
+    ],
   )
   .enableRLS();
 
@@ -1048,9 +1072,9 @@ export const questionImports = quizGame
       hash: text().notNull(),
       ids: jsonb().$type<string[]>().notNull(),
     },
-    (t) => [
+    (table) => [
       questionOrganizationAccess(),
-      primaryKey({ columns: [t.instanceId, t.actorId, t.requestId] }),
+      primaryKey({ columns: [table.instanceId, table.actorId, table.requestId] }),
     ],
   )
   .enableRLS();
@@ -1073,10 +1097,12 @@ export const questionReviewCases = quizGame
         .defaultNow(),
       resolvedAt: timestamp('resolved_at', { withTimezone: true, mode: 'string' }),
     },
-    (t) => [
-      primaryKey({ columns: [t.instanceId, t.questionId, t.kind, t.round] }),
+    (table) => [
+      primaryKey({
+        columns: [table.instanceId, table.questionId, table.kind, table.round],
+      }),
       questionOrganizationAccess(),
-      check('review_case_kind', sql`${t.kind} IN ('defect','category')`),
+      check('review_case_kind', sql`${table.kind} IN ('defect','category')`),
     ],
   )
   .enableRLS();
@@ -1099,10 +1125,16 @@ export const questionReports = quizGame
         .notNull()
         .defaultNow(),
     },
-    (t) => [
-      unique().on(t.instanceId, t.questionId, t.kind, t.round, t.actorId),
+    (table) => [
+      unique().on(
+        table.instanceId,
+        table.questionId,
+        table.kind,
+        table.round,
+        table.actorId,
+      ),
       questionOrganizationAccess(),
-      check('question_report_kind', sql`${t.kind} IN ('defect','category')`),
+      check('question_report_kind', sql`${table.kind} IN ('defect','category')`),
     ],
   )
   .enableRLS();
@@ -1139,10 +1171,10 @@ export const questionDifficulty = quizGame
         .default([]),
       reason: text().notNull().default('自己申告'),
     },
-    (t) => [
-      primaryKey({ columns: [t.instanceId, t.seriesId] }),
+    (table) => [
+      primaryKey({ columns: [table.instanceId, table.seriesId] }),
       questionOrganizationAccess(),
-      check('question_difficulty_range', sql`${t.current} BETWEEN 0 AND 2`),
+      check('question_difficulty_range', sql`${table.current} BETWEEN 0 AND 2`),
     ],
   )
   .enableRLS();
@@ -1171,17 +1203,17 @@ export const userReports = quizGame
       operatorId: text('operator_id'),
       resolution: text(),
     },
-    (t) => [
+    (table) => [
       organizationAccess(),
-      index().on(t.instanceId, t.actorId, t.resolvedAt),
-      check('user_report_other', sql`${t.actorId} <> ${t.reporterId}`),
+      index().on(table.instanceId, table.actorId, table.resolvedAt),
+      check('user_report_other', sql`${table.actorId} <> ${table.reporterId}`),
       check(
         'user_report_resolution',
-        sql`(${t.resolvedAt} IS NULL AND ${t.operatorId} IS NULL AND ${t.resolution} IS NULL) OR (${t.resolvedAt} IS NOT NULL AND ${t.operatorId} IS NOT NULL AND ${t.resolution} IS NOT NULL AND char_length(btrim(${t.resolution})) BETWEEN 1 AND 1000)`,
+        sql`(${table.resolvedAt} IS NULL AND ${table.operatorId} IS NULL AND ${table.resolution} IS NULL) OR (${table.resolvedAt} IS NOT NULL AND ${table.operatorId} IS NOT NULL AND ${table.resolution} IS NOT NULL AND char_length(btrim(${table.resolution})) BETWEEN 1 AND 1000)`,
       ),
       check(
         'user_report_reason',
-        sql`char_length(btrim(${t.reason})) BETWEEN 1 AND 1000`,
+        sql`char_length(btrim(${table.reason})) BETWEEN 1 AND 1000`,
       ),
     ],
   )
@@ -1211,20 +1243,20 @@ export const sanctionAppeals = quizGame
       decision: text().$type<'revoke' | 'maintain'>(),
       readAt: timestamp('read_at', { withTimezone: true, mode: 'string' }),
     },
-    (t) => [
+    (table) => [
       organizationAccess(),
-      index().on(t.actorId, t.resolvedAt),
-      check('appeal_reason', sql`char_length(btrim(${t.reason})) BETWEEN 1 AND 1000`),
-      check('appeal_revision', sql`${t.sanctionRevision} > 0`),
+      index().on(table.actorId, table.resolvedAt),
+      check('appeal_reason', sql`char_length(btrim(${table.reason})) BETWEEN 1 AND 1000`),
+      check('appeal_revision', sql`${table.sanctionRevision} > 0`),
       check(
         'appeal_decision',
-        sql`${t.decision} IS NULL OR ${t.decision} IN ('maintain','revoke')`,
+        sql`${table.decision} IS NULL OR ${table.decision} IN ('maintain','revoke')`,
       ),
       check(
         'appeal_resolution',
-        sql`(${t.resolvedAt} IS NULL AND ${t.operatorId} IS NULL AND ${t.resolution} IS NULL AND ${t.decision} IS NULL) OR (${t.resolvedAt} IS NOT NULL AND ${t.operatorId} IS NOT NULL AND ${t.decision} IS NOT NULL AND ${t.resolution} IS NOT NULL AND char_length(btrim(${t.resolution})) BETWEEN 1 AND 1000)`,
+        sql`(${table.resolvedAt} IS NULL AND ${table.operatorId} IS NULL AND ${table.resolution} IS NULL AND ${table.decision} IS NULL) OR (${table.resolvedAt} IS NOT NULL AND ${table.operatorId} IS NOT NULL AND ${table.decision} IS NOT NULL AND ${table.resolution} IS NOT NULL AND char_length(btrim(${table.resolution})) BETWEEN 1 AND 1000)`,
       ),
-      uniqueIndex().on(t.sanctionId).where(sql`${t.resolvedAt} IS NULL`),
+      uniqueIndex().on(table.sanctionId).where(sql`${table.resolvedAt} IS NULL`),
     ],
   )
   .enableRLS();
@@ -1274,11 +1306,11 @@ export const administratorTransfers = quizGame
         mode: 'string',
       }).notNull(),
     },
-    (t) => [
+    (table) => [
       organizationAccess(),
-      index().on(t.targetId, t.state),
-      check('transfer_state', sql`${t.state} IN ('pending','accepted','cancelled')`),
-      check('transfer_target', sql`${t.senderId} <> ${t.targetId}`),
+      index().on(table.targetId, table.state),
+      check('transfer_state', sql`${table.state} IN ('pending','accepted','cancelled')`),
+      check('transfer_target', sql`${table.senderId} <> ${table.targetId}`),
     ],
   )
   .enableRLS();
@@ -1297,10 +1329,10 @@ export const guestSessions = quizGame
         mode: 'string',
       }).notNull(),
     },
-    (t) => [
+    (table) => [
       organizationAccess(),
-      index().on(t.expiresAt),
-      check('guest_actor_hash', sql`${t.actorId} ~ '^[0-9a-f]{64}$'`),
+      index().on(table.expiresAt),
+      check('guest_actor_hash', sql`${table.actorId} ~ '^[0-9a-f]{64}$'`),
     ],
   )
   .enableRLS();
@@ -1323,10 +1355,10 @@ export const personalQuestionSets = quizGame
         .notNull()
         .defaultNow(),
     },
-    (t) => [
+    (table) => [
       organizationAccess(),
-      index().on(t.organizationId, t.authorId),
-      check('personal_set_revision', sql`${t.revision} >= 1`),
+      index().on(table.organizationId, table.authorId),
+      check('personal_set_revision', sql`${table.revision} >= 1`),
     ],
   )
   .enableRLS();
@@ -1342,6 +1374,9 @@ export const roomDirectory = quizGame
       public: boolean().notNull(),
       closed: boolean().notNull().default(false),
     },
-    (t) => [organizationAccess(), index().on(t.instanceId, t.public, t.closed)],
+    (table) => [
+      organizationAccess(),
+      index().on(table.instanceId, table.public, table.closed),
+    ],
   )
   .enableRLS();

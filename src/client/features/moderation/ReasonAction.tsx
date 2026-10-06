@@ -44,8 +44,8 @@ export default function ReasonAction({
         <Modal title={title} busy={mutation.busy} onClose={() => setOpen(false)}>
           <form
             className="grid gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               void mutation.submit({ ...input, reason });
             }}
           >
@@ -57,7 +57,7 @@ export default function ReasonAction({
               maxLength={1000}
               value={reason}
               disabled={mutation.busy || mutation.uncertain}
-              onChange={(e) => setReason(e.target.value)}
+              onChange={(event) => setReason(event.target.value)}
             />
             {mutation.error && <p role="alert">{mutation.error}</p>}
             {mutation.uncertain && (

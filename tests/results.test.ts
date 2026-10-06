@@ -31,22 +31,30 @@ beforeEach(() => {
 
 it('承認済みレート：勝敗・引き分け・失格・未復帰・INVALIDと非ランク戦', () => {
   const { record } = resultFixture();
-  const [a, b] = record.players;
-  expect(ratingChange('ranked', record.result, a)).toBe(20);
-  expect(ratingChange('ranked', record.result, b)).toBe(-20);
+  const [firstPlayer, secondPlayer] = record.players;
+  expect(ratingChange('ranked', record.result, firstPlayer)).toBe(20);
+  expect(ratingChange('ranked', record.result, secondPlayer)).toBe(-20);
   const draw = { ...record.result, reason: 'exhausted' as const, winnerId: null };
-  expect(ratingChange('ranked', draw, b)).toBe(0);
-  expect(ratingChange('ranked', draw, { ...b, disqualified: true })).toBe(-20);
-  expect(ratingChange('ranked', draw, { ...b, connected: false })).toBe(-20);
+  expect(ratingChange('ranked', draw, secondPlayer)).toBe(0);
+  expect(ratingChange('ranked', draw, { ...secondPlayer, disqualified: true })).toBe(-20);
+  expect(ratingChange('ranked', draw, { ...secondPlayer, connected: false })).toBe(-20);
   for (const reason of ['connections', 'disqualifications'] as const) {
     const invalid = { ...draw, reason };
-    expect(ratingChange('ranked', invalid, b)).toBe(20);
-    expect(ratingChange('ranked', invalid, { ...b, connected: false })).toBe(-20);
-    expect(ratingChange('ranked', invalid, { ...b, disqualified: true })).toBe(-20);
+    expect(ratingChange('ranked', invalid, secondPlayer)).toBe(20);
+    expect(ratingChange('ranked', invalid, { ...secondPlayer, connected: false })).toBe(
+      -20,
+    );
+    expect(ratingChange('ranked', invalid, { ...secondPlayer, disqualified: true })).toBe(
+      -20,
+    );
   }
   for (const kind of ['casual', 'room', 'development'] as const)
     expect(
-      ratingChange(kind, record.result, { ...a, connected: false, disqualified: true }),
+      ratingChange(kind, record.result, {
+        ...firstPlayer,
+        connected: false,
+        disqualified: true,
+      }),
     ).toBe(0);
 });
 
@@ -58,7 +66,7 @@ it('終端時の接続・失格・レートを固定し、復帰と切断で変�
   state.reconnect = { deadline: 5000, remaining: 100 };
   updateConnections(state, new Set(['a']), 5000);
   const ended = structuredClone(state) as State;
-  expect(ended.completed?.players.map((p) => p.ratingDelta)).toEqual([20, -20]);
+  expect(ended.completed?.players.map((player) => player.ratingDelta)).toEqual([20, -20]);
   const saved = structuredClone(state.completed);
   updateConnections(state, new Set(['a', 'b']), 5001);
   advance(state, 5002);
@@ -83,7 +91,9 @@ it('全員切断で全員減少。一時切断から期限前に復帰したら�
   if (!deadline) throw new Error('NO_RECONNECT');
   const disconnected = structuredClone(state);
   updateConnections(disconnected, new Set(), deadline);
-  expect(disconnected.completed?.players.map((p) => p.ratingDelta)).toEqual([-20, -20]);
+  expect(disconnected.completed?.players.map((player) => player.ratingDelta)).toEqual([
+    -20, -20,
+  ]);
   updateConnections(state, new Set(['a', 'b']), deadline - 1);
   expect(state.reconnect).toBeNull();
   expect(
@@ -108,21 +118,22 @@ it.each(['ranked', 'casual', 'room'] as const)(
     state.players.push({ ...template, id: 'c' }, { ...template, id: 'd' });
     forfeitPlayer(state, 'b', 3000);
     expect(state.phase).toBe('REVEALING');
-    expect(state.players.find((p) => p.id === 'b')).toMatchObject({
+    expect(state.players.find((player) => player.id === 'b')).toMatchObject({
       forfeited: true,
       disqualified: true,
       connected: false,
       mistakes: 0,
     });
     updateConnections(state, new Set(['a', 'b', 'c', 'd']), 3001);
-    expect(state.players.find((p) => p.id === 'b')?.connected).toBe(false);
+    expect(state.players.find((player) => player.id === 'b')?.connected).toBe(false);
     forfeitPlayer(state, 'c', 3002);
     forfeitPlayer(state, 'd', 3003);
     expect((state as State).result?.reason).toBe(
       kind === 'room' ? 'last_remaining' : 'disqualifications',
     );
     expect(
-      (state as State).completed?.players.find((p) => p.id === 'b')?.ratingDelta,
+      (state as State).completed?.players.find((player) => player.id === 'b')
+        ?.ratingDelta,
     ).toBe(kind === 'ranked' ? -20 : 0);
     const original = structuredClone(state.completed);
     forfeitPlayer(state, 'b', 4000);

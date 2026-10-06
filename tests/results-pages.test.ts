@@ -7,7 +7,7 @@ import ResultsPanel from '../src/client/features/results/ResultsPanel';
 import MatchPage from '../src/client/pages/MatchPage';
 import type { ResultsOverview } from '../src/shared/results';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   result: '11111111-1111-4111-8111-111111111111',
   guest: false,
   ready: false,
@@ -20,7 +20,7 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('../src/client/app/Application', () => ({ default: () => null }));
 vi.mock('../src/client/features/auth/useAuth', () => ({
-  useAuth: () => ({ ready: h.ready }),
+  useAuth: () => ({ ready: mocks.ready }),
 }));
 vi.mock('../src/client/features/organization/OrganizationGateway', () => ({
   default: () => 'ランク参加フォーム',
@@ -30,7 +30,7 @@ vi.mock('../src/client/features/rooms/GuestInstances', () => ({
 }));
 vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
-    auth: { ready: h.ready, user: h.guest ? null : { id: 'self' } },
+    auth: { ready: mocks.ready, user: mocks.guest ? null : { id: 'self' } },
     organization: {
       data: {
         enabled: true,
@@ -39,14 +39,14 @@ vi.mock('../src/client/app/context', () => ({
       },
     },
     guest: { data: { id: 'guest-self' } },
-    url: new URL(h.url),
+    url: new URL(mocks.url),
   }),
 }));
 vi.mock('../src/client/features/results/useResults', () => ({
   useResults: (...args: unknown[]) => {
-    h.query(...args);
+    mocks.query(...args);
     return {
-      data: h.data,
+      data: mocks.data,
       error: '',
       busy: false,
       refresh: vi.fn(),
@@ -56,14 +56,14 @@ vi.mock('../src/client/features/results/useResults', () => ({
   },
 }));
 beforeEach(() => {
-  h.guest = false;
-  h.ready = false;
-  h.url = 'https://quiz.test/history/?instance=instance-a';
-  h.query.mockClear();
-  h.data.self = { rank: 104, rating: 980 };
-  h.data.history = [
+  mocks.guest = false;
+  mocks.ready = false;
+  mocks.url = 'https://quiz.test/history/?instance=instance-a';
+  mocks.query.mockClear();
+  mocks.data.self = { rank: 104, rating: 980 };
+  mocks.data.history = [
     {
-      resultId: h.result,
+      resultId: mocks.result,
       kind: 'casual',
       outcome: 'draw',
       reason: 'exhausted',
@@ -105,7 +105,7 @@ it('一覧外の本人順位をランキング表の上に表示し、順位な�
   expect(ranking.indexOf('あなたの順位：')).toBeLessThan(
     ranking.indexOf('aria-label="ランキング"'),
   );
-  h.data.self = { rank: null, rating: 1000 };
+  mocks.data.self = { rank: null, rating: 1000 };
   const empty = renderToStaticMarkup(
     createElement(ResultsPanel, { instanceId: 'instance-a', section: 'ranking' }),
   );
@@ -113,26 +113,26 @@ it('一覧外の本人順位をランキング表の上に表示し、順位な�
   expect(empty).toContain('レート：1000');
 });
 it('本人順位はランク画面の見出し直後へ置き、別画面・ゲストでは取得しない', () => {
-  h.ready = true;
-  h.url = 'https://quiz.test/game/?instance=instance-a';
+  mocks.ready = true;
+  mocks.url = 'https://quiz.test/game/?instance=instance-a';
   const matching = renderToStaticMarkup(createElement(MatchPage));
   expect(matching.indexOf('対戦する')).toBeLessThan(matching.indexOf('あなたの順位：'));
   expect(matching.indexOf('あなたの順位：')).toBeLessThan(
     matching.indexOf('ランク参加フォーム'),
   );
-  expect(h.query).toHaveBeenLastCalledWith('self', 'instance-a', { section: 'self' });
+  expect(mocks.query).toHaveBeenLastCalledWith('self', 'instance-a', { section: 'self' });
   for (const path of ['/casual/', '/rooms/', '/ranking/', '/game/?view=settings']) {
-    h.url = `https://quiz.test${path}${path.includes('?') ? '&' : '?'}instance=instance-a`;
-    h.query.mockClear();
+    mocks.url = `https://quiz.test${path}${path.includes('?') ? '&' : '?'}instance=instance-a`;
+    mocks.query.mockClear();
     expect(renderToStaticMarkup(createElement(MatchPage))).not.toContain(
       'あなたの順位：',
     );
-    expect(h.query).not.toHaveBeenCalled();
+    expect(mocks.query).not.toHaveBeenCalled();
   }
-  h.guest = true;
-  h.url = 'https://quiz.test/game/?instance=instance-a';
+  mocks.guest = true;
+  mocks.url = 'https://quiz.test/game/?instance=instance-a';
   expect(renderToStaticMarkup(createElement(MatchPage))).not.toContain('あなたの順位：');
-  expect(h.query).not.toHaveBeenCalled();
+  expect(mocks.query).not.toHaveBeenCalled();
 });
 it('履歴は7列のテーブルと個別詳細リンク、ランキングは別画面で表示する', () => {
   const history = renderToStaticMarkup(
@@ -149,7 +149,7 @@ it('履歴は7列のテーブルと個別詳細リンク、ランキングは別
     '詳細',
   ])
     expect(history).toContain(`>${column}</th>`);
-  expect(history).toContain(`/history/?instance=instance-a&amp;result=${h.result}`);
+  expect(history).toContain(`/history/?instance=instance-a&amp;result=${mocks.result}`);
   expect(history).not.toContain('問題本文');
   expect(history).not.toContain('aria-label="ランキング"');
   const ranking = renderToStaticMarkup(
@@ -165,9 +165,9 @@ it('履歴は7列のテーブルと個別詳細リンク、ランキングは別
   ).toBe(true);
 });
 it('詳細だけに振り返りを表示し、ゲスト参加者への個人通報を表示しない', () => {
-  h.guest = true;
+  mocks.guest = true;
   const detail = renderToStaticMarkup(
-    createElement(ResultsPanel, { instanceId: 'instance-a', resultId: h.result }),
+    createElement(ResultsPanel, { instanceId: 'instance-a', resultId: mocks.result }),
   );
   expect(detail).toContain('問題本文');
   expect(detail).toContain('ゲスト参加者');
@@ -178,7 +178,7 @@ it('起動カバーは回転アイコンのみで、取得後のフェード中�
   const loading = renderToStaticMarkup(createElement(App));
   expect(loading).toContain('animate-spin');
   expect(loading).not.toContain('ログイン状態を確認');
-  h.ready = true;
+  mocks.ready = true;
   expect(renderToStaticMarkup(createElement(App))).toContain(
     'pointer-events-none opacity-0',
   );

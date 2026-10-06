@@ -148,7 +148,11 @@ async function main() {
     );
     const overview = await readResults(reader.db, owner, 'a');
     assert.deepEqual(
-      overview.ranking.map((r) => [r.actorId, r.rating, r.rank]),
+      overview.ranking.map((rankingEntry) => [
+        rankingEntry.actorId,
+        rankingEntry.rating,
+        rankingEntry.rank,
+      ]),
       [
         ['a', 1020, 1],
         ['b', 980, 2],
@@ -159,7 +163,7 @@ async function main() {
     casual.kind = 'casual';
     casual.result.id = crypto.randomUUID();
     casual.matchId = crypto.randomUUID();
-    casual.players = casual.players.map((p) => ({ ...p, ratingDelta: 0 }));
+    casual.players = casual.players.map((player) => ({ ...player, ratingDelta: 0 }));
     await commitResult(writer.db, casual);
     assert.deepEqual(
       (await readResults(reader.db, owner, 'a')).ranking,
@@ -180,7 +184,9 @@ async function main() {
     tied.result.winnerId = 'c';
     await commitResult(writer.db, tied);
     assert.deepEqual(
-      (await readResults(reader.db, owner, 'a')).ranking.map((r) => r.rank),
+      (await readResults(reader.db, owner, 'a')).ranking.map(
+        (rankingEntry) => rankingEntry.rank,
+      ),
       [1, 1, 3, 3],
     );
 

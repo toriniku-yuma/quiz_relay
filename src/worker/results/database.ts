@@ -63,8 +63,10 @@ export async function commitResult(
           (await contentHash(existing.source))
       )
         throw new ResultConflict();
-      const byActor = (a: { actorId: string }, b: { actorId: string }) =>
-        a.actorId.localeCompare(b.actorId);
+      const byActor = (
+        leftPlayer: { actorId: string },
+        rightPlayer: { actorId: string },
+      ) => leftPlayer.actorId.localeCompare(rightPlayer.actorId);
       if (
         (await contentHash(existing.players.sort(byActor))) !==
         (await contentHash(

@@ -51,11 +51,14 @@ export function useInvestigation(
       ...sorting,
       sample: all ? 'all' : Number(sample),
     })
-      .then((r) => {
-        if (current) setData({ collection, value: r, sorting });
+      .then((response) => {
+        if (current) setData({ collection, value: response, sorting });
       })
-      .catch((e) => {
-        if (current) setError(e instanceof Error ? e.message : '取得できませんでした。');
+      .catch((caughtError) => {
+        if (current)
+          setError(
+            caughtError instanceof Error ? caughtError.message : '取得できませんでした。',
+          );
       })
       .finally(() => {
         if (current) setBusy(false);
@@ -90,7 +93,7 @@ export function useInvestigation(
     setSample,
     all,
     setAll,
-    retry: () => retry((v) => v + 1),
+    retry: () => retry((currentRevision) => currentRevision + 1),
     change: (value: { page?: number; pageSize?: number }) => {
       setPage(value.page ?? 1);
       if (value.pageSize) setPageSize(value.pageSize);

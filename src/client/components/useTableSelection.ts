@@ -7,8 +7,8 @@ export function useTableSelection<T extends { id: string }>(scope: string) {
     setState({
       scope,
       rows: checked
-        ? [...rows.filter((r) => !items.some((i) => i.id === r.id)), ...items]
-        : rows.filter((r) => !items.some((i) => i.id === r.id)),
+        ? [...rows.filter((row) => !items.some((item) => item.id === row.id)), ...items]
+        : rows.filter((row) => !items.some((item) => item.id === row.id)),
     });
   return { rows, select, clear: () => setState({ scope, rows: [] }) };
 }

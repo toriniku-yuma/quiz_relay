@@ -14,9 +14,13 @@ export function useGuest(enabled: boolean) {
       if (current !== revision.current) return;
       setData(result);
       setError('');
-    } catch (e) {
+    } catch (caughtError) {
       if (current === revision.current)
-        setError(e instanceof Error ? e.message : 'ゲスト情報を確認できませんでした。');
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : 'ゲスト情報を確認できませんでした。',
+        );
     }
   }, []);
   useEffect(() => {

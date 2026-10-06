@@ -59,7 +59,7 @@ export default function QuestionEditor({
             readings: readings.split('\n').filter(Boolean),
             tags: tagText
               .split(/[,、]/u)
-              .map((s) => s.trim())
+              .map((tag) => tag.trim())
               .filter(Boolean),
             traps: trapText
               .split('\n')
@@ -75,7 +75,9 @@ export default function QuestionEditor({
           false,
         );
         if (parsed.issues.length) {
-          setIssues(parsed.issues.map((i) => `${i.path}: ${i.message}`).join('\n'));
+          setIssues(
+            parsed.issues.map((issue) => `${issue.path}: ${issue.message}`).join('\n'),
+          );
           return;
         }
         setIssues('');
@@ -115,7 +117,7 @@ export default function QuestionEditor({
         正解の読み（1行1種類・1〜8種類・各20文字）
         <textarea
           value={readings}
-          onChange={(e) => setReadings(e.target.value)}
+          onChange={(event) => setReadings(event.target.value)}
           placeholder={'例：ふじさん\nふじやま'}
           rows={3}
           className="border border-line bg-input p-3 font-normal"
@@ -125,7 +127,7 @@ export default function QuestionEditor({
         ひっかけ（任意・最大16件、答え：読み）
         <textarea
           value={trapText}
-          onChange={(e) => setTrapText(e.target.value)}
+          onChange={(event) => setTrapText(event.target.value)}
           placeholder="例：北岳：きただけ"
           rows={2}
           className="border border-line bg-input p-3 font-normal"
@@ -136,7 +138,7 @@ export default function QuestionEditor({
         <select
           disabled={metadataPending}
           value={input.categoryId}
-          onChange={(e) => setInput({ ...input, categoryId: e.target.value })}
+          onChange={(event) => setInput({ ...input, categoryId: event.target.value })}
           className="border border-line bg-input p-3"
         >
           <option value="">
@@ -147,10 +149,10 @@ export default function QuestionEditor({
               : '選択してください'}
           </option>
           {categories
-            .filter((c) => c.active)
-            .map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
+            .filter((category) => category.active)
+            .map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
               </option>
             ))}
         </select>
@@ -159,7 +161,9 @@ export default function QuestionEditor({
         自己申告の難易度
         <select
           value={input.difficulty}
-          onChange={(e) => setInput({ ...input, difficulty: Number(e.target.value) })}
+          onChange={(event) =>
+            setInput({ ...input, difficulty: Number(event.target.value) })
+          }
           className="border border-line bg-input p-3"
         >
           {['初級', '中級', '上級'].map((name, index) => (
@@ -174,7 +178,7 @@ export default function QuestionEditor({
         label="補足タグ（任意・カンマ区切り・10個まで）"
         placeholder="例：地理, 日本"
         value={tagText}
-        onChange={(e) => setTagText(e.target.value)}
+        onChange={(event) => setTagText(event.target.value)}
       />
       {tags.length > 0 && (
         <p className="text-muted">

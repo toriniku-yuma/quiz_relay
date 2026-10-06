@@ -27,8 +27,11 @@ export default function DataTable({
         <thead>
           <tr>
             {selection && <th scope="col">{selection}</th>}
-            {columns.map((c) => {
-              const column = typeof c === 'string' ? { label: c, key: '' } : c;
+            {columns.map((columnDefinition) => {
+              const column =
+                typeof columnDefinition === 'string'
+                  ? { label: columnDefinition, key: '' }
+                  : columnDefinition;
               const selected = sorting?.sort === column.key;
               return (
                 <th

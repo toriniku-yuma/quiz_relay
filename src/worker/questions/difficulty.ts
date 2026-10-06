@@ -1,15 +1,27 @@
 export type DifficultySample = { trials: number; correct: number; participants: number };
 
 export function wilson(sample: DifficultySample) {
-  const { trials: n, correct: k } = sample;
-  if (!Number.isSafeInteger(n) || !Number.isSafeInteger(k) || n < 0 || k < 0 || k > n)
+  const { trials: trialCount, correct: correctCount } = sample;
+  if (
+    !Number.isSafeInteger(trialCount) ||
+    !Number.isSafeInteger(correctCount) ||
+    trialCount < 0 ||
+    correctCount < 0 ||
+    correctCount > trialCount
+  )
     throw new Error('INVALID_SAMPLE');
-  if (!n) return { lower: 0, upper: 1 };
-  const z = 1.959963984540054;
-  const p = k / n;
-  const denominator = 1 + (z * z) / n;
-  const center = (p + (z * z) / (2 * n)) / denominator;
-  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denominator;
+  if (!trialCount) return { lower: 0, upper: 1 };
+  const zScore = 1.959963984540054;
+  const correctRate = correctCount / trialCount;
+  const denominator = 1 + (zScore * zScore) / trialCount;
+  const center = (correctRate + (zScore * zScore) / (2 * trialCount)) / denominator;
+  const half =
+    (zScore *
+      Math.sqrt(
+        (correctRate * (1 - correctRate)) / trialCount +
+          (zScore * zScore) / (4 * trialCount * trialCount),
+      )) /
+    denominator;
   return { lower: Math.max(0, center - half), upper: Math.min(1, center + half) };
 }
 

@@ -71,7 +71,9 @@ it('ローカル一覧の重複・部屋の失敗を完了扱いにせず、複�
   const register = vi.fn();
   const fetcher = vi.fn();
   vi.stubGlobal('fetch', fetcher);
-  const ids = Array.from({ length: 1001 }, (_, n) => n.toString(16).padStart(64, '0'));
+  const ids = Array.from({ length: 1001 }, (_, index) =>
+    index.toString(16).padStart(64, '0'),
+  );
   const env = {
     LOCAL_ROOM_INVENTORY: JSON.stringify(ids),
     GAME_ROOM: {
@@ -91,9 +93,9 @@ it('ローカル一覧の重複・部屋の失敗を完了扱いにせず、複�
   await expect(reconcileRoomInventory(db, env)).rejects.toThrow('ROOM_UNAVAILABLE');
   expect(complete).not.toHaveBeenCalled();
   register.mockClear();
-  for (let n = 0; n < 10; n++) {
+  for (let index = 0; index < 10; index++) {
     expect(await reconcileRoomInventory(db, env)).toBe(false);
-    expect(register).toHaveBeenCalledTimes((n + 1) * 100);
+    expect(register).toHaveBeenCalledTimes((index + 1) * 100);
     expect(complete).not.toHaveBeenCalled();
   }
   expect(await reconcileRoomInventory(db, env)).toBe(true);

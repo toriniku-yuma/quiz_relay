@@ -12,16 +12,16 @@ import { accountWithdrawal, withdrawalStatus } from './withdrawal-handlers';
 
 const organization = new Hono<AuthEnv>();
 organization.use('/api/organization/*', sameOrigin);
-organization.use('/api/organization/*', (c, next) =>
+organization.use('/api/organization/*', (context, next) =>
   bodyLimit({
     maxSize:
-      c.req.path === API_PATHS.moderationMutate
+      context.req.path === API_PATHS.moderationMutate
         ? 1000000
-        : c.req.path.startsWith(API_PATHS.moderationUsers)
+        : context.req.path.startsWith(API_PATHS.moderationUsers)
           ? 8192
           : 2048,
     onError: organizationFailure,
-  })(c, next),
+  })(context, next),
 );
 organization.post(API_PATHS.withdrawalStatus, withdrawalStatus);
 organization.use('/api/organization/*', authenticate);

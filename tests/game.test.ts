@@ -267,12 +267,12 @@ it('DO G01/G02/G08/G09: concurrent sockets, durable ack, private panel and dupli
   const first = await stub.join({ name: 'A', players: 2, questionIndex: 0 }, undefined);
   const second = await stub.join({ name: 'B', players: 2, questionIndex: 0 }, undefined);
   if (!first.ok || !second.ok) throw new Error('join failed');
-  const a = await socketFor(stub, first.token);
-  const b = await socketFor(stub, second.token);
+  const firstSocket = await socketFor(stub, first.token);
+  const secondSocket = await socketFor(stub, second.token);
 
   try {
     const initial = await nextMessage(
-      a.socket,
+      firstSocket.socket,
       (message) => message.type === 'state' && message.snapshot.phase === 'REVEALING',
       'sync',
     );
@@ -287,25 +287,39 @@ it('DO G01/G02/G08/G09: concurrent sockets, durable ack, private panel and dupli
     const other = { ...buzz, commandId: crypto.randomUUID() };
 
     const replies = await Promise.all([
-      nextMessage(a.socket, (m) => m.type === 'ack', JSON.stringify(buzz)),
-      nextMessage(b.socket, (m) => m.type === 'ack', JSON.stringify(other)),
+      nextMessage(
+        firstSocket.socket,
+        (message) => message.type === 'ack',
+        JSON.stringify(buzz),
+      ),
+      nextMessage(
+        secondSocket.socket,
+        (message) => message.type === 'ack',
+        JSON.stringify(other),
+      ),
     ]);
-    expect(replies.filter((m) => m.type === 'ack' && m.reply.ok)).toHaveLength(1);
+    expect(
+      replies.filter((message) => message.type === 'ack' && message.reply.ok),
+    ).toHaveLength(1);
     const aWon = replies[0].type === 'ack' && replies[0].reply.ok;
-    const winner = aWon ? a : b;
-    const loser = aWon ? b : a;
+    const winner = aWon ? firstSocket : secondSocket;
+    const loser = aWon ? secondSocket : firstSocket;
     const original = aWon ? buzz : other;
     const replay = await nextMessage(
       winner.socket,
-      (m) => m.type === 'ack',
+      (message) => message.type === 'ack',
       JSON.stringify(original),
     );
     expect(replay).toEqual(aWon ? replies[0] : replies[1]);
 
-    const own = await nextMessage(winner.socket, (m) => m.type === 'state', 'sync');
+    const own = await nextMessage(
+      winner.socket,
+      (message) => message.type === 'state',
+      'sync',
+    );
     const publicMessage = await nextMessage(
       loser.socket,
-      (m) => m.type === 'state',
+      (message) => message.type === 'state',
       'sync',
     );
     expect(own.type === 'state' && own.panel?.choices).toHaveLength(4);
@@ -320,8 +334,8 @@ it('DO G01/G02/G08/G09: concurrent sockets, durable ack, private panel and dupli
       expect(saved?.state.panel).toEqual(own.type === 'state' ? own.panel : null);
     });
   } finally {
-    a.socket.close();
-    b.socket.close();
+    firstSocket.socket.close();
+    secondSocket.socket.close();
   }
 });
 

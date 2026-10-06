@@ -117,11 +117,11 @@ export class GameRoom extends DurableObject<Env> {
       definition.kind !== 'room' ||
       scope.mode !== 'room' ||
       scope.owner !== definition.competition.owner ||
-      new Set(actors.map((a) => a.id)).size !== actors.length ||
-      actors.filter((a) => a.role !== 'presenter').length !==
+      new Set(actors.map((actor) => actor.id)).size !== actors.length ||
+      actors.filter((actor) => actor.role !== 'presenter').length !==
         definition.playersPerMatch ||
-      actors.filter((a) => a.role === 'presenter').length > 1 ||
-      actors.some((a) => !tokens[a.id])
+      actors.filter((actor) => actor.role === 'presenter').length > 1 ||
+      actors.some((actor) => !tokens[actor.id])
     )
       throw new Error('INVALID_SETUP');
     const initialization = await contentHash([scope, definition, actors, tokens]);
@@ -136,7 +136,9 @@ export class GameRoom extends DurableObject<Env> {
       if (await this.ctx.storage.get('instanceDeleted'))
         throw new Error('INSTANCE_NOT_FOUND');
       const previous = await readStored<Room>(this.ctx.storage, 'room');
-      const sessions = Object.fromEntries(actors.map((a) => [tokens[a.id], a.id]));
+      const sessions = Object.fromEntries(
+        actors.map((actor) => [tokens[actor.id], actor.id]),
+      );
       if (previous) {
         if (previous.scope?.id !== scope.id || previous.initialization !== initialization)
           throw new Error('OPERATION_CONFLICT');
@@ -149,8 +151,8 @@ export class GameRoom extends DurableObject<Env> {
         true,
         definition,
       );
-      state.players = actors.map((a) => ({
-        ...a,
+      state.players = actors.map((actor) => ({
+        ...actor,
         correct: 0,
         mistakes: 0,
         locked: false,
@@ -167,7 +169,7 @@ export class GameRoom extends DurableObject<Env> {
           expires: Date.now() + waitingLifetime,
           sessionExpires: Date.now() + sessionLifetime,
           reservations: Object.fromEntries(
-            actors.map((a) => [a.id, Date.now() + reservationLifetime]),
+            actors.map((actor) => [actor.id, Date.now() + reservationLifetime]),
           ),
           closed: false,
         },
@@ -176,7 +178,9 @@ export class GameRoom extends DurableObject<Env> {
         if (await this.ctx.storage.get(`revoked:${tokens[actor.id]}`)) {
           delete room.sessions[tokens[actor.id]];
           delete room.lobby?.reservations[actor.id];
-          room.state.players = room.state.players.filter((p) => p.id !== actor.id);
+          room.state.players = room.state.players.filter(
+            (player) => player.id !== actor.id,
+          );
           if (room.lobby) room.lobby.closed = true;
         }
       }
@@ -509,7 +513,7 @@ export class GameRoom extends DurableObject<Env> {
       if (
         !revoke &&
         room.state.phase !== 'WAITING' &&
-        room.state.players.some((p) => p.id === actorId)
+        room.state.players.some((player) => player.id === actorId)
       ) {
         await this.save(room);
         return false;
@@ -1084,7 +1088,9 @@ export class GameRoom extends DurableObject<Env> {
         !(
           room.state.phase === 'JUDGED' &&
           questionEnded(room.state) &&
-          room.state.players.some((p) => p.role === 'presenter' && p.connected)
+          room.state.players.some(
+            (player) => player.role === 'presenter' && player.connected,
+          )
         )
       )
         deadlines.push(room.state.deadline);

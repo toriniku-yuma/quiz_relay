@@ -58,16 +58,17 @@ export default function UserCases({
           {model.busy && <p role="status">読み込んでいます。</p>}
           <form
             className="grid gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               void mutation.submit({
                 action: kind === 'reports' ? 'resolveReports' : 'decideAppeal',
                 instanceId,
                 actorId: user.actorId,
                 ids: selected,
                 id: selected[0],
-                sanctionRevision: model.data?.appeals?.find((a) => a.id === selected[0])
-                  ?.sanction.revision,
+                sanctionRevision: model.data?.appeals?.find(
+                  (appeal) => appeal.id === selected[0],
+                )?.sanction.revision,
                 reason,
                 decision,
               });
@@ -85,11 +86,11 @@ export default function UserCases({
                       name="case"
                       disabled={!!row.resolvedAt}
                       checked={selected.includes(row.id)}
-                      onChange={(e) =>
+                      onChange={(event) =>
                         setSelected(
                           kind === 'appeals'
                             ? [row.id]
-                            : e.target.checked
+                            : event.target.checked
                               ? [...selected, row.id]
                               : selected.filter((id) => id !== row.id),
                         )
@@ -121,7 +122,7 @@ export default function UserCases({
                   <select
                     required
                     value={decision}
-                    onChange={(e) => setDecision(e.target.value)}
+                    onChange={(event) => setDecision(event.target.value)}
                     className="h-12 border border-line p-3"
                   >
                     <option value="">選択してください</option>
@@ -137,7 +138,7 @@ export default function UserCases({
                 required
                 maxLength={1000}
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(event) => setReason(event.target.value)}
               />
             </fieldset>
             {mutation.error && <p role="alert">{mutation.error}</p>}

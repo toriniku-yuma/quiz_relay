@@ -45,7 +45,9 @@ export async function verifiedReportedQuestion(
           eq(resultPlayers.actorId, identity.account.actorId),
         ),
       );
-    const question = row?.payload.completedQuestions?.find((q) => q.id === questionId);
+    const question = row?.payload.completedQuestions?.find(
+      (candidateQuestion) => candidateQuestion.id === questionId,
+    );
     if (!question) throw new OrganizationError('QUESTION_NOT_FOUND', 404);
     return question;
   } finally {

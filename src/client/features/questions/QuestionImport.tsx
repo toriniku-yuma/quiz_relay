@@ -26,8 +26,8 @@ export default function QuestionImport({
   return (
     <form
       className="grid gap-4"
-      onSubmit={async (e) => {
-        e.preventDefault();
+      onSubmit={async (event) => {
+        event.preventDefault();
         if (
           await model.submit({
             operation: rows.length ? 'import-transfer' : 'import',
@@ -52,9 +52,9 @@ export default function QuestionImport({
           <input
             type="file"
             accept=".json,application/json"
-            onChange={async (e) => {
-              const file = e.currentTarget.files?.[0];
-              e.currentTarget.value = '';
+            onChange={async (event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = '';
               if (!file) return;
               setError('');
               setDone(false);
@@ -72,12 +72,17 @@ export default function QuestionImport({
                   setCount(next.length);
                   setMapping(
                     Object.fromEntries(
-                      [...new Set(next.map((r) => r.category))].map((name) => [
+                      [
+                        ...new Set(
+                          next.map((importedQuestion) => importedQuestion.category),
+                        ),
+                      ].map((name) => [
                         name,
                         {
                           id:
-                            data.categories.find((c) => c.active && c.name === name)
-                              ?.id ?? '',
+                            data.categories.find(
+                              (category) => category.active && category.name === name,
+                            )?.id ?? '',
                         },
                       ]),
                     ),
@@ -100,19 +105,22 @@ export default function QuestionImport({
                 required
                 className="m-2 border border-line p-3"
                 value={dest.name !== undefined ? 'new' : dest.id}
-                onChange={(e) =>
+                onChange={(event) =>
                   setMapping({
                     ...mapping,
-                    [name]: e.target.value === 'new' ? { name } : { id: e.target.value },
+                    [name]:
+                      event.target.value === 'new'
+                        ? { name }
+                        : { id: event.target.value },
                   })
                 }
               >
                 <option value="">選択してください</option>
                 {data.categories
-                  .filter((c) => c.active)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
+                  .filter((category) => category.active)
+                  .map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
                     </option>
                   ))}
                 {data.administrator && <option value="new">新しいカテゴリを作成</option>}
@@ -126,8 +134,8 @@ export default function QuestionImport({
                 required
                 maxLength={80}
                 value={dest.name}
-                onChange={(e) =>
-                  setMapping({ ...mapping, [name]: { name: e.target.value } })
+                onChange={(event) =>
+                  setMapping({ ...mapping, [name]: { name: event.target.value } })
                 }
               />
             )}

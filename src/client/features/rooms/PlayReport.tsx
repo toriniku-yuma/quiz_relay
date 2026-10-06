@@ -43,8 +43,8 @@ export default function PlayReport({
         >
           <form
             className="grid gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               void mutation.submit({
                 ...input,
                 reason,
@@ -65,7 +65,7 @@ export default function PlayReport({
                     <select
                       className="ml-3 border border-line p-3"
                       value={kind}
-                      onChange={(e) => setKind(e.target.value)}
+                      onChange={(event) => setKind(event.target.value)}
                     >
                       <option value="defect">問題不備</option>
                       <option value="category">カテゴリ違い</option>
@@ -78,7 +78,7 @@ export default function PlayReport({
                       placeholder="例：地理"
                       maxLength={80}
                       value={category}
-                      onChange={(e) => setCategory(e.target.value)}
+                      onChange={(event) => setCategory(event.target.value)}
                     />
                   )}
                 </>
@@ -90,7 +90,7 @@ export default function PlayReport({
                 required
                 maxLength={1000}
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(event) => setReason(event.target.value)}
               />
             </fieldset>
             {mutation.error && <p role="alert">{mutation.error}</p>}

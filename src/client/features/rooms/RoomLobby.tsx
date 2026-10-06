@@ -68,7 +68,7 @@ export default function RoomLobby({
     auth.user,
   ]);
   if (!room) return <p role="status">ロビーを確認しています。{session.error}</p>;
-  const member = room.members.find((m) => m.id === actor),
+  const member = room.members.find((candidateMember) => candidateMember.id === actor),
     host = room.hostId === actor;
   const finished = session.game.snapshot?.result;
   const input = { room: room.id, instanceId: room.instanceId, revision: room.revision };
@@ -87,20 +87,20 @@ export default function RoomLobby({
               <p>途中入室のため、現在の試合が終わるまでロビーでお待ちください。</p>
             )}
             <DataTable label="部屋の参加者" columns={['名前', '役割', '準備', '接続']}>
-              {room.members.map((m) => (
-                <tr key={m.id}>
+              {room.members.map((roomMember) => (
+                <tr key={roomMember.id}>
                   <td>
-                    {m.name}
-                    {m.guest ? '（ゲスト）' : ''}
-                    {m.id === room.hostId ? '（部屋主）' : ''}
+                    {roomMember.name}
+                    {roomMember.guest ? '（ゲスト）' : ''}
+                    {roomMember.id === room.hostId ? '（部屋主）' : ''}
                   </td>
                   <td>
-                    {m.id === room.hostId && room.settings.presenter
+                    {roomMember.id === room.hostId && room.settings.presenter
                       ? '出題専任'
                       : '回答者'}
                   </td>
-                  <td>{m.ready ? '準備完了' : '未完了'}</td>
-                  <td>{m.connected ? '接続中' : '切断中'}</td>
+                  <td>{roomMember.ready ? '準備完了' : '未完了'}</td>
+                  <td>{roomMember.connected ? '接続中' : '切断中'}</td>
                 </tr>
               ))}
             </DataTable>

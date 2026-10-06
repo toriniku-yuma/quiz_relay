@@ -19,7 +19,7 @@ function playing() {
   state.result = null;
   delete state.completed;
   state.deadline = 10000;
-  for (const p of state.players) p.correct = 0;
+  for (const property of state.players) property.correct = 0;
   return state;
 }
 function command(state: ReturnType<typeof playing>, type: Command['type']): Command {
@@ -32,23 +32,23 @@ function command(state: ReturnType<typeof playing>, type: Command['type']): Comm
   };
 }
 it('持込フォームと対戦は絵文字・結合文字の文字数境界を一致させる', () => {
-  const q = validateBroughtQuestion({
+  const question = validateBroughtQuestion({
     text: '問題',
     displayAnswer: '👨‍👩‍👧‍👦'.repeat(20),
     readings: ['とうきょう'],
     explanation: '😀'.repeat(300),
   });
   const fixed = {
-    ...q,
+    ...question,
     id: 'original-1',
     version: 1,
-    answer: q.readings[0],
+    answer: question.readings[0],
     distractors: dummyCharacters,
     source: '',
     permission: '部屋用持込',
     demoAllowed: true,
   };
-  expect(validateQuestion(fixed, 4, true).explanation).toBe(q.explanation);
+  expect(validateQuestion(fixed, 4, true).explanation).toBe(question.explanation);
   expect(() =>
     validateQuestion({ ...fixed, explanation: '😀'.repeat(301) }, 4, true),
   ).toThrow('INVALID_QUESTION');
@@ -76,7 +76,9 @@ it('最後の未失格者が勝者。終端後の切断で原本・勝敗を変�
   advance(state, 100);
   expect(state.phase).toBe('FINISHED');
   expect(state.result).toMatchObject({ reason: 'last_remaining', winnerId: 'a' });
-  expect(state.completed?.players.map((p) => p.ratingDelta)).toEqual([0, 0]);
+  expect(state.completed?.players.map((property) => property.ratingDelta)).toEqual([
+    0, 0,
+  ]);
   const original = structuredClone(state.completed);
   updateConnections(state, new Set(), 50000);
   advance(state, 100000);
@@ -93,8 +95,9 @@ it('失格なしでも誤答の加算・同問再回答禁止を維持', () => {
   choose.payload = {
     attemptId: panel.attemptId,
     panelId: panel.panelId,
-    choiceId: panel.choices.find((c) => c.text !== Array.from(state.question.answer)[0])
-      ?.id,
+    choiceId: panel.choices.find(
+      (choice) => choice.text !== Array.from(state.question.answer)[0],
+    )?.id,
   };
   expect(adjudicate(state, 'a', choose, 101).ok).toBe(true);
   expect(state.players[0]).toMatchObject({
@@ -151,13 +154,17 @@ it('専任の切断時は自動進行へ移る', () => {
   expect(state.questionIndex).toBe(1);
 });
 it('持込1問・解説省略・複数読みを受理し、不成立4択やJSON重複キーを拒否', () => {
-  const q = { text: '日本の首都は？', displayAnswer: '東京', readings: ['とうきょう'] };
-  expect(validateBroughtQuestion(q).explanation).toBe('');
-  expect(parseBroughtJson(JSON.stringify({ version: 1, questions: [q] }))).toHaveLength(
-    1,
-  );
+  const question = {
+    text: '日本の首都は？',
+    displayAnswer: '東京',
+    readings: ['とうきょう'],
+  };
+  expect(validateBroughtQuestion(question).explanation).toBe('');
+  expect(
+    parseBroughtJson(JSON.stringify({ version: 1, questions: [question] })),
+  ).toHaveLength(1);
   expect(() =>
-    validateBroughtQuestion({ ...q, readings: ['あ', 'い', 'う', 'え', 'お'] }),
+    validateBroughtQuestion({ ...question, readings: ['あ', 'い', 'う', 'え', 'お'] }),
   ).toThrow('4択');
   expect(() => parseBroughtJson('{"version":1,"version":1,"questions":[]}')).toThrow(
     '重複',

@@ -25,8 +25,8 @@ export default function GuestName({
     >
       <form
         className="grid gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
+        onSubmit={(event) => {
+          event.preventDefault();
           void mutation.submit({ name: value });
         }}
       >
@@ -39,7 +39,7 @@ export default function GuestName({
           maxLength={24}
           value={value}
           disabled={mutation.busy || mutation.uncertain}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(event) => setValue(event.target.value)}
         />
         <p>このブラウザーで使います。後からオプションで変更できます。</p>
         {mutation.error && <p role="alert">{mutation.error}</p>}

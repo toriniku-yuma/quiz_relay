@@ -98,11 +98,11 @@ export function useRoom(identity: string) {
       { room: active.id },
       active.instanceId,
     )
-      .then((r) => {
-        if (stillActive()) setRoom(r.room);
+      .then((response) => {
+        if (stillActive()) setRoom(response.room);
       })
-      .catch((e) => {
-        if (stillActive()) setError(e.message);
+      .catch((caughtError) => {
+        if (stillActive()) setError(caughtError.message);
       });
     const disconnect = connectGameSocket(url, {
       sync: () => 'sync',
@@ -138,11 +138,11 @@ export function useRoom(identity: string) {
       { room: active.id },
       active.instanceId,
     )
-      .then((r) => {
-        if (live && current.current === active) attach(r.room);
+      .then((response) => {
+        if (live && current.current === active) attach(response.room);
       })
-      .catch((e) => {
-        if (live && current.current === active) setError(e.message);
+      .catch((caughtError) => {
+        if (live && current.current === active) setError(caughtError.message);
       });
     return () => {
       live = false;

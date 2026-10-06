@@ -11,7 +11,7 @@ questions.use(
   bodyLimit({
     // The 2 MB JSON file is escaped inside a JSON request; category mapping adds overhead.
     maxSize: 5000000,
-    onError: (c) => c.json({ code: 'IMPORT_TOO_LARGE' }, 413),
+    onError: (context) => context.json({ code: 'IMPORT_TOO_LARGE' }, 413),
   }),
 );
 questions.use('/api/questions/*', authenticate);

@@ -25,8 +25,10 @@ export function useClosure(instanceId: string, refresh: () => Promise<boolean>) 
       });
       setFiles(exportQuestionJson(result.questions));
       if (!result.questions.length) setError('出力できる問題がありません。');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '出力できませんでした。');
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : '出力できませんでした。',
+      );
     } finally {
       setBusy(false);
     }

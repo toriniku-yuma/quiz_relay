@@ -65,23 +65,27 @@ export default function RoomEditor({
       {},
       instanceId,
     )
-      .then((v) => {
+      .then((response) => {
         if (active) {
-          setCategories(v.categories);
-          setConfig(v.config);
-          if (!editing) setSettings((s) => ({ ...s, guests: v.config.roomGuests }));
+          setCategories(response.categories);
+          setConfig(response.config);
+          if (!editing)
+            setSettings((currentSettings) => ({
+              ...currentSettings,
+              guests: response.config.roomGuests,
+            }));
         }
       })
-      .catch((e) => {
-        if (active) setError(e.message);
+      .catch((caughtError) => {
+        if (active) setError(caughtError.message);
       });
     if (auth.user)
       void playRequest<{ sets: PersonalSet[] }>(API_PATHS.personalSets)
-        .then((r) => {
-          if (active) setSets(r.sets);
+        .then((response) => {
+          if (active) setSets(response.sets);
         })
-        .catch((e) => {
-          if (active) setError(e.message);
+        .catch((caughtError) => {
+          if (active) setError(caughtError.message);
         });
     if (auth.user && roomId)
       void playRequest<{ questions: BroughtQuestion[] }>(
@@ -89,8 +93,8 @@ export default function RoomEditor({
         { room: roomId },
         instanceId,
       )
-        .then((r) => {
-          if (active) setQuestions(r.questions);
+        .then((response) => {
+          if (active) setQuestions(response.questions);
         })
         .catch(() => {});
     return () => {
@@ -101,8 +105,8 @@ export default function RoomEditor({
     <Panel title={room ? '部屋の設定を変更' : '部屋を作る'}>
       <form
         className="mt-4 grid gap-4"
-        onSubmit={(e) => {
-          e.preventDefault();
+        onSubmit={(event) => {
+          event.preventDefault();
           try {
             const fixed = validateRoomSettings(settings);
             const content =
@@ -117,8 +121,12 @@ export default function RoomEditor({
               ...(changePassword ? { password } : {}),
               ...(room ? { action: 'settings', revision } : {}),
             });
-          } catch (e) {
-            setError(e instanceof Error ? e.message : '入力を確認してください。');
+          } catch (caughtError) {
+            setError(
+              caughtError instanceof Error
+                ? caughtError.message
+                : '入力を確認してください。',
+            );
           }
         }}
       >
@@ -130,12 +138,14 @@ export default function RoomEditor({
             value={settings.name}
             required
             maxLength={80}
-            onChange={(e) => setSettings({ ...settings, name: e.target.value })}
+            onChange={(event) => setSettings({ ...settings, name: event.target.value })}
           />
           <label className="flex gap-3">
             <Checkbox
               checked={settings.public}
-              onChange={(e) => setSettings({ ...settings, public: e.target.checked })}
+              onChange={(event) =>
+                setSettings({ ...settings, public: event.target.checked })
+              }
             />
             公開部屋一覧に載せる
           </label>
@@ -143,7 +153,9 @@ export default function RoomEditor({
             <Checkbox
               checked={settings.guests}
               disabled={!config?.roomGuests}
-              onChange={(e) => setSettings({ ...settings, guests: e.target.checked })}
+              onChange={(event) =>
+                setSettings({ ...settings, guests: event.target.checked })
+              }
             />
             ゲスト参加を許可
           </label>
@@ -155,14 +167,16 @@ export default function RoomEditor({
             min={2}
             max={8}
             value={settings.capacity}
-            onChange={(e) =>
-              setSettings({ ...settings, capacity: e.target.valueAsNumber })
+            onChange={(event) =>
+              setSettings({ ...settings, capacity: event.target.valueAsNumber })
             }
           />
           <label className="flex gap-3">
             <Checkbox
               checked={settings.presenter}
-              onChange={(e) => setSettings({ ...settings, presenter: e.target.checked })}
+              onChange={(event) =>
+                setSettings({ ...settings, presenter: event.target.checked })
+              }
             />
             部屋主は出題専任になる（回答兼任にする場合はオフ）
           </label>
@@ -171,10 +185,10 @@ export default function RoomEditor({
             <select
               className="ml-3 border border-line p-3"
               value={settings.winMode}
-              onChange={(e) =>
+              onChange={(event) =>
                 setSettings({
                   ...settings,
-                  winMode: e.target.value as 'target' | 'questions',
+                  winMode: event.target.value as 'target' | 'questions',
                 })
               }
             >
@@ -192,13 +206,15 @@ export default function RoomEditor({
             min={1}
             max={100}
             value={settings.count}
-            onChange={(e) => setSettings({ ...settings, count: e.target.valueAsNumber })}
+            onChange={(event) =>
+              setSettings({ ...settings, count: event.target.valueAsNumber })
+            }
           />
           <label className="flex gap-3">
             <Checkbox
               checked={settings.mistakes === null}
-              onChange={(e) =>
-                setSettings({ ...settings, mistakes: e.target.checked ? null : 3 })
+              onChange={(event) =>
+                setSettings({ ...settings, mistakes: event.target.checked ? null : 3 })
               }
             />
             失格なし
@@ -212,8 +228,8 @@ export default function RoomEditor({
               min={1}
               max={100}
               value={settings.mistakes}
-              onChange={(e) =>
-                setSettings({ ...settings, mistakes: e.target.valueAsNumber })
+              onChange={(event) =>
+                setSettings({ ...settings, mistakes: event.target.valueAsNumber })
               }
             />
           )}
@@ -222,10 +238,10 @@ export default function RoomEditor({
             <select
               className="ml-3 border border-line p-3"
               value={settings.source}
-              onChange={(e) =>
+              onChange={(event) =>
                 setSettings({
                   ...settings,
-                  source: e.target.value as 'normal' | 'original',
+                  source: event.target.value as 'normal' | 'original',
                 })
               }
             >
@@ -237,34 +253,36 @@ export default function RoomEditor({
             <>
               <p>カテゴリを選ばない場合はすべてを使います。</p>
               <div className="flex flex-wrap gap-4">
-                {categories.map((c) => (
-                  <label key={c.id} className="flex gap-2">
+                {categories.map((category) => (
+                  <label key={category.id} className="flex gap-2">
                     <Checkbox
-                      checked={settings.categories.includes(c.id)}
-                      onChange={(e) =>
+                      checked={settings.categories.includes(category.id)}
+                      onChange={(event) =>
                         setSettings({
                           ...settings,
-                          categories: e.target.checked
-                            ? [...settings.categories, c.id]
-                            : settings.categories.filter((id) => id !== c.id),
+                          categories: event.target.checked
+                            ? [...settings.categories, category.id]
+                            : settings.categories.filter((id) => id !== category.id),
                         })
                       }
                     />
-                    {c.name}
+                    {category.name}
                   </label>
                 ))}
               </div>
               <div className="flex gap-4">
-                {['易', '中', '難'].map((label, d) => (
+                {['易', '中', '難'].map((label, difficulty) => (
                   <label key={label} className="flex gap-2">
                     <Checkbox
-                      checked={settings.difficulties.includes(d)}
-                      onChange={(e) =>
+                      checked={settings.difficulties.includes(difficulty)}
+                      onChange={(event) =>
                         setSettings({
                           ...settings,
-                          difficulties: e.target.checked
-                            ? [...settings.difficulties, d]
-                            : settings.difficulties.filter((v) => v !== d),
+                          difficulties: event.target.checked
+                            ? [...settings.difficulties, difficulty]
+                            : settings.difficulties.filter(
+                                (selectedDifficulty) => selectedDifficulty !== difficulty,
+                              ),
                         })
                       }
                     />
@@ -280,16 +298,18 @@ export default function RoomEditor({
                 <select
                   className="ml-3 border border-line p-3"
                   defaultValue=""
-                  onChange={(e) => {
-                    const set = sets.find((s) => s.id === e.target.value);
+                  onChange={(event) => {
+                    const set = sets.find(
+                      (questionSet) => questionSet.id === event.target.value,
+                    );
                     setQuestions(set ? structuredClone(set.questions) : []);
                     setChanged(true);
                   }}
                 >
                   <option value="">直接入力する</option>
-                  {sets.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
+                  {sets.map((questionSet) => (
+                    <option key={questionSet.id} value={questionSet.id}>
+                      {questionSet.name}
                     </option>
                   ))}
                 </select>
@@ -301,8 +321,8 @@ export default function RoomEditor({
               )}
               <BroughtEditor
                 questions={questions}
-                onChange={(q) => {
-                  setQuestions(q);
+                onChange={(updatedQuestions) => {
+                  setQuestions(updatedQuestions);
                   setChanged(true);
                 }}
                 disabled={locked}
@@ -313,7 +333,7 @@ export default function RoomEditor({
                 placeholder="例：週末用の問題"
                 value={saveName}
                 maxLength={80}
-                onChange={(e) => setSaveName(e.target.value)}
+                onChange={(event) => setSaveName(event.target.value)}
               />
               <Button
                 disabled={saveSet.busy || !saveName.trim()}
@@ -326,8 +346,12 @@ export default function RoomEditor({
                       name: saveName,
                       questions: validateBroughtSet(questions),
                     });
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : '問題を確認してください。');
+                  } catch (caughtError) {
+                    setError(
+                      caughtError instanceof Error
+                        ? caughtError.message
+                        : '問題を確認してください。',
+                    );
                   }
                 }}
               >
@@ -348,7 +372,7 @@ export default function RoomEditor({
             <label className="flex gap-3">
               <Checkbox
                 checked={changePassword}
-                onChange={(e) => setChangePassword(e.target.checked)}
+                onChange={(event) => setChangePassword(event.target.checked)}
               />
               パスワードを変更する
             </label>
@@ -362,7 +386,7 @@ export default function RoomEditor({
               autoComplete="new-password"
               value={password}
               maxLength={128}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => setPassword(event.target.value)}
             />
           )}
           <p>

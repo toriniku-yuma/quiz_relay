@@ -64,15 +64,15 @@ export async function moderationWorkflow(
       now = new Date().toISOString();
     if (action === 'report') {
       const instanceId = validId(input.instanceId),
-        scope = scopes.find((r) => r.id === instanceId);
+        scope = scopes.find((instance) => instance.id === instanceId);
       const actorId = String(input.actorId);
       if (
         !scope ||
         !evidence ||
         evidence.owner !== scope.owner ||
         evidence.result.id !== input.resultId ||
-        !evidence.players.some((p) => p.id === account.actorId) ||
-        !evidence.players.some((p) => p.id === actorId && !p.guest) ||
+        !evidence.players.some((player) => player.id === account.actorId) ||
+        !evidence.players.some((player) => player.id === actorId && !player.guest) ||
         actorId === account.actorId
       )
         fail('REPORT_NOT_ALLOWED', 403);
@@ -209,12 +209,14 @@ export async function moderationWorkflow(
       if (!account.administrator) fail('ADMIN_REQUIRED', 403);
       const id = validId(input.instanceId),
         actorId = String(input.actorId);
-      if (!scopes.some((s) => s.id === id)) fail('INSTANCE_NOT_FOUND', 404);
+      if (!scopes.some((instance) => instance.id === id)) fail('INSTANCE_NOT_FOUND', 404);
       await targetUser(tx, organization.id, actorId);
       if (
         !Array.isArray(input.permissions) ||
         input.permissions.length > instancePermissions.length ||
-        input.permissions.some((p) => !instancePermissions.includes(p)) ||
+        input.permissions.some(
+          (permission) => !instancePermissions.includes(permission),
+        ) ||
         new Set(input.permissions).size !== input.permissions.length
       )
         fail('INVALID_PERMISSION');
@@ -222,7 +224,9 @@ export async function moderationWorkflow(
         .select()
         .from(grants)
         .where(and(eq(grants.instanceId, id), eq(grants.actorId, actorId)));
-      if (input.expected !== permissionRevision(previous.map((p) => p.permission)))
+      if (
+        input.expected !== permissionRevision(previous.map((grant) => grant.permission))
+      )
         fail('EDIT_CONFLICT', 409);
       await tx
         .delete(grants)
@@ -241,7 +245,7 @@ export async function moderationWorkflow(
         action: 'grants',
         details: {
           target: actorId,
-          before: previous.map((p) => p.permission),
+          before: previous.map((grant) => grant.permission),
           after: permissions,
         },
       });

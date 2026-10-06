@@ -6,7 +6,7 @@ import type { Sanction } from '../src/shared/moderation';
 import type { OrganizationOverview } from '../src/shared/organization';
 import { newRoomSettings } from '../src/shared/rooms';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
   effects: [] as Array<() => (() => void) | undefined>,
@@ -28,77 +28,77 @@ const h = vi.hoisted(() => ({
 vi.mock('react', async (original) => ({
   ...(await original<typeof import('react')>()),
   useState: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = value;
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length) mocks.slots[i] = value;
     return [
-      h.slots[i],
+      mocks.slots[i],
       (next: unknown) => {
-        h.slots[i] = next;
+        mocks.slots[i] = next;
       },
     ];
   },
   useRef: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = { current: value };
-    return h.slots[i];
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length) mocks.slots[i] = { current: value };
+    return mocks.slots[i];
   },
   useCallback: (callback: unknown) => callback,
-  useEffect: (effect: () => (() => void) | undefined) => h.effects.push(effect),
+  useEffect: (effect: () => (() => void) | undefined) => mocks.effects.push(effect),
 }));
-vi.mock('../src/client/features/rooms/api', () => ({ playRequest: h.request }));
+vi.mock('../src/client/features/rooms/api', () => ({ playRequest: mocks.request }));
 vi.mock('../src/client/features/moderation/useActiveSanctions', () => ({
   useActiveSanctions: (rows: Sanction[]) => rows,
 }));
-vi.mock('../src/client/app/navigation', () => ({ navigate: h.navigate }));
+vi.mock('../src/client/app/navigation', () => ({ navigate: mocks.navigate }));
 vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
     auth: { user: { id: 'user-a' } },
-    organization: { data: h.organization },
-    url: h.url,
+    organization: { data: mocks.organization },
+    url: mocks.url,
   }),
 }));
 vi.mock('../src/client/features/rooms/useRoom', () => ({
   useRoom: () => ({
-    active: h.active,
-    room: h.roomView,
-    restored: h.restored,
-    isCurrent: (id: unknown) => (h.active?.id ?? null) === id,
-    join: h.join,
-    exit: { submit: h.exit },
+    active: mocks.active,
+    room: mocks.roomView,
+    restored: mocks.restored,
+    isCurrent: (id: unknown) => (mocks.active?.id ?? null) === id,
+    join: mocks.join,
+    exit: { submit: mocks.exit },
   }),
 }));
 beforeEach(() => {
-  h.slots = [];
-  h.cursor = 0;
-  h.effects = [];
-  h.request.mockReset();
-  h.join.mockReset();
-  h.navigate.mockReset();
-  h.exit.mockReset().mockResolvedValue({ ok: true });
-  h.active = null;
-  h.roomView = null;
-  h.restored = false;
-  h.organization = undefined;
-  h.url = new URL('https://quiz.test/rooms/?instance=instance-a&room=room-a');
+  mocks.slots = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
+  mocks.request.mockReset();
+  mocks.join.mockReset();
+  mocks.navigate.mockReset();
+  mocks.exit.mockReset().mockResolvedValue({ ok: true });
+  mocks.active = null;
+  mocks.roomView = null;
+  mocks.restored = false;
+  mocks.organization = undefined;
+  mocks.url = new URL('https://quiz.test/rooms/?instance=instance-a&room=room-a');
   vi.stubGlobal('window', new EventTarget());
 });
 afterEach(() => vi.unstubAllGlobals());
 function guest() {
-  h.cursor = 0;
+  mocks.cursor = 0;
   // biome-ignore lint/correctness/useHookAtTopLevel: Hook state harness.
   return useGuest(true);
 }
 const settle = () => new Promise((done) => setTimeout(done, 0));
 it('登録後のゲスト名・本人IDを遅い初回応答で消さない', async () => {
   let finish!: (value: { name: null }) => void;
-  h.request.mockReturnValueOnce(
+  mocks.request.mockReturnValueOnce(
     new Promise((done) => {
       finish = done;
     }),
   );
   guest();
-  const cleanup = h.effects[0]();
-  h.request.mockResolvedValue({ id: 'guest-a', name: '参加者' });
+  const cleanup = mocks.effects[0]();
+  mocks.request.mockResolvedValue({ id: 'guest-a', name: '参加者' });
   await guest().refresh();
   finish({ name: null });
   await settle();
@@ -107,14 +107,14 @@ it('登録後のゲスト名・本人IDを遅い初回応答で消さない', as
 });
 it('後発の失敗を古いゲスト応答で取り消さず、解除後の応答も無視する', async () => {
   let finish!: (value: { name: null }) => void;
-  h.request.mockReturnValueOnce(
+  mocks.request.mockReturnValueOnce(
     new Promise((done) => {
       finish = done;
     }),
   );
   guest();
-  const cleanup = h.effects[0]();
-  h.request.mockRejectedValue(new Error('後発の失敗'));
+  const cleanup = mocks.effects[0]();
+  mocks.request.mockRejectedValue(new Error('後発の失敗'));
   await guest().refresh();
   cleanup?.();
   finish({ name: null });
@@ -136,7 +136,7 @@ function submit(
     : submit(element.props?.children);
 }
 function room() {
-  h.cursor = 0;
+  mocks.cursor = 0;
   return RoomWorkspace();
 }
 
@@ -154,8 +154,8 @@ it.each(
     restrictions,
   })),
 )('部屋作成の入口は本人の作成・参加制限に従う: %j', ({ restrictions }) => {
-  h.url.searchParams.delete('room');
-  h.organization = {
+  mocks.url.searchParams.delete('room');
+  mocks.organization = {
     enabled: true,
     account: { actorId: 'actor', administrator: false, displayName: '登録名' },
     instances: [{ id: 'instance-a', name: '対象', state: 'published', permissions: [] }],
@@ -176,7 +176,7 @@ it.each(
       : [],
   };
   expect(creationLink(room())).toBe(restrictions.length === 0);
-  expect(h.exit).not.toHaveBeenCalled();
+  expect(mocks.exit).not.toHaveBeenCalled();
 });
 it.each([
   '/profile/',
@@ -184,64 +184,64 @@ it.each([
   '/rooms/?instance=instance-a',
   '/rooms/?instance=instance-b',
 ])('部屋ロビーから%sへ移動しても元の参加を保持する', (next) => {
-  h.active = { id: 'room-a', instanceId: 'instance-a' };
-  h.roomView = { id: 'room-a', playing: false };
+  mocks.active = { id: 'room-a', instanceId: 'instance-a' };
+  mocks.roomView = { id: 'room-a', playing: false };
   room();
-  h.effects[2]();
-  h.effects = [];
-  h.url = new URL(`https://quiz.test${next}`);
+  mocks.effects[2]();
+  mocks.effects = [];
+  mocks.url = new URL(`https://quiz.test${next}`);
   room();
-  h.effects[2]();
-  expect(h.exit).not.toHaveBeenCalled();
-  expect(h.active).toEqual({ id: 'room-a', instanceId: 'instance-a' });
+  mocks.effects[2]();
+  expect(mocks.exit).not.toHaveBeenCalled();
+  expect(mocks.active).toEqual({ id: 'room-a', instanceId: 'instance-a' });
 });
 it.each(['edit', 'game'])('同じ部屋の%s画面への移動では参加を保持する', (view) => {
-  h.active = { id: 'room-a', instanceId: 'instance-a' };
-  h.roomView = { id: 'room-a', playing: false };
+  mocks.active = { id: 'room-a', instanceId: 'instance-a' };
+  mocks.roomView = { id: 'room-a', playing: false };
   room();
-  h.effects[2]();
-  h.effects = [];
-  h.url.searchParams.set('view', view);
+  mocks.effects[2]();
+  mocks.effects = [];
+  mocks.url.searchParams.set('view', view);
   room();
-  h.effects[2]();
-  expect(h.exit).not.toHaveBeenCalled();
+  mocks.effects[2]();
+  expect(mocks.exit).not.toHaveBeenCalled();
 });
 it('開始した本人は対戦専用ページへ移り、途中入室者はロビーに留まる', () => {
-  h.active = { id: 'room-a', instanceId: 'instance-a' };
-  h.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
+  mocks.active = { id: 'room-a', instanceId: 'instance-a' };
+  mocks.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
   room();
-  h.effects[2]();
-  expect(h.navigate).toHaveBeenCalledExactlyOnceWith(
+  mocks.effects[2]();
+  expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith(
     '/rooms/?instance=instance-a&room=room-a&view=game',
   );
-  h.navigate.mockClear();
-  h.effects = [];
-  h.roomView.waiting = true;
+  mocks.navigate.mockClear();
+  mocks.effects = [];
+  mocks.roomView.waiting = true;
   room();
-  h.effects[2]();
-  expect(h.navigate).not.toHaveBeenCalled();
+  mocks.effects[2]();
+  expect(mocks.navigate).not.toHaveBeenCalled();
 });
 it('部屋状態を確認する前の画面移動は、試合中の参加をロビー退出扱いにしない', () => {
-  h.active = { id: 'room-a', instanceId: 'instance-a' };
+  mocks.active = { id: 'room-a', instanceId: 'instance-a' };
   room();
-  h.effects[2]();
-  h.effects = [];
-  h.url = new URL('https://quiz.test/profile/');
+  mocks.effects[2]();
+  mocks.effects = [];
+  mocks.url = new URL('https://quiz.test/profile/');
   room();
-  h.effects[2]();
-  expect(h.exit).not.toHaveBeenCalled();
+  mocks.effects[2]();
+  expect(mocks.exit).not.toHaveBeenCalled();
 });
 it('新しい部屋に入った直後の旧部屋状態では、対戦画面へ移動しない', () => {
-  h.active = { id: 'room-b', instanceId: 'instance-a' };
-  h.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
-  h.url.searchParams.set('room', 'room-b');
+  mocks.active = { id: 'room-b', instanceId: 'instance-a' };
+  mocks.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
+  mocks.url.searchParams.set('room', 'room-b');
   room();
-  h.effects[2]();
-  expect(h.navigate).not.toHaveBeenCalled();
+  mocks.effects[2]();
+  expect(mocks.navigate).not.toHaveBeenCalled();
 });
 it('Aの遅い復帰確認で、成立済みのB参加を上書きしない', async () => {
   let finish!: (value: unknown) => void;
-  h.request.mockImplementation((path: string) =>
+  mocks.request.mockImplementation((path: string) =>
     path === API_PATHS.roomView
       ? new Promise((done) => {
           finish = done;
@@ -249,41 +249,45 @@ it('Aの遅い復帰確認で、成立済みのB参加を上書きしない', as
       : Promise.resolve({ room: { settings: newRoomSettings(false) } }),
   );
   room();
-  h.effects[1]();
-  h.active = { id: 'room-b', instanceId: 'instance-b' };
+  mocks.effects[1]();
+  mocks.active = { id: 'room-b', instanceId: 'instance-b' };
   finish({ room: {} });
   await settle();
-  expect(h.join).not.toHaveBeenCalled();
-  expect(h.active.id).toBe('room-b');
+  expect(mocks.join).not.toHaveBeenCalled();
+  expect(mocks.active.id).toBe('room-b');
 });
 it.each(['instance-a', 'instance-b'])(
   '応答不明のA参加をB画面（%s）で再試行しても、要求先と復帰先をAへ固定する',
   async (nextInstance) => {
-    h.request.mockImplementation(async (path: string) => {
+    mocks.request.mockImplementation(async (path: string) => {
       if (path === API_PATHS.roomInfo)
         return { room: { settings: newRoomSettings(false), instanceId: 'instance-a' } };
       throw new Error('通信結果不明');
     });
     room();
-    h.effects[1]();
+    mocks.effects[1]();
     await settle();
     const enter = submit(room());
     if (!enter) throw new Error('参加フォーム');
     enter({ preventDefault() {} });
     await settle();
-    const original = h.request.mock.calls.find(([path]) => path === API_PATHS.roomJoin);
+    const original = mocks.request.mock.calls.find(
+      ([path]) => path === API_PATHS.roomJoin,
+    );
     if (!original) throw new Error('参加要求');
-    h.url = new URL(`https://quiz.test/rooms/?instance=${nextInstance}&room=room-b`);
-    h.request.mockResolvedValue({ ok: true });
+    mocks.url = new URL(`https://quiz.test/rooms/?instance=${nextInstance}&room=room-b`);
+    mocks.request.mockResolvedValue({ ok: true });
     const retry = submit(room());
     if (!retry) throw new Error('再試行フォーム');
     retry({ preventDefault() {} });
     await settle();
-    const attempts = h.request.mock.calls.filter(([path]) => path === API_PATHS.roomJoin);
+    const attempts = mocks.request.mock.calls.filter(
+      ([path]) => path === API_PATHS.roomJoin,
+    );
     expect(attempts).toHaveLength(2);
     expect(attempts[1]).toEqual(original);
-    expect(h.join).toHaveBeenCalledExactlyOnceWith('room-a', 'instance-a');
-    expect(h.navigate).toHaveBeenCalledExactlyOnceWith(
+    expect(mocks.join).toHaveBeenCalledExactlyOnceWith('room-a', 'instance-a');
+    expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith(
       '/rooms/?instance=instance-a&room=room-a',
     );
   },

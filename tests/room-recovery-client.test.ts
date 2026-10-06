@@ -6,7 +6,7 @@ import { useRoom } from '../src/client/features/rooms/useRoom';
 import { API_PATHS } from '../src/shared/api-paths';
 import { newRoomSettings, type RoomView } from '../src/shared/rooms';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
   effects: [] as Array<() => undefined | (() => void)>,
@@ -17,28 +17,29 @@ const h = vi.hoisted(() => ({
 vi.mock('react', async (original) => ({
   ...(await original<typeof import('react')>()),
   useState: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = typeof value === 'function' ? value() : value;
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length)
+      mocks.slots[i] = typeof value === 'function' ? value() : value;
     return [
-      h.slots[i],
+      mocks.slots[i],
       (next: unknown) => {
-        h.slots[i] = typeof next === 'function' ? next(h.slots[i]) : next;
+        mocks.slots[i] = typeof next === 'function' ? next(mocks.slots[i]) : next;
       },
     ];
   },
   useRef: (value: unknown) => {
-    const i = h.cursor++;
-    if (i >= h.slots.length) h.slots[i] = { current: value };
-    return h.slots[i];
+    const i = mocks.cursor++;
+    if (i >= mocks.slots.length) mocks.slots[i] = { current: value };
+    return mocks.slots[i];
   },
   useCallback: (callback: unknown) => callback,
-  useEffect: (effect: () => undefined | (() => void)) => h.effects.push(effect),
+  useEffect: (effect: () => undefined | (() => void)) => mocks.effects.push(effect),
 }));
 vi.mock('../src/client/features/game/connection', () => ({
-  connectGameSocket: h.connect,
+  connectGameSocket: mocks.connect,
 }));
-vi.mock('../src/client/features/rooms/api', () => ({ playRequest: h.request }));
-vi.mock('../src/client/app/navigation', () => ({ navigate: h.navigate }));
+vi.mock('../src/client/features/rooms/api', () => ({ playRequest: mocks.request }));
+vi.mock('../src/client/app/navigation', () => ({ navigate: mocks.navigate }));
 vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
     auth: { user: { id: 'user-a' } },
@@ -47,12 +48,12 @@ vi.mock('../src/client/app/context', () => ({
   }),
 }));
 beforeEach(() => {
-  h.slots = [];
-  h.cursor = 0;
-  h.effects = [];
-  h.request.mockReset();
-  h.connect.mockReset().mockReturnValue(vi.fn());
-  h.navigate.mockReset();
+  mocks.slots = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
+  mocks.request.mockReset();
+  mocks.connect.mockReset().mockReturnValue(vi.fn());
+  mocks.navigate.mockReset();
   const storage = new Map<string, string>();
   vi.stubGlobal('sessionStorage', {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -98,30 +99,30 @@ function roomView(id: string): RoomView {
   };
 }
 function room() {
-  h.cursor = 0;
-  h.effects = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
   // biome-ignore lint/correctness/useHookAtTopLevel: 状態を保持し、描画前の遅延応答を再現する。
   return useRoom('user-a');
 }
 function game() {
-  h.cursor = 0;
-  h.effects = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
   // biome-ignore lint/correctness/useHookAtTopLevel: 同じhookを再描画するハーネス。
   return useGame('formal', 'user-a', 'instance-a');
 }
 it('Bへ入室直後の旧AのHTTP・ゲーム接続・切替通知で、新参加を消さない', async () => {
   const view = deferred<{ room: RoomView }>(),
     child = deferred<{ room: string }>();
-  h.request.mockImplementation((path: string) =>
+  mocks.request.mockImplementation((path: string) =>
     path === API_PATHS.roomGame ? child.promise : view.promise,
   );
   room().join('room-a', 'instance-a');
   const active = room();
-  h.effects[3]();
-  const callbacks = h.connect.mock.calls[0][1];
+  mocks.effects[3]();
+  const callbacks = mocks.connect.mock.calls[0][1];
   callbacks.message(JSON.stringify({ type: 'lobby', room: roomView('room-a') }));
   room();
-  h.effects[4]();
+  mocks.effects[4]();
   const refresh = active.refresh();
   active.join('room-b', 'instance-b');
   callbacks.released?.();
@@ -146,8 +147,8 @@ it('Bへ入室直後の旧AのHTTP・ゲーム接続・切替通知で、新参�
 it('旧対戦接続の遅い通知・状態で、新対戦の復帰情報を消さない', () => {
   game().attach('match-a', 'instance-a');
   const active = game();
-  const cleanup = h.effects[0]();
-  const callbacks = h.connect.mock.calls[0][1];
+  const cleanup = mocks.effects[0]();
+  const callbacks = mocks.connect.mock.calls[0][1];
   active.attach('match-b', 'instance-b');
   callbacks.released?.();
   callbacks.error('旧接続のエラー');
@@ -176,7 +177,7 @@ function button(
     : button(element.props?.children, label);
 }
 function lobby(session: ReturnType<typeof useRoom>) {
-  h.cursor = 0;
+  mocks.cursor = 0;
   return RoomLobby({ session });
 }
 function lobbySession(waiting = false) {
@@ -213,19 +214,19 @@ it('途中入室で待機中の本人は、他人の対戦中も退出できる'
 });
 it('応答不明のロビー操作をB画面で再試行しても、送り先と本文はAへ固定する', async () => {
   const { session, switchRoom } = lobbySession();
-  h.request.mockRejectedValueOnce(new Error('response lost'));
+  mocks.request.mockRejectedValueOnce(new Error('response lost'));
   button(lobby(session), '同じ部屋のロビーへ戻る')?.onClick();
   await settle();
-  const original = h.request.mock.calls[0];
+  const original = mocks.request.mock.calls[0];
   switchRoom();
-  h.request.mockResolvedValue({ ok: true });
+  mocks.request.mockResolvedValue({ ok: true });
   button(lobby(session), '同じ操作で再試行')?.onClick();
   await settle();
-  expect(h.request.mock.calls[1]).toEqual(original);
+  expect(mocks.request.mock.calls[1]).toEqual(original);
   expect(original[2]).toBe('instance-room-a');
   expect(session.refresh).not.toHaveBeenCalled();
   expect(session.game.leave).not.toHaveBeenCalled();
-  expect(h.navigate).not.toHaveBeenCalled();
+  expect(mocks.navigate).not.toHaveBeenCalled();
 });
 it.each(['保存応答前', '表示更新中'])(
   'Aのロビー復帰の%sにBへ入室しても、Bから移動・離脱しない',
@@ -233,7 +234,7 @@ it.each(['保存応答前', '表示更新中'])(
     const { session, switchRoom } = lobbySession();
     const response = deferred<unknown>(),
       refreshed = deferred<void>();
-    h.request.mockReturnValue(response.promise);
+    mocks.request.mockReturnValue(response.promise);
     vi.mocked(session.refresh).mockReturnValue(refreshed.promise);
     button(lobby(session), '同じ部屋のロビーへ戻る')?.onClick();
     if (when === '保存応答前') switchRoom();
@@ -243,6 +244,6 @@ it.each(['保存応答前', '表示更新中'])(
     refreshed.resolve();
     await settle();
     expect(session.game.leave).not.toHaveBeenCalled();
-    expect(h.navigate).not.toHaveBeenCalled();
+    expect(mocks.navigate).not.toHaveBeenCalled();
   },
 );

@@ -27,19 +27,24 @@ export default function UsersPanel() {
     { id: string } & import('../../../shared/moderation').ModeratedUser
   >(JSON.stringify([auth.user?.id, model.instanceId, model.query, model.filter]));
   const [bulkOpen, setBulkOpen] = useState(false);
-  const visible = (data?.users ?? []).map((u) => ({ ...u, id: u.actorId }));
+  const visible = (data?.users ?? []).map((user) => ({ ...user, id: user.actorId }));
   const allSelected =
-    visible.length > 0 && visible.every((u) => selection.rows.some((s) => s.id === u.id));
-  const active = useActiveSanctions(data?.users.flatMap((u) => u.sanctions ?? []) ?? []);
-  const describe = (s: Sanction) =>
-    `${sanctionLabels[s.kind]} / ${s.restrictions.map((k) => restrictionLabels[k]).join('・') || '新規対戦・部屋作成・問題提出'} / ${s.expiresAt ? new Date(s.expiresAt).toLocaleString() : '期限なし'} / ${s.reason}${s.revokedAt ? ' / 取消済み' : ''}`;
+    visible.length > 0 &&
+    visible.every((user) =>
+      selection.rows.some((selectedRow) => selectedRow.id === user.id),
+    );
+  const active = useActiveSanctions(
+    data?.users.flatMap((user) => user.sanctions ?? []) ?? [],
+  );
+  const describe = (sanction: Sanction) =>
+    `${sanctionLabels[sanction.kind]} / ${sanction.restrictions.map((restriction) => restrictionLabels[restriction]).join('・') || '新規対戦・部屋作成・問題提出'} / ${sanction.expiresAt ? new Date(sanction.expiresAt).toLocaleString() : '期限なし'} / ${sanction.reason}${sanction.revokedAt ? ' / 取消済み' : ''}`;
   const href = (changes: Record<string, string | number>) => {
-    const q = new URLSearchParams(url.search);
-    for (const [k, v] of Object.entries(changes)) {
-      if (v === '') q.delete(k);
-      else q.set(k, String(v));
+    const searchParams = new URLSearchParams(url.search);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === '') searchParams.delete(key);
+      else searchParams.set(key, String(value));
     }
-    return `${USERS_PATH}?${q}`;
+    return `${USERS_PATH}?${searchParams}`;
   };
   const change = (values: Record<string, string | number>) =>
     navigate(href({ page: 1, ...values }));
@@ -139,9 +144,9 @@ export default function UsersPanel() {
             <>
               <form
                 className="flex flex-wrap items-end gap-3"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  change({ q: String(new FormData(e.currentTarget).get('q') ?? '') });
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  change({ q: String(new FormData(event.currentTarget).get('q') ?? '') });
                 }}
               >
                 <TextField
@@ -157,7 +162,7 @@ export default function UsersPanel() {
                   <select
                     className="h-12 border border-line bg-paper p-3"
                     value={model.filter}
-                    onChange={(e) => change({ filter: e.target.value })}
+                    onChange={(event) => change({ filter: event.target.value })}
                   >
                     <option value="">すべて</option>
                     <option value="restricted">処分中</option>
@@ -197,9 +202,11 @@ export default function UsersPanel() {
                     checked={allSelected}
                     mixed={
                       !allSelected &&
-                      visible.some((u) => selection.rows.some((s) => s.id === u.id))
+                      visible.some((user) =>
+                        selection.rows.some((selectedRow) => selectedRow.id === user.id),
+                      )
                     }
-                    onChange={(e) => selection.select(visible, e.target.checked)}
+                    onChange={(event) => selection.select(visible, event.target.checked)}
                   />
                 }
                 label="ユーザー一覧"
@@ -222,11 +229,13 @@ export default function UsersPanel() {
                     <td>
                       <Checkbox
                         aria-label={`${row.name}を選択`}
-                        checked={selection.rows.some((s) => s.id === row.actorId)}
-                        onChange={(e) =>
+                        checked={selection.rows.some(
+                          (selectedRow) => selectedRow.id === row.actorId,
+                        )}
+                        onChange={(event) =>
                           selection.select(
                             [{ ...row, id: row.actorId }],
-                            e.target.checked,
+                            event.target.checked,
                           )
                         }
                       />
@@ -245,30 +254,30 @@ export default function UsersPanel() {
                         ? '管理者'
                         : row.permissions
                             ?.map(
-                              (p) =>
+                              (permission) =>
                                 ({
                                   users: 'ユーザー管理',
                                   questions: '問題管理',
                                   authors: '作問者管理',
-                                })[p],
+                                })[permission],
                             )
                             .join('・') || '一般'}
                     </td>
                     <td>
                       {active
-                        .filter((s) => s.actorId === row.actorId)
+                        .filter((sanction) => sanction.actorId === row.actorId)
                         .map(
-                          (s) =>
-                            `${s.instanceId === null ? '組織全体：' : ''}${sanctionLabels[s.kind]}`,
+                          (sanction) =>
+                            `${sanction.instanceId === null ? '組織全体：' : ''}${sanctionLabels[sanction.kind]}`,
                         )
                         .join(' / ') || 'なし'}
                     </td>
                     <td>
                       {active
-                        .filter((s) => s.actorId === row.actorId)
-                        .map((s) =>
-                          s.expiresAt
-                            ? new Date(s.expiresAt).toLocaleString()
+                        .filter((sanction) => sanction.actorId === row.actorId)
+                        .map((sanction) =>
+                          sanction.expiresAt
+                            ? new Date(sanction.expiresAt).toLocaleString()
                             : '期限なし',
                         )
                         .join(' / ') || '—'}
@@ -305,7 +314,7 @@ export default function UsersPanel() {
                 value={data.pagination}
                 pageSize={model.pageSize}
                 disabled={model.busy}
-                onChange={(v) => change(v)}
+                onChange={(sorting) => change(sorting)}
               />
             </>
           )}

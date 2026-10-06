@@ -227,7 +227,7 @@ export async function verifyRetention(
         count: row.count,
         reason: row.reason,
       }))
-      .sort((a, b) => a.kind.localeCompare(b.kind)),
+      .sort((left, right) => left.kind.localeCompare(right.kind)),
     [
       { kind: 'category', round: 2, count: 0, reason: '最近の解決' },
       { kind: 'defect', round: 2, count: 1, reason: '' },

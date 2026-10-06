@@ -16,7 +16,7 @@ export default function RoomRules({ settings }: { settings: RoomSettings }) {
       <p>
         {settings.source === 'original'
           ? '持込問題だけで出題'
-          : `通常問題 ／ 難易度 ${settings.difficulties.map((d) => ['易', '中', '難'][d]).join('・')}`}{' '}
+          : `通常問題 ／ 難易度 ${settings.difficulties.map((difficulty) => ['易', '中', '難'][difficulty]).join('・')}`}{' '}
         ／ レート対象外
       </p>
       <p>

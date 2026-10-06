@@ -30,7 +30,7 @@ export default function QuestionReports({
           label="対応内容・解決理由"
           placeholder="例：根拠を確認し、解説を補足しました"
           value={reason}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(event) => setReason(event.target.value)}
         />
       )}
       {!data.reviewCases.length && <p>通報はありません。</p>}
@@ -51,8 +51,9 @@ export default function QuestionReports({
               className="border border-line p-3"
             >
               <p>
-                {data.submissions.find((q) => q.publishedId === review.questionId)?.input
-                  .text ??
+                {data.submissions.find(
+                  (submission) => submission.publishedId === review.questionId,
+                )?.input.text ??
                   data.reportedOriginals?.[review.questionId]?.text ??
                   (review.questionId.startsWith('original-')
                     ? '持込問題（振り返り期間終了）'
@@ -90,15 +91,17 @@ export default function QuestionReports({
                 <ul>
                   {data.reports
                     .filter(
-                      (r) =>
-                        r.questionId === review.questionId &&
-                        r.kind === review.kind &&
-                        r.round === review.round,
+                      (report) =>
+                        report.questionId === review.questionId &&
+                        report.kind === review.kind &&
+                        report.round === review.round,
                     )
-                    .map((r) => (
-                      <li key={r.id}>
-                        {r.reason}
-                        {r.suggestedCategory ? `（提案：${r.suggestedCategory}）` : ''}
+                    .map((report) => (
+                      <li key={report.id}>
+                        {report.reason}
+                        {report.suggestedCategory
+                          ? `（提案：${report.suggestedCategory}）`
+                          : ''}
                       </li>
                     ))}
                 </ul>

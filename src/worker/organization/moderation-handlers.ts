@@ -10,22 +10,22 @@ import { organizationDatabase } from './database';
 import { moderationOverview, mutateSanction, personalModeration } from './moderation';
 import { moderationWorkflow } from './workflow';
 
-export const manageUsers: Handler<AuthEnv> = async (c) => {
-  if (!organizationEnabled(c.env))
+export const manageUsers: Handler<AuthEnv> = async (context) => {
+  if (!organizationEnabled(context.env))
     throw new OrganizationError('ORGANIZATION_UNAVAILABLE', 503);
-  const input: unknown = await c.req.json().catch(() => null);
+  const input: unknown = await context.req.json().catch(() => null);
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new OrganizationError('INVALID_SANCTION', 400);
   const value = input as Record<string, unknown>;
-  const { db, close } = organizationDatabase(c.env);
+  const { db, close } = organizationDatabase(context.env);
   try {
-    if (c.req.path.endsWith('/personal'))
-      return c.json(await personalModeration(db, c.get('subject'), value));
-    if (c.req.path.endsWith('/mutate')) {
+    if (context.req.path.endsWith('/personal'))
+      return context.json(await personalModeration(db, context.get('subject'), value));
+    if (context.req.path.endsWith('/mutate')) {
       const results =
         value.action === 'bulk'
-          ? await bulkSanctions(db, c.get('subject'), value)
-          : [await mutateSanction(db, c.get('subject'), value)];
+          ? await bulkSanctions(db, context.get('subject'), value)
+          : [await mutateSanction(db, context.get('subject'), value)];
       for (const result of results) {
         const [scope] = await db
           .select()
@@ -34,22 +34,22 @@ export const manageUsers: Handler<AuthEnv> = async (c) => {
         if (scope)
           await Promise.allSettled(
             result.instanceIds.map((id) =>
-              c.env.MATCHMAKER.getByName(scope.organizationId).refreshWaiting(
+              context.env.MATCHMAKER.getByName(scope.organizationId).refreshWaiting(
                 result.actorId,
                 id,
               ),
             ),
           );
       }
-      return c.json({ ok: true });
+      return context.json({ ok: true });
     }
-    if (c.req.path.endsWith('/workflow')) {
+    if (context.req.path.endsWith('/workflow')) {
       let evidence: typeof matchResults.$inferSelect.payload | undefined;
       if (value.action === 'report') {
-        const binding = c.env.GAME_HYPERDRIVE,
-          url = binding?.connectionString ?? c.env.GAME_DATABASE_URL;
+        const binding = context.env.GAME_HYPERDRIVE,
+          url = binding?.connectionString ?? context.env.GAME_DATABASE_URL;
         if (!url) throw new OrganizationError('RESULTS_UNAVAILABLE', 503);
-        const reader = connectDatabase(url, c.env.DATABASE_CA_CERT, !!binding);
+        const reader = connectDatabase(url, context.env.DATABASE_CA_CERT, !!binding);
         try {
           const rows = await reader.db
             .select()
@@ -60,24 +60,28 @@ export const manageUsers: Handler<AuthEnv> = async (c) => {
           await reader.close();
         }
       }
-      return c.json(await moderationWorkflow(db, c.get('subject'), value, evidence));
+      return context.json(
+        await moderationWorkflow(db, context.get('subject'), value, evidence),
+      );
     }
-    const result = await moderationOverview(db, c.get('subject'), value);
-    if (c.req.path.endsWith('/history')) {
+    const result = await moderationOverview(db, context.get('subject'), value);
+    if (context.req.path.endsWith('/history')) {
       if (!result.target) throw new OrganizationError('ACCOUNT_NOT_FOUND', 404);
       const [scope] = await db
         .select()
         .from(instances)
         .where(eq(instances.id, validId(value.instanceId)));
-      const report = result.reports?.find((r) => r.id === value.reportId);
+      const report = result.reports?.find(
+        (candidateReport) => candidateReport.id === value.reportId,
+      );
       if (!scope || (value.reportId && !report))
         throw new OrganizationError('REPORT_NOT_FOUND', 404);
-      const binding = c.env.GAME_HYPERDRIVE,
-        url = binding?.connectionString ?? c.env.GAME_DATABASE_URL;
+      const binding = context.env.GAME_HYPERDRIVE,
+        url = binding?.connectionString ?? context.env.GAME_DATABASE_URL;
       if (!url) throw new OrganizationError('RESULTS_UNAVAILABLE', 503);
-      const reader = connectDatabase(url, c.env.DATABASE_CA_CERT, !!binding);
+      const reader = connectDatabase(url, context.env.DATABASE_CA_CERT, !!binding);
       try {
-        return c.json(
+        return context.json(
           await readInvestigation(
             reader.db,
             scope.owner,
@@ -97,7 +101,7 @@ export const manageUsers: Handler<AuthEnv> = async (c) => {
         await reader.close();
       }
     }
-    return c.json(result);
+    return context.json(result);
   } finally {
     await close();
   }

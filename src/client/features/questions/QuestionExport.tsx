@@ -70,8 +70,8 @@ export default function QuestionExport({
                 })),
               );
               if (!data.questions.length) setError('出力できる問題がありません。');
-            } catch (e) {
-              setError((e as Error).message);
+            } catch (caughtError) {
+              setError((caughtError as Error).message);
             } finally {
               setBusy(false);
             }

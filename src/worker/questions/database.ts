@@ -355,22 +355,22 @@ async function readQuestionOverview(
     ctx.review &&
     needs('reports') &&
     readRecords &&
-    reviewCases.some((c) => c.questionId.startsWith('original-'))
+    reviewCases.some((reviewCase) => reviewCase.questionId.startsWith('original-'))
   ) {
-    const reported = new Set(reviewCases.map((c) => c.questionId));
+    const reported = new Set(reviewCases.map((reviewCase) => reviewCase.questionId));
     for (const record of await readRecords(ctx.instance.owner)) {
       if (
         !record.definition.original ||
         Date.now() - record.result.finishedAt >= 30 * 86400000
       )
         continue;
-      for (const q of record.completedQuestions ?? [])
-        if (reported.has(q.id))
-          reportedOriginals[q.id] = {
-            text: q.text,
-            answer: q.readings[0],
-            displayAnswer: q.displayAnswer,
-            explanation: q.explanation,
+      for (const question of record.completedQuestions ?? [])
+        if (reported.has(question.id))
+          reportedOriginals[question.id] = {
+            text: question.text,
+            answer: question.readings[0],
+            displayAnswer: question.displayAnswer,
+            explanation: question.explanation,
           };
     }
   }
@@ -387,32 +387,40 @@ async function readQuestionOverview(
       .from(questionVersions)
       .where(eq(questionVersions.owner, ctx.instance.owner));
     for (const row of rows) {
-      const level = levels.find((l) => l.seriesId === row.seriesId);
+      const level = levels.find(
+        (candidateLevel) => candidateLevel.seriesId === row.seriesId,
+      );
       const stats = (level?.stats ?? []).filter(
-        (s) =>
-          (list.band === undefined || list.band === 'all' || s.band === list.band) &&
+        (statsSample) =>
+          (list.band === undefined ||
+            list.band === 'all' ||
+            statsSample.band === list.band) &&
           (list.players === undefined ||
             list.players === 'all' ||
-            s.players === list.players),
+            statsSample.players === list.players),
       );
-      const trials = stats.reduce((n, s) => n + s.trials, 0),
-        correct = stats.reduce((n, s) => n + s.correct, 0);
+      const trials = stats.reduce((sum, statsSample) => sum + statsSample.trials, 0),
+        correct = stats.reduce((sum, statsSample) => sum + statsSample.correct, 0);
       const pending = reviewCases.filter(
-        (c) =>
-          !c.resolved &&
-          (c.questionId === row.publishedId ||
-            versions.some((v) => v.id === c.questionId && v.series === row.seriesId)),
+        (reviewCase) =>
+          !reviewCase.resolved &&
+          (reviewCase.questionId === row.publishedId ||
+            versions.some(
+              (questionVersion) =>
+                questionVersion.id === reviewCase.questionId &&
+                questionVersion.series === row.seriesId,
+            )),
       );
       metrics.set(row.id, {
         rate: trials ? correct / trials : null,
         trials,
         difficulty: level?.current ?? row.input.difficulty,
         fixed: level?.fixed ?? false,
-        reports: pending.reduce((n, c) => n + c.count, 0),
+        reports: pending.reduce((sum, reviewCase) => sum + reviewCase.count, 0),
         review: pending.some(
-          (c) =>
-            c.count >=
-            (c.kind === 'defect'
+          (reviewCase) =>
+            reviewCase.count >=
+            (reviewCase.kind === 'defect'
               ? ctx.config.reportThreshold
               : ctx.config.categoryReportThreshold),
         ),
@@ -420,17 +428,20 @@ async function readQuestionOverview(
     }
     if (metricSort)
       rows = rows
-        .sort((a, b) => {
+        .sort((leftSubmission, rightSubmission) => {
           const key = sorting.sort as keyof NonNullable<
             QuestionOverview['submissions'][number]['metrics']
           >;
-          const value = (r: typeof a) => {
-            const v = metrics.get(r.id)?.[key] ?? null;
-            return typeof v === 'boolean' ? Number(v) : v;
+          const value = (submission: typeof leftSubmission) => {
+            const metricValue = metrics.get(submission.id)?.[key] ?? null;
+            return typeof metricValue === 'boolean' ? Number(metricValue) : metricValue;
           };
           return (
-            compareValues(value(a), value(b), sorting.direction) ||
-            b.id.localeCompare(a.id)
+            compareValues(
+              value(leftSubmission),
+              value(rightSubmission),
+              sorting.direction,
+            ) || rightSubmission.id.localeCompare(leftSubmission.id)
           );
         })
         .slice((page - 1) * list.pageSize, page * list.pageSize);
@@ -473,11 +484,11 @@ async function readQuestionOverview(
             .where(
               inArray(
                 organizationAccounts.actorId,
-                rows.map((r) => r.authorId),
+                rows.map((submission) => submission.authorId),
               ),
             )
         : []
-      ).map((r) => [r.id, r.name ?? '表示名未登録']),
+      ).map((account) => [account.id, account.name ?? '表示名未登録']),
     ),
     ...(list ? { pagination: { page, pageSize: list.pageSize, total } } : {}),
     categoryRequests: [...latestCategory.values()]
@@ -604,7 +615,7 @@ async function publish(
 ) {
   const id = crypto.randomUUID();
   const owner = ctx.instance.owner;
-  const q = row.input;
+  const questionInput = row.input;
   const [previous] = row.publishedId
     ? await db
         .select()
@@ -629,7 +640,8 @@ async function publish(
   });
   const generation =
     previous &&
-    (await contentHash(core(previous.payload))) === (await contentHash(core(q)))
+    (await contentHash(core(previous.payload))) ===
+      (await contentHash(core(questionInput)))
       ? (previous.payload.generation ?? id)
       : id;
   const [currentDifficulty] = await db
@@ -644,7 +656,7 @@ async function publish(
   const effectiveDifficulty =
     currentDifficulty?.fixed || currentDifficulty?.generation === generation
       ? currentDifficulty.current
-      : q.difficulty;
+      : questionInput.difficulty;
   await db
     .insert(difficulty)
     .values({
@@ -676,17 +688,17 @@ async function publish(
     payload: {
       id,
       version: 1,
-      text: q.text,
-      answer: q.readings[0],
-      readings: q.readings,
-      displayAnswer: q.displayAnswer,
-      explanation: q.explanation,
-      source: q.source || '投稿問題',
+      text: questionInput.text,
+      answer: questionInput.readings[0],
+      readings: questionInput.readings,
+      displayAnswer: questionInput.displayAnswer,
+      explanation: questionInput.explanation,
+      source: questionInput.source || '投稿問題',
       permission: 'instance',
       demoAllowed: true,
       distractors: dummyCharacters,
-      traps: q.traps,
-      categoryId: q.categoryId,
+      traps: questionInput.traps,
+      categoryId: questionInput.categoryId,
       difficulty: effectiveDifficulty,
       seriesId: row.seriesId,
       generation,
@@ -810,11 +822,16 @@ export async function questionMutation(
         .select()
         .from(categories)
         .where(eq(categories.instanceId, instanceId));
-      const questions: TransferQuestion[] = rows.map((r) => ({
-        input: r.input,
-        category: categoryRows.find((c) => c.id === r.input.categoryId)?.name ?? '',
-        stopped: r.stopped || r.reviewHold,
-        provenance: r.provenance ?? { author: r.authorName, instance: ctx.instance.name },
+      const questions: TransferQuestion[] = rows.map((submission) => ({
+        input: submission.input,
+        category:
+          categoryRows.find((reviewCase) => reviewCase.id === submission.input.categoryId)
+            ?.name ?? '',
+        stopped: submission.stopped || submission.reviewHold,
+        provenance: submission.provenance ?? {
+          author: submission.authorName,
+          instance: ctx.instance.name,
+        },
       }));
       return { questions };
     }
@@ -957,9 +974,9 @@ export async function questionMutation(
       let portable: TransferQuestion[];
       try {
         portable = parseTransfer(String(input.source));
-      } catch (e) {
+      } catch (error) {
         throw new QuestionError('INVALID_IMPORT', 400, [
-          { path: 'JSON', message: (e as Error).message },
+          { path: 'JSON', message: (error as Error).message },
         ]);
       }
       if (
@@ -970,7 +987,9 @@ export async function questionMutation(
         fail('INVALID_CATEGORY', 400);
       const mapping = input.mapping as Record<string, { id?: string; name?: string }>;
       const mapped = new Map<string, string>();
-      for (const name of new Set(portable.map((r) => r.category))) {
+      for (const name of new Set(
+        portable.map((transferredQuestion) => transferredQuestion.category),
+      )) {
         const dest = mapping[name];
         if (!dest) fail('INVALID_CATEGORY', 400);
         if (dest.name) {
@@ -1076,7 +1095,7 @@ export async function questionMutation(
       )
         fail('INVALID_CHANGES', 400);
       const changes = input.changes as { id: string; revision: number }[];
-      if (new Set(changes.map((r) => r.id)).size !== changes.length)
+      if (new Set(changes.map((change) => change.id)).size !== changes.length)
         fail('DUPLICATE_QUESTION', 400);
       for (const change of changes) {
         try {
@@ -1106,7 +1125,11 @@ export async function questionMutation(
         organizationId: ctx.organization.id,
         operatorId: actorId,
         requestHash: hash,
-        details: { instanceId, action: input.action, ids: changes.map((r) => r.id) },
+        details: {
+          instanceId,
+          action: input.action,
+          ids: changes.map((change) => change.id),
+        },
       });
       return { ok: true };
     }

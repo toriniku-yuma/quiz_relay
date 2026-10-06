@@ -180,8 +180,9 @@ export default function GameBoard({ game }: { game: Game }) {
       )}
       <Panel title="参加者">
         <p className="mt-3 text-sm">
-          回答者 {state.players.filter((p) => p.role !== 'presenter').length} /{' '}
-          {state.playersRequired} 人
+          回答者{' '}
+          {state.players.filter((participant) => participant.role !== 'presenter').length}{' '}
+          / {state.playersRequired} 人
         </p>
         <ul className="mt-4 divide-y divide-line">
           {state.players.map((entry) => (

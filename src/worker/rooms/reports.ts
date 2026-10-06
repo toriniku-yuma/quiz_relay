@@ -38,7 +38,7 @@ export async function history(env: Env, identity: Identity, query: ResultsQuery 
     if (identity.actor.guest) {
       result.ranking = [];
       result.history = result.history.filter(
-        (r) => Date.now() - Date.parse(r.finishedAt) < guestLifetime,
+        (matchResult) => Date.now() - Date.parse(matchResult.finishedAt) < guestLifetime,
       );
     }
     return result;
@@ -106,10 +106,12 @@ export async function report(
           identity.instance.id,
           identity.actor.id,
           input,
-          evidence.completedQuestions?.find((q) => q.id === input.questionId),
+          evidence.completedQuestions?.find(
+            (question) => question.id === input.questionId,
+          ),
         );
       } else if (input.action === 'user') {
-        const target = evidence.players.find((p) => p.id === input.actorId);
+        const target = evidence.players.find((player) => player.id === input.actorId);
         if (
           !target ||
           target.guest ||

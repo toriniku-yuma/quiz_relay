@@ -66,8 +66,8 @@ beforeEach(async () => {
     questionLimit: 7,
     noDisqualification: false,
   };
-  const manifest = questions.map((q) => ({
-    ...q,
+  const manifest = questions.map((question) => ({
+    ...question,
     ...questionProvenance,
     version: 1,
     distractors: [...dummyCharacters],
@@ -143,9 +143,9 @@ async function lobby(count = 2, presenter = false) {
     stub,
     sockets,
     close: () =>
-      sockets.forEach((s) => {
+      sockets.forEach((socket) => {
         try {
-          s.close();
+          socket.close();
         } catch {}
       }),
   };
@@ -182,7 +182,7 @@ it('8回答者＋専任。準備完了・部屋主開始、未出題内容はロ
       games.push(await socket(game, fixed.match.tokens[actor(i).id], false));
     expect((await childState(game))?.phase).toBe('REVEALING');
     expect(
-      (await childState(game))?.players.filter((p) => p.role === 'presenter'),
+      (await childState(game))?.players.filter((player) => player.role === 'presenter'),
     ).toHaveLength(1);
     const current = await childState(game);
     if (!current) throw new Error('state');
@@ -206,8 +206,8 @@ it('8回答者＋専任。準備完了・部屋主開始、未出題内容はロ
         socket.send(JSON.stringify(command));
       });
     const replies = await Promise.all(games.map((socket, i) => ack(socket, commands[i])));
-    expect(replies.filter((r) => r.ok)).toHaveLength(1);
-    const first = replies.findIndex((r) => r.ok);
+    expect(replies.filter((reply) => reply.ok)).toHaveLength(1);
+    const first = replies.findIndex((reply) => reply.ok);
     expect(
       await runInDurableObject(
         game,
@@ -220,7 +220,9 @@ it('8回答者＋専任。準備完了・部屋主開始、未出題内容はロ
       stored.state.phase = 'JUDGED';
       stored.state.judgment = { actorId: actor(first + 1).id, result: 'correct' };
       stored.state.deadline = Date.now() - 1;
-      const presenter = stored.state.players.find((p) => p.role === 'presenter');
+      const presenter = stored.state.players.find(
+        (player) => player.role === 'presenter',
+      );
       if (presenter) presenter.connected = false;
       advance(stored.state, Date.now());
       await ctx.storage.transaction((tx) => writeStored(tx, 'room', stored));
@@ -240,8 +242,8 @@ it('8回答者＋専任。準備完了・部屋主開始、未出題内容はロ
       ),
     ).toBe(0);
   } finally {
-    games.forEach((s) => {
-      s.close();
+    games.forEach((socket) => {
+      socket.close();
     });
     room.close();
   }
@@ -349,15 +351,15 @@ it('開始の応答不明をalarmで回復し、失効を先に受けた子sessi
     await runDurableObjectAlarm(room.stub);
     expect((await read(room.stub))?.starting).toBeUndefined();
     expect(await childState(child)).toBeDefined();
-    expect((await childState(child))?.players.some((p) => p.id === actor(0).id)).toBe(
-      false,
-    );
+    expect(
+      (await childState(child))?.players.some((player) => player.id === actor(0).id),
+    ).toBe(false);
     expect(
       await child.initializeRoomMatch(definition, scope, [actor(0), actor(1)], tokens),
     ).toEqual({ ok: true });
-    expect((await childState(child))?.players.some((p) => p.id === actor(0).id)).toBe(
-      false,
-    );
+    expect(
+      (await childState(child))?.players.some((player) => player.id === actor(0).id),
+    ).toBe(false);
     expect(
       await runInDurableObject(
         room.stub,
@@ -427,8 +429,9 @@ it('部屋主は接続中の入室順へ交代し、復帰で戻さず専任を�
       const host = ctx
         .getWebSockets()
         .find(
-          (s) =>
-            (s.deserializeAttachment() as { actorId: string }).actorId === actor(0).id,
+          (socket) =>
+            (socket.deserializeAttachment() as { actorId: string }).actorId ===
+            actor(0).id,
         );
       if (!host) throw new Error('host');
       await instance.webSocketClose(host);
@@ -509,11 +512,11 @@ it('500問の持込を保存・開始・DO復帰しても内容を維持する',
       saved.settings.source = 'original';
       await ctx.storage.transaction((tx) => writeStored(tx, 'user-room', saved));
     });
-    const manifest = questions.map((q, i) => ({
-      ...q,
+    const manifest = questions.map((question, i) => ({
+      ...question,
       id: `original-heavy-${i}`,
       version: 1,
-      answer: q.readings[0],
+      answer: question.readings[0],
       source: '',
       permission: '部屋用持込',
       demoAllowed: true as const,
@@ -536,12 +539,12 @@ it('500問の持込を保存・開始・DO復帰しても内容を維持する',
     await runInDurableObject(child, async (_instance, ctx) => {
       const stored = await readStored<{ state: State }>(ctx.storage, 'room');
       if (!stored) throw new Error('room');
-      stored.state.completedQuestions = manifest.slice(0, 100).map((q) => ({
-        id: q.id,
-        text: q.text,
-        displayAnswer: q.displayAnswer,
-        readings: q.readings,
-        explanation: q.explanation,
+      stored.state.completedQuestions = manifest.slice(0, 100).map((question) => ({
+        id: question.id,
+        text: question.text,
+        displayAnswer: question.displayAnswer,
+        readings: question.readings,
+        explanation: question.explanation,
         source: '',
         correct: false,
         participants: [actor(0).id, actor(1).id],
@@ -624,7 +627,7 @@ it('ロビーsession期限と空室10分を消去し、持込・ゲスト名は3
     await room.stub.lobbyStatus();
     const stored = await read(room.stub);
     expect(stored?.original).toEqual([]);
-    expect(stored?.members.some((m) => m.id === actor(0).id)).toBe(false);
+    expect(stored?.members.some((member) => member.id === actor(0).id)).toBe(false);
     expect(stored?.members[0].name).toBe('ゲスト');
     await runInDurableObject(room.stub, async (instance, ctx) => {
       for (const socket of ctx.getWebSockets()) await instance.webSocketClose(socket);

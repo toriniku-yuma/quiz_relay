@@ -49,8 +49,11 @@ export function useWithdrawal(subject?: string) {
     const check = async () => {
       try {
         await status(receipt, controller.signal);
-      } catch (e) {
-        if (!stopped) setError(e instanceof Error ? e.message : '通信に失敗しました。');
+      } catch (caughtError) {
+        if (!stopped)
+          setError(
+            caughtError instanceof Error ? caughtError.message : '通信に失敗しました。',
+          );
       }
     };
     void check();
@@ -86,12 +89,12 @@ export function useWithdrawal(subject?: string) {
         });
         await status(request);
       }
-    } catch (e) {
+    } catch (caughtError) {
       if (
-        e instanceof OrganizationRequestError &&
-        e.status >= 400 &&
-        e.status < 500 &&
-        e.status !== 408
+        caughtError instanceof OrganizationRequestError &&
+        caughtError.status >= 400 &&
+        caughtError.status < 500 &&
+        caughtError.status !== 408
       ) {
         setReceipt(null);
         try {
@@ -100,7 +103,11 @@ export function useWithdrawal(subject?: string) {
           // The server rejected this request; keep the error visible even when storage is unavailable.
         }
       }
-      setError(e instanceof Error ? e.message : '退会結果を確認できませんでした。');
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : '退会結果を確認できませんでした。',
+      );
     } finally {
       sending.current = false;
       setBusy(false);

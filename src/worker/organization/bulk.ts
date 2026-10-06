@@ -29,7 +29,7 @@ export async function bulkSanctions(
   )
     throw new OrganizationError('INVALID_SANCTION', 400);
   const targets = input.targets as { actorId: string; expected: string }[];
-  if (new Set(targets.map((t) => t.actorId)).size !== targets.length)
+  if (new Set(targets.map((target) => target.actorId)).size !== targets.length)
     throw new OrganizationError('INVALID_SANCTION', 400);
   return db.transaction(async (tx) => {
     const initial = await context(tx, subject, instanceId);
@@ -42,10 +42,12 @@ export async function bulkSanctions(
       .select()
       .from(moderationRequests)
       .where(eq(moderationRequests.id, operationId));
-    const results = targets.map((t) => ({
-      actorId: t.actorId,
+    const results = targets.map((target) => ({
+      actorId: target.actorId,
       instanceIds:
-        input.organizationWide === true ? ctx.scopes.map((s) => s.id) : [instanceId],
+        input.organizationWide === true
+          ? ctx.scopes.map((instance) => instance.id)
+          : [instanceId],
     }));
     if (receipt) {
       if (receipt.operatorId !== ctx.account.actorId || receipt.requestHash !== hash)
@@ -76,10 +78,11 @@ export async function bulkSanctions(
           });
         else
           for (const row of current.filter(
-            (r) =>
-              activeSanction(r) &&
-              r.kind === input.kind &&
-              r.instanceId === (input.organizationWide === true ? null : instanceId),
+            (sanction) =>
+              activeSanction(sanction) &&
+              sanction.kind === input.kind &&
+              sanction.instanceId ===
+                (input.organizationWide === true ? null : instanceId),
           ))
             await mutateSanction(tx, subject, {
               ...input,
@@ -103,7 +106,7 @@ export async function bulkSanctions(
       details: {
         instanceId,
         action: 'bulk-sanctions',
-        targets: targets.map((t) => t.actorId),
+        targets: targets.map((target) => target.actorId),
       },
     });
     return results;

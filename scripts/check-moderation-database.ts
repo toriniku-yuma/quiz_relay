@@ -230,8 +230,8 @@ export async function verifyModeration(
         eventPageSize: 10,
       });
       assert.deepEqual(
-        second.events.map((r) => r.id),
-        full.events.slice(10, 20).map((r) => r.id),
+        second.events.map((event) => event.id),
+        full.events.slice(10, 20).map((event) => event.id),
       );
       assert.equal(second.eventsPagination?.total, first.eventsPagination.total);
     }
@@ -245,7 +245,7 @@ export async function verifyModeration(
   });
   assert.equal(first.events.length + tail.events.length, first.eventsPagination.total);
   assert.equal(
-    new Set([...first.events, ...tail.events].map((r) => r.id)).size,
+    new Set([...first.events, ...tail.events].map((event) => event.id)).size,
     first.eventsPagination.total,
   );
   assert.deepEqual(await db.select().from(questionSubmissions), original);
@@ -257,7 +257,9 @@ export async function verifyModeration(
     run((tx) => bulkSanctions(tx, 'reviewer', body));
   const snapshot = async (actorId: string) =>
     sanctionRevision(
-      (await db.select().from(moderationSanctions)).filter((r) => r.actorId === actorId),
+      (await db.select().from(moderationSanctions)).filter(
+        (sanction) => sanction.actorId === actorId,
+      ),
     );
   const batch = {
     instanceId,
@@ -291,7 +293,10 @@ export async function verifyModeration(
     batchAction: 'revoke',
     operationId: crypto.randomUUID(),
     targets: await Promise.all(
-      batch.targets.map(async (t) => ({ ...t, expected: await snapshot(t.actorId) })),
+      batch.targets.map(async (target) => ({
+        ...target,
+        expected: await snapshot(target.actorId),
+      })),
     ),
   };
   await bulk(revoke);
@@ -300,7 +305,10 @@ export async function verifyModeration(
     ...revoke,
     operationId: crypto.randomUUID(),
     targets: await Promise.all(
-      batch.targets.map(async (t) => ({ ...t, expected: await snapshot(t.actorId) })),
+      batch.targets.map(async (target) => ({
+        ...target,
+        expected: await snapshot(target.actorId),
+      })),
     ),
   });
   console.log('PASS: bulk sanction protection rollback, replay and no-op revocation');

@@ -11,8 +11,16 @@ it('列変更は列の初期方向、同じ列は反転し、欠損値は常に�
     sort: 'count',
     direction: 'desc',
   });
-  expect([null, 2, 1].sort((a, b) => compareValues(a, b, 'asc'))).toEqual([1, 2, null]);
-  expect([null, 2, 1].sort((a, b) => compareValues(a, b, 'desc'))).toEqual([2, 1, null]);
+  expect([null, 2, 1].sort((left, right) => compareValues(left, right, 'asc'))).toEqual([
+    1,
+    2,
+    null,
+  ]);
+  expect([null, 2, 1].sort((left, right) => compareValues(left, right, 'desc'))).toEqual([
+    2,
+    1,
+    null,
+  ]);
   expect(sortInput({}, ['name'], 'name')).toEqual({ sort: 'name', direction: 'desc' });
   expect(() => sortInput({ sort: 'unknown' }, ['name'], 'name')).toThrow('INVALID_SORT');
   expect(() => sortInput({ direction: 'invalid' }, ['name'], 'name')).toThrow(

@@ -3,7 +3,7 @@ import { useResults } from '../src/client/features/results/useResults';
 import { API_PATHS } from '../src/shared/api-paths';
 import type { HistoryEntry, ResultsOverview, ResultsQuery } from '../src/shared/results';
 
-const h = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
   effects: [] as Array<() => undefined | (() => void)>,
@@ -11,35 +11,35 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('react', () => ({
   useState: (value: unknown) => {
-    const index = h.cursor++;
-    if (index >= h.slots.length) h.slots[index] = value;
+    const index = mocks.cursor++;
+    if (index >= mocks.slots.length) mocks.slots[index] = value;
     return [
-      h.slots[index],
+      mocks.slots[index],
       (next: unknown) => {
-        h.slots[index] = typeof next === 'function' ? next(h.slots[index]) : next;
+        mocks.slots[index] = typeof next === 'function' ? next(mocks.slots[index]) : next;
       },
     ];
   },
   useRef: (value: unknown) => {
-    const index = h.cursor++;
-    if (index >= h.slots.length) h.slots[index] = { current: value };
-    return h.slots[index];
+    const index = mocks.cursor++;
+    if (index >= mocks.slots.length) mocks.slots[index] = { current: value };
+    return mocks.slots[index];
   },
   useCallback: (callback: unknown) => callback,
-  useEffect: (effect: () => undefined | (() => void)) => h.effects.push(effect),
+  useEffect: (effect: () => undefined | (() => void)) => mocks.effects.push(effect),
 }));
-vi.mock('../src/client/features/rooms/api', () => ({ playRequest: h.request }));
+vi.mock('../src/client/features/rooms/api', () => ({ playRequest: mocks.request }));
 beforeEach(() => {
-  h.slots = [];
-  h.cursor = 0;
-  h.effects = [];
-  h.request.mockReset();
+  mocks.slots = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
+  mocks.request.mockReset();
   vi.stubGlobal('window', new EventTarget());
 });
 afterEach(() => vi.unstubAllGlobals());
 function render(query: ResultsQuery = { section: 'history' }, guest = false) {
-  h.cursor = 0;
-  h.effects = [];
+  mocks.cursor = 0;
+  mocks.effects = [];
   // biome-ignore lint/correctness/useHookAtTopLevel: Hook state harness for paginated reads and late responses.
   return useResults('self', 'instance-a', query, guest);
 }
@@ -61,7 +61,7 @@ const page = (
 ): ResultsOverview => ({ history: ids.map(entry), ranking: [], nextCursor });
 it('追加取得失敗でも表示とcursorを保持し、同じ読取を再試行して重複を除く', async () => {
   const cursor = { finishedAt: '2026-10-01T00:00:00.000Z', resultId: 'a' };
-  h.request
+  mocks.request
     .mockResolvedValueOnce(page(['a'], cursor))
     .mockRejectedValueOnce(new Error('offline'))
     .mockResolvedValueOnce(page(['a', 'b']));
@@ -70,15 +70,15 @@ it('追加取得失敗でも表示とcursorを保持し、同じ読取を再試�
   expect(render().data?.history.map((row) => row.resultId)).toEqual(['a']);
   expect(render().error).not.toBe('');
   await render().retry();
-  expect(h.request.mock.calls[1].slice(0, 3)).toEqual(
-    h.request.mock.calls[2].slice(0, 3),
+  expect(mocks.request.mock.calls[1].slice(0, 3)).toEqual(
+    mocks.request.mock.calls[2].slice(0, 3),
   );
-  expect(h.request.mock.calls[1][1]).toEqual({ section: 'history', cursor });
+  expect(mocks.request.mock.calls[1][1]).toEqual({ section: 'history', cursor });
   expect(render().data?.history.map((row) => row.resultId)).toEqual(['a', 'b']);
 });
 it('絞込先の描画後に届いた旧応答を無視し、ゲスト用APIで詳細を読む', async () => {
   let resolve!: (value: ResultsOverview) => void;
-  h.request.mockReturnValueOnce(
+  mocks.request.mockReturnValueOnce(
     new Promise<ResultsOverview>((done) => {
       resolve = done;
     }),
@@ -89,10 +89,10 @@ it('絞込先の描画後に届いた旧応答を無視し、ゲスト用APIで�
   resolve(page(['old']));
   await earlier;
   expect(render(nextQuery).data).toBeNull();
-  h.request.mockResolvedValue(page(['detail']));
+  mocks.request.mockResolvedValue(page(['detail']));
   const detail = { section: 'history' as const, resultId: crypto.randomUUID() };
   await render(detail, true).refresh();
-  expect(h.request).toHaveBeenLastCalledWith(
+  expect(mocks.request).toHaveBeenLastCalledWith(
     API_PATHS.playResults,
     detail,
     'instance-a',

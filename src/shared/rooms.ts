@@ -102,14 +102,14 @@ export function validateBroughtQuestion(value: unknown): BroughtQuestion {
     !Array.isArray(input.readings) ||
     input.readings.length < 1 ||
     input.readings.length > 8 ||
-    input.readings.some((r) => typeof r !== 'string')
+    input.readings.some((reading) => typeof reading !== 'string')
   )
     throw new Error('読みは1〜8種類です。');
   const readings = [
-    ...new Set(input.readings.map((r: string) => r.normalize('NFKC').trim())),
+    ...new Set(input.readings.map((reading: string) => reading.normalize('NFKC').trim())),
   ];
   const issues = readingIssues(readings);
-  if (issues.length) throw new Error(issues.map((i) => i.message).join('\n'));
+  if (issues.length) throw new Error(issues.map((issue) => issue.message).join('\n'));
   return {
     text: String(input.text),
     displayAnswer: String(input.displayAnswer),
@@ -121,9 +121,9 @@ export function validateBroughtQuestion(value: unknown): BroughtQuestion {
 export function validateBroughtSet(value: unknown): BroughtQuestion[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 500)
     throw new Error('持込問題は1〜500問です。');
-  return value.map((q, i) => {
+  return value.map((question, i) => {
     try {
-      return validateBroughtQuestion(q);
+      return validateBroughtQuestion(question);
     } catch (error) {
       throw new Error(
         `問題${i + 1}：${error instanceof Error ? error.message : '入力を確認してください。'}`,
@@ -147,38 +147,43 @@ export function parseBroughtJson(source: string): BroughtQuestion[] {
 export function validateRoomSettings(value: unknown): RoomSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('INVALID_ROOM_SETTINGS');
-  const v = value as RoomSettings;
+  const settings = value as RoomSettings;
   if (
-    Object.keys(v).sort().join(',') !==
+    Object.keys(settings).sort().join(',') !==
       Object.keys(newRoomSettings(false)).sort().join(',') ||
-    typeof v.name !== 'string' ||
-    !v.name.trim() ||
-    graphemes(v.name).length > 80 ||
+    typeof settings.name !== 'string' ||
+    !settings.name.trim() ||
+    graphemes(settings.name).length > 80 ||
     !['public', 'presenter', 'guests'].every(
-      (k) => typeof v[k as keyof RoomSettings] === 'boolean',
+      (key) => typeof settings[key as keyof RoomSettings] === 'boolean',
     ) ||
-    !Number.isInteger(v.capacity) ||
-    v.capacity < 2 ||
-    v.capacity > 8 ||
-    !Array.isArray(v.categories) ||
-    v.categories.length > 100 ||
-    v.categories.some((c) => typeof c !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(c)) ||
-    !Array.isArray(v.difficulties) ||
-    !v.difficulties.length ||
-    v.difficulties.some((d) => ![0, 1, 2].includes(d)) ||
-    !['target', 'questions'].includes(v.winMode) ||
-    !Number.isInteger(v.count) ||
-    v.count < 1 ||
-    v.count > 100 ||
-    (v.mistakes !== null &&
-      (!Number.isInteger(v.mistakes) || v.mistakes < 1 || v.mistakes > 100)) ||
-    !['normal', 'original'].includes(v.source)
+    !Number.isInteger(settings.capacity) ||
+    settings.capacity < 2 ||
+    settings.capacity > 8 ||
+    !Array.isArray(settings.categories) ||
+    settings.categories.length > 100 ||
+    settings.categories.some(
+      (categoryId) =>
+        typeof categoryId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(categoryId),
+    ) ||
+    !Array.isArray(settings.difficulties) ||
+    !settings.difficulties.length ||
+    settings.difficulties.some((difficulty) => ![0, 1, 2].includes(difficulty)) ||
+    !['target', 'questions'].includes(settings.winMode) ||
+    !Number.isInteger(settings.count) ||
+    settings.count < 1 ||
+    settings.count > 100 ||
+    (settings.mistakes !== null &&
+      (!Number.isInteger(settings.mistakes) ||
+        settings.mistakes < 1 ||
+        settings.mistakes > 100)) ||
+    !['normal', 'original'].includes(settings.source)
   )
     throw new Error('INVALID_ROOM_SETTINGS');
   return {
-    ...v,
-    name: v.name.trim(),
-    categories: [...new Set(v.categories)],
-    difficulties: [...new Set(v.difficulties)],
+    ...settings,
+    name: settings.name.trim(),
+    categories: [...new Set(settings.categories)],
+    difficulties: [...new Set(settings.difficulties)],
   };
 }

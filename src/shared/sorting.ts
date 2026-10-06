@@ -68,14 +68,14 @@ export function nextSort(
   };
 }
 export function compareValues(
-  a: string | number | null,
-  b: string | number | null,
+  left: string | number | null,
+  right: string | number | null,
   direction: SortDirection,
 ) {
-  if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1;
+  if (left === null || right === null) return left === right ? 0 : left === null ? 1 : -1;
   const result =
-    typeof a === 'number' && typeof b === 'number'
-      ? a - b
-      : String(a).localeCompare(String(b), 'ja');
+    typeof left === 'number' && typeof right === 'number'
+      ? left - right
+      : String(left).localeCompare(String(right), 'ja');
   return direction === 'asc' ? result : -result;
 }

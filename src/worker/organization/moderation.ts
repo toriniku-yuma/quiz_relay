@@ -255,7 +255,7 @@ export async function moderationOverview(
               .select({ actorId: accounts.actorId, name: accounts.displayName })
               .from(accounts)
               .where(eq(accounts.organizationId, ctx.organization.id))
-          ).map((r) => [r.actorId, r.name ?? '表示名未登録']),
+          ).map((account) => [account.actorId, account.name ?? '表示名未登録']),
         ),
         reports: (
           await tx
@@ -268,7 +268,7 @@ export async function moderationOverview(
               ),
             )
             .orderBy(desc(userReports.createdAt))
-        ).map((r) => ({ ...r, reporterName: '通報者' })),
+        ).map((report) => ({ ...report, reporterName: '通報者' })),
         appeals: rows.length
           ? (
               await tx
@@ -279,13 +279,15 @@ export async function moderationOverview(
                     eq(sanctionAppeals.actorId, target.actorId),
                     inArray(
                       sanctionAppeals.sanctionId,
-                      rows.map((r) => r.id),
+                      rows.map((sanction) => sanction.id),
                     ),
                   ),
                 )
-            ).flatMap((r) => {
-              const sanction = rows.find((s) => s.id === r.sanctionId);
-              return sanction ? [{ ...r, sanction }] : [];
+            ).flatMap((appeal) => {
+              const sanction = rows.find(
+                (candidateSanction) => candidateSanction.id === appeal.sanctionId,
+              );
+              return sanction ? [{ ...appeal, sanction }] : [];
             })
           : [],
 
@@ -377,7 +379,7 @@ export async function moderationOverview(
       )
       .limit(paging.pageSize)
       .offset((page - 1) * paging.pageSize);
-    const ids = users.map((r) => r.actorId);
+    const ids = users.map((user) => user.actorId);
     const userGrants = ids.length
       ? await tx
           .select()
@@ -406,15 +408,15 @@ export async function moderationOverview(
     return {
       ...base,
       pagination: { page, pageSize: paging.pageSize, total },
-      users: users.map((r) => ({
-        ...view(r),
-        reportCount: r.reportCount,
-        appealCount: r.appealCount,
+      users: users.map((user) => ({
+        ...view(user),
+        reportCount: user.reportCount,
+        appealCount: user.appealCount,
         permissions: userGrants
-          .filter((g) => g.actorId === r.actorId)
-          .map((g) => g.permission),
+          .filter((grant) => grant.actorId === user.actorId)
+          .map((grant) => grant.permission),
         sanctions: userSanctions.filter(
-          (g) => g.actorId === r.actorId && activeSanction(g),
+          (sanction) => sanction.actorId === user.actorId && activeSanction(sanction),
         ),
       })),
       next: null,
@@ -633,14 +635,14 @@ export async function personalModeration(
         })
         .from(accounts)
         .where(eq(accounts.organizationId, organization.id))
-    ).map((a) => [a.id, a.name ?? '表示名未登録']),
+    ).map((listedAccount) => [listedAccount.id, listedAccount.name ?? '表示名未登録']),
   );
   return {
     appeals: personalAppeals,
-    transfers: invites.map((i) => ({
-      ...i,
-      senderName: names[i.senderId],
-      targetName: names[i.targetId],
+    transfers: invites.map((invitation) => ({
+      ...invitation,
+      senderName: names[invitation.senderId],
+      targetName: names[invitation.targetId],
     })),
     sanctions: (await actorSanctions(db, organization.id, account.actorId)).filter(
       (row) => activeSanction(row),
@@ -648,28 +650,30 @@ export async function personalModeration(
     notifications: [
       ...personalAppeals
         .filter(
-          (a) => a.resolvedAt && Date.parse(a.resolvedAt) > Date.now() - 90 * 86400000,
+          (appeal) =>
+            appeal.resolvedAt &&
+            Date.parse(appeal.resolvedAt) > Date.now() - 90 * 86400000,
         )
-        .map((a) => ({
-          id: a.id,
+        .map((appeal) => ({
+          id: appeal.id,
           instanceId: '',
-          createdAt: a.resolvedAt ?? a.createdAt,
-          read: !!a.readAt,
+          createdAt: appeal.resolvedAt ?? appeal.createdAt,
+          read: !!appeal.readAt,
           message: '異議申し立ての対応結果が届きました。マイページで確認してください。',
           target: { page: 'profile' as const },
         })),
       ...invites
         .filter(
-          (i) =>
-            i.targetId === account.actorId &&
-            i.state === 'pending' &&
-            Date.parse(i.expiresAt) > Date.now(),
+          (invitation) =>
+            invitation.targetId === account.actorId &&
+            invitation.state === 'pending' &&
+            Date.parse(invitation.expiresAt) > Date.now(),
         )
-        .map((i) => ({
-          id: i.id,
+        .map((invitation) => ({
+          id: invitation.id,
           instanceId: '',
-          createdAt: i.createdAt,
-          read: !!i.readAt,
+          createdAt: invitation.createdAt,
+          read: !!invitation.readAt,
           message: '管理者引き継ぎの依頼が届きました。マイページで確認してください。',
           target: { page: 'profile' as const },
         })),
@@ -682,7 +686,9 @@ export async function personalModeration(
         target: { page: 'profile' as const },
       })),
     ]
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .sort((leftNotification, rightNotification) =>
+        rightNotification.createdAt.localeCompare(leftNotification.createdAt),
+      )
       .slice(0, 5),
   };
 }

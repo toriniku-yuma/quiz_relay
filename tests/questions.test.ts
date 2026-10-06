@@ -32,7 +32,7 @@ describe('作問入力と権限', () => {
     expect(validateQuestionInput(input()).issues).toEqual([]);
     expect(
       validateQuestionInput({ ...input(), evidence: '' }).issues.some(
-        (i) => i.path === 'evidence',
+        (issue) => issue.path === 'evidence',
       ),
     ).toBe(true);
   });
@@ -132,7 +132,9 @@ describe('複数読みでの採点', () => {
     send('buzz');
     for (const letter of answer) {
       expect(state.panel?.choices).toHaveLength(4);
-      const choice = state.panel?.choices.find((c) => c.text === letter);
+      const choice = state.panel?.choices.find(
+        (candidateChoice) => candidateChoice.text === letter,
+      );
       expect(choice).toBeDefined();
       send('choose', choice?.id);
     }
@@ -148,7 +150,7 @@ describe('複数読みでの採点', () => {
     ).toBe('correct');
   });
   it('全ての正しい次文字を4択に含め、ダミーで補う', () => {
-    const q = {
+    const question = {
       id: 'q',
       text: 'q',
       answer: 'あか',
@@ -156,11 +158,11 @@ describe('複数読みでの採点', () => {
       explanation: '',
     };
     expect(
-      readingChoices(q, 'あ')
-        .map((c) => c.text)
+      readingChoices(question, 'あ')
+        .map((choice) => choice.text)
         .sort(),
     ).toEqual(['か', 'き', 'く', 'け']);
-    expect(answerReadings({ ...q, readings: undefined })).toEqual(['あか']);
+    expect(answerReadings({ ...question, readings: undefined })).toEqual(['あか']);
   });
   it('初心者へ上位難易度を出さず、同じ試合で重複しない', () => {
     const source = [0, 1, 2].map((difficulty) => ({
@@ -171,7 +173,9 @@ describe('複数読みでの採点', () => {
       difficulty,
       categoryId: 'c',
     }));
-    expect(orderQuestions(source, 0).map((q) => q.id)).toEqual(['0']);
-    expect(new Set(orderQuestions(source, 2).map((q) => q.id)).size).toBe(3);
+    expect(orderQuestions(source, 0).map((question) => question.id)).toEqual(['0']);
+    expect(new Set(orderQuestions(source, 2).map((question) => question.id)).size).toBe(
+      3,
+    );
   });
 });

@@ -114,14 +114,16 @@ export function validateQuestionInput(
   else result.difficulty = Number(input.difficulty);
   if (
     !Array.isArray(input.readings) ||
-    input.readings.some((r) => typeof r !== 'string') ||
+    input.readings.some((reading) => typeof reading !== 'string') ||
     input.readings.length > 8
   )
     issues.push({ path: 'readings', message: '読みは1〜8種類です。' });
   else {
     result.readings = [
       ...new Set(
-        input.readings.map((r: string) => r.normalize('NFKC').trim()).filter(Boolean),
+        input.readings
+          .map((reading: string) => reading.normalize('NFKC').trim())
+          .filter(Boolean),
       ),
     ];
     if (submitting && !result.readings.length)

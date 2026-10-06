@@ -22,8 +22,10 @@ export function useUserActions(
         }),
       );
       return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '取得できませんでした。');
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : '取得できませんでした。',
+      );
       return false;
     } finally {
       setBusy(false);

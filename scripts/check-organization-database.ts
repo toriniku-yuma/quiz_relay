@@ -87,25 +87,28 @@ async function main() {
           config: config.rules,
         });
         await tx.insert(schema.questionVersions).values(
-          questions.map((q: { id: string }) => ({
+          questions.map((question: { id: string }) => ({
             owner,
-            questionId: q.id,
+            questionId: question.id,
             version: 1,
-            payload: q,
+            payload: question,
           })),
         );
-        await tx
-          .insert(schema.questionAvailability)
-          .values(questions.map((q: { id: string }) => ({ owner, questionId: q.id })));
+        await tx.insert(schema.questionAvailability).values(
+          questions.map((question: { id: string }) => ({
+            owner,
+            questionId: question.id,
+          })),
+        );
         await tx
           .insert(schema.questionSets)
           .values({ owner, setId: config.questionSet.id, version: 1, manifestHash });
         await tx.insert(schema.questionSetItems).values(
-          questions.map((q: { id: string }, ordinal: number) => ({
+          questions.map((question: { id: string }, ordinal: number) => ({
             owner,
             setId: config.questionSet.id,
             setVersion: 1,
-            questionId: q.id,
+            questionId: question.id,
             questionVersion: 1,
             ordinal: ordinal + 1,
           })),
@@ -278,7 +281,7 @@ async function main() {
         );
         assert.deepEqual(
           (await accountPermissions(tx, 'installer', { id, actorId })).grants?.map(
-            (g) => g.permission,
+            (grant) => grant.permission,
           ),
           ['questions'],
         );

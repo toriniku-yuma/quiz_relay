@@ -48,7 +48,7 @@ export async function verifyInstanceSelections(db: PostgresJsDatabase) {
     });
 
   assert.deepEqual((await read(subject)).addedInstanceIds, []);
-  assert.ok((await read(subject)).instances.some((i) => i.id === ids[0]));
+  assert.ok((await read(subject)).instances.some((instance) => instance.id === ids[0]));
   assert.equal((await resolveInstance(db, subject, ids[0])).instance.id, ids[0]);
   await Promise.all([change(subject, ids[0], true), change(subject, ids[1], true)]);
   await change(subject, ids[0], true);
@@ -143,10 +143,10 @@ export async function verifyInstanceSelections(db: PostgresJsDatabase) {
   assert.deepEqual((await read(otherSubject)).addedInstanceIds, [ids[0]]);
 
   await db.update(instances).set({ state: 'published' }).where(eq(instances.id, ids[2]));
-  assert.ok((await read(subject)).instances.some((i) => i.id === ids[2]));
+  assert.ok((await read(subject)).instances.some((instance) => instance.id === ids[2]));
   assert.deepEqual((await read(subject)).addedInstanceIds, [ids[1]]);
   await db.update(instances).set({ state: 'preparing' }).where(eq(instances.id, ids[1]));
-  assert.ok(!(await read(subject)).instances.some((i) => i.id === ids[1]));
+  assert.ok(!(await read(subject)).instances.some((instance) => instance.id === ids[1]));
   assert.deepEqual((await read(subject)).addedInstanceIds, [ids[1]]);
   await change(subject, ids[1], false);
   assert.deepEqual((await read(subject)).addedInstanceIds, []);

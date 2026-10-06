@@ -188,14 +188,14 @@ async function check() {
             // Roll back even when an incorrect grant allows the forbidden operation.
             throw new Error('READER_DELETE_WAS_ALLOWED');
           }),
-          (e: unknown) => (e as { code: string }).code === '42501',
+          (error: unknown) => (error as { code: string }).code === '42501',
         );
       }
       if (role === 'quiz_organization') {
         await client`select count(*) from quiz_game.organizations`;
         await assert.rejects(
           client`select * from quiz_game.match_results`,
-          (e: unknown) => (e as { code: string }).code === '42501',
+          (error: unknown) => (error as { code: string }).code === '42501',
         );
       }
       if (role === 'quiz_probe') {
@@ -210,7 +210,7 @@ async function check() {
             );
             throw rollback;
           }),
-          (e) => e === rollback,
+          (error) => error === rollback,
         );
       }
     } finally {

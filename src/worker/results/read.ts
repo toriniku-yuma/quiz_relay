@@ -127,8 +127,9 @@ export async function readResults(
         history: page.map(({ payload, ...entry }) => ({
           ...entry,
           kind: payload.kind,
-          correct: payload.players.find((p) => p.id === actorId)?.correct ?? 0,
-          mistakes: payload.players.find((p) => p.id === actorId)?.mistakes ?? 0,
+          correct: payload.players.find((player) => player.id === actorId)?.correct ?? 0,
+          mistakes:
+            payload.players.find((player) => player.id === actorId)?.mistakes ?? 0,
           questions: payload.completedQuestions?.map(
             ({ id, text, displayAnswer, readings, explanation, source, authorName }) => ({
               id,
@@ -141,7 +142,7 @@ export async function readResults(
             }),
           ),
           outcome:
-            payload.players.find((p) => p.id === actorId)?.role === 'presenter'
+            payload.players.find((player) => player.id === actorId)?.role === 'presenter'
               ? 'presenter'
               : entry.reason === 'connections' || entry.reason === 'disqualifications'
                 ? 'invalid'
