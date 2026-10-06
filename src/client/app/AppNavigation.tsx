@@ -27,6 +27,11 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
   const data = organization.data;
   const instanceId = url.searchParams.get('instance') ?? '';
   const selected = data?.instances.find((instance) => instance.id === instanceId);
+  const candidates = (data?.instances ?? []).filter(
+    (instance) =>
+      data?.addedInstanceIds?.includes(instance.id) &&
+      canAccessInstance(instance, data.account?.administrator),
+  );
   const view = url.searchParams.get('view') ?? '';
   const path = `${url.pathname.replace(/\/$/, '')}/`;
   const current = (href: string) => {
@@ -156,7 +161,12 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
             <div className="grid gap-3">
               <MenuPopover title={selected?.name ?? 'インスタンスを選ぶ'}>
                 <ul className="mt-2 grid gap-1">
-                  {data?.instances.map((instance) => (
+                  {candidates.length === 0 && (
+                    <li className="px-3 py-2.5 text-muted">
+                      お気に入りはまだありません。
+                    </li>
+                  )}
+                  {candidates.map((instance) => (
                     <li key={instance.id}>
                       <a
                         data-instance-switch

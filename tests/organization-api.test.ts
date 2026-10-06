@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   user: vi.fn(),
   resolve: vi.fn(),
   overview: vi.fn(),
+  selection: vi.fn(),
   read: vi.fn(),
   close: vi.fn(),
   enter: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('../src/worker/organization/database', () => ({
   organizationDatabase: () => ({ db: {}, close: mocks.close }),
   resolveInstance: mocks.resolve,
   overview: mocks.overview,
+  setInstanceSelection: mocks.selection,
   setupOrganization: vi.fn(),
   addInstance: vi.fn(),
   publishInstance: vi.fn(),
@@ -81,6 +83,7 @@ beforeEach(() => {
   mocks.load.mockResolvedValue({ competition: {}, playersPerMatch: 2, rules: {} });
   mocks.read.mockResolvedValue({ ranking: [], history: [] });
   mocks.overview.mockResolvedValue({ enabled: true, instances: [] });
+  mocks.selection.mockResolvedValue({ ok: true });
 });
 
 it('組織一覧は検証済みsubjectだけを使い、入力されたsubjectを無視する', async () => {
@@ -111,6 +114,29 @@ it('組織管理経路もOrigin・本人認証・本文上限を要求する', a
     413,
   );
   expect(mocks.overview).not.toHaveBeenCalled();
+});
+
+it('切替候補の登録は認証本人に限定し、管理者権限や対戦参加を要求しない', async () => {
+  const value = { id: instanceId, added: true, subject: 'attacker', actorId: 'attacker' };
+  const response = await request(
+    '/api/organization/instances/selection',
+    {},
+    JSON.stringify(value),
+  );
+  expect(response.status).toBe(200);
+  expect(mocks.selection).toHaveBeenCalledExactlyOnceWith({}, 'verified', value);
+  expect(mocks.enter).not.toHaveBeenCalled();
+  expect(
+    (
+      await request('/api/organization/instances/selection', {
+        Origin: 'https://other.test',
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (await request('/api/organization/instances/selection', { Authorization: '' }))
+      .status,
+  ).toBe(401);
 });
 it('本人履歴はサーバーで解決したownerと旧actorのみを参照', async () => {
   const response = await request(

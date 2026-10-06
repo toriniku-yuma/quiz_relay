@@ -1,6 +1,7 @@
-import { eq, isNotNull, or, sql } from 'drizzle-orm';
+import { eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import type { connectDatabase } from '../worker/db/connection.ts';
 import {
+  accountInstanceSelections,
   accountWithdrawals,
   instanceDeletions,
   instances,
@@ -189,5 +190,16 @@ export async function restorePrivacyJournal(db: Database, input: unknown) {
     await tx.execute(
       sql`delete from quiz_game.instance_grants where actor_id in (select actor_id from quiz_game.organization_accounts where withdrawn_at is not null)`,
     );
+    await tx
+      .delete(accountInstanceSelections)
+      .where(
+        inArray(
+          accountInstanceSelections.actorId,
+          tx
+            .select({ actorId: organizationAccounts.actorId })
+            .from(organizationAccounts)
+            .where(isNotNull(organizationAccounts.withdrawnAt)),
+        ),
+      );
   });
 }

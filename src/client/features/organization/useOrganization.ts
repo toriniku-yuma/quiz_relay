@@ -22,6 +22,8 @@ const errors: Record<string, string> = {
     '別の退会手続きの処理中です。最初に開いた画面で再試行してください。',
   ERASURE_UNAVAILABLE: '現在、消去処理を利用できません。時間を置いて再試行してください。',
   INVALID_OPERATION: '操作内容を確認してください。',
+  INVALID_INSTANCE: '対象のインスタンスを確認してください。',
+  INSTANCE_NOT_FOUND: 'このインスタンスは現在利用できません。一覧を更新してください。',
   RANKED_PAUSED: 'このインスタンスはランクの受付を停止しています。',
   BAN_REQUIRES_REVOKE:
     'BANを別の種類に変更するには、先に理由を付けて取り消してください。',

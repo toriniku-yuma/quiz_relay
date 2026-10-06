@@ -4,17 +4,12 @@ import PageHeader from '../components/PageHeader';
 import LoginForm from '../features/auth/LoginForm';
 import CasualLobby from '../features/rooms/CasualLobby';
 export default function CasualPage() {
-  const { auth, url, matchStatus } = useApp();
+  const { auth, url } = useApp();
   const instanceId = url.searchParams.get('instance') ?? '';
   const [active, setActive] = useState('');
   useEffect(() => {
-    if (
-      url.pathname === '/casual/' &&
-      instanceId &&
-      (!active || matchStatus?.retained === false)
-    )
-      setActive(instanceId);
-  }, [url.pathname, instanceId, active, matchStatus?.retained]);
+    if (url.pathname === '/casual/' && instanceId && !active) setActive(instanceId);
+  }, [url.pathname, instanceId, active]);
   return (
     <main className="mx-auto max-w-4xl p-4 md:p-8">
       <PageHeader title="カジュアルマッチ" description="非レートの自動マッチングです。" />

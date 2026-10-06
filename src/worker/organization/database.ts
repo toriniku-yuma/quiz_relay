@@ -1,4 +1,4 @@
-import { and, asc, eq, exists, gt, inArray, or, sql } from 'drizzle-orm';
+import { and, asc, eq, exists, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import { blocks } from '../../shared/moderation.ts';
 import {
   type InstancePermission,
@@ -8,6 +8,7 @@ import {
 } from '../../shared/organization.ts';
 import { connectDatabase } from '../db/connection.ts';
 import {
+  accountInstanceSelections,
   organizationAccounts as accounts,
   competitions,
   instanceGrants as grants,
@@ -181,6 +182,34 @@ export async function overview(
     .select()
     .from(grants)
     .where(eq(grants.actorId, account.actorId));
+  const selections = await db
+    .select({ id: accountInstanceSelections.instanceId })
+    .from(accountInstanceSelections)
+    .where(eq(accountInstanceSelections.actorId, account.actorId));
+  const sanctions = await db
+    .select({
+      id: moderationSanctions.id,
+      instanceId: moderationSanctions.instanceId,
+      actorId: moderationSanctions.actorId,
+      kind: moderationSanctions.kind,
+      restrictions: moderationSanctions.restrictions,
+      reason: moderationSanctions.reason,
+      expiresAt: moderationSanctions.expiresAt,
+      revokedAt: moderationSanctions.revokedAt,
+      revision: moderationSanctions.revision,
+    })
+    .from(moderationSanctions)
+    .where(
+      and(
+        eq(moderationSanctions.organizationId, organization.id),
+        eq(moderationSanctions.actorId, account.actorId),
+        isNull(moderationSanctions.revokedAt),
+        or(
+          isNull(moderationSanctions.expiresAt),
+          gt(moderationSanctions.expiresAt, new Date().toISOString()),
+        ),
+      ),
+    );
   if (accountCursor !== undefined && !/^[0-9a-f]{64}$/.test(accountCursor))
     throw new OrganizationError('INVALID_ACCOUNT', 400);
   const accountPage = account.administrator
@@ -205,6 +234,8 @@ export async function overview(
       displayName: account.displayName,
       profileRevision: account.profileRevision,
     },
+    addedInstanceIds: selections.map((selection) => selection.id),
+    sanctions,
     instances: all
       .map((instance) => ({
         id: instance.id,
@@ -369,6 +400,42 @@ export async function resolveInstance(
   )
     throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
   return { ...identity, instance, permissions };
+}
+
+export async function setInstanceSelection(
+  db: Database,
+  subject: string,
+  input: Record<string, unknown>,
+) {
+  const id = validId(input.id);
+  if (typeof input.added !== 'boolean')
+    throw new OrganizationError('INVALID_OPERATION', 400);
+  await db.transaction(async (tx) => {
+    const { account } = input.added
+      ? await resolveInstance(tx, subject, id)
+      : await organizationIdentity(tx, subject);
+    const [current] = await tx
+      .select()
+      .from(accounts)
+      .where(eq(accounts.actorId, account.actorId))
+      .for('update');
+    if (current.withdrawnAt) throw new OrganizationError('ACCOUNT_WITHDRAWN', 403);
+    if (input.added)
+      await tx
+        .insert(accountInstanceSelections)
+        .values({ actorId: account.actorId, instanceId: id })
+        .onConflictDoNothing();
+    else
+      await tx
+        .delete(accountInstanceSelections)
+        .where(
+          and(
+            eq(accountInstanceSelections.actorId, account.actorId),
+            eq(accountInstanceSelections.instanceId, id),
+          ),
+        );
+  });
+  return { ok: true };
 }
 
 export async function setInstanceGrants(

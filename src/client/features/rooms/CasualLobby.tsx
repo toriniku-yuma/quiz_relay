@@ -22,7 +22,6 @@ export default function CasualLobby({
     instanceId,
     'casual',
     targetInstanceId,
-    `${url.pathname}${url.search}`,
   );
   const [namePrompt, setNamePrompt] = useState(false);
   const [joinAfterName, setJoinAfterName] = useState(false);

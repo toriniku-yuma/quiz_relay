@@ -67,7 +67,7 @@ AppがページとNotFoundを選び、redirect.tsが転送URLを作り、mainが
 app/navigation.tsが通常の同一タブ内クリックとHistory APIを扱います。
 外部・API・修飾キー・download・別タブ指定はブラウザーの動作を維持します。
 Applicationが共通認証・組織情報・メニューを保持し、移動でMatchPageを破棄しません。
-OrganizationGatewayは閲覧先と対戦接続先を分け、開始済み試合の接続先を維持します。自動マッチの待機は画面移動で取り消し、応答不明の参加操作も同じ操作IDで取消を確認します。
+OrganizationGatewayは閲覧先と対戦接続先を分け、候補登録と画面移動でも参加処理・待機・ロビー・開始済み試合の接続先を維持します。本人が取消を選んだ応答不明の参加操作は同じ操作IDで取消を確認します。
 スマートフォンのメニューは標準dialogを使い、フォーカスとEscape操作を保ちます。
 
 Workerのルートも method・path・middleware・handler の登録だけにします。

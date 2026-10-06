@@ -1,14 +1,16 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { MatchStatus } from '../src/client/app/context';
 import type { Auth } from '../src/client/features/auth/useAuth';
 import MatchLobby from '../src/client/features/matchmaking/MatchLobby';
+import CasualLobby from '../src/client/features/rooms/CasualLobby';
 
 const h = vi.hoisted(() => ({
   cursor: 0,
   dependencies: [] as unknown[][],
   effects: [] as Array<() => void>,
+  url: new URL('https://quiz.test/game/?instance=instance-a'),
   match: {
     game: {
       roomId: 'old-a',
@@ -44,12 +46,19 @@ vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
     auth: { user: { id: 'self' } },
     organization: { data: { enabled: true, account: { displayName: '本人' } } },
-    url: new URL('https://quiz.test/game/?instance=instance-a'),
+    url: h.url,
   }),
 }));
 vi.mock('../src/client/features/matchmaking/useMatchmaking', () => ({
   useMatchmaking: () => h.match,
 }));
+beforeEach(() => {
+  h.cursor = 0;
+  h.dependencies = [];
+  h.effects = [];
+  h.url = new URL('https://quiz.test/game/?instance=instance-a');
+  h.match.game.snapshot.result.storage = 'pending';
+});
 afterEach(() => vi.unstubAllGlobals());
 
 it('遅い旧ランク結果の保存確定は順位だけ更新し、新参加先の状態を上書きしない', () => {
@@ -89,3 +98,34 @@ it('遅い旧ランク結果の保存確定は順位だけ更新し、新参加�
   render();
   expect(notifications).toHaveBeenCalledOnce();
 });
+
+it.each(['ranked', 'casual'] as const)(
+  '%sの終了結果リンクは閲覧中のインスタンスだけに表示し、元へ戻ると再表示する',
+  (mode) => {
+    const path = mode === 'ranked' ? '/game/' : '/casual/';
+    const markup = (target: string) => {
+      h.url = new URL(`https://quiz.test${path}?instance=${target}`);
+      return renderToStaticMarkup(
+        mode === 'ranked'
+          ? createElement(MatchLobby, {
+              auth: { user: null, busy: false } as Auth,
+              instanceId: 'instance-a',
+              targetInstanceId: target,
+            })
+          : createElement(CasualLobby, {
+              instanceId: 'instance-a',
+              targetInstanceId: target,
+            }),
+      );
+    };
+
+    const other = markup('instance-b');
+    expect(other).toContain('マッチングする');
+    expect(other).not.toContain('/history/?instance=instance-a');
+    const original = markup('instance-a');
+    expect(original).toContain('/history/?instance=instance-a&amp;result=result-a');
+    expect(original).toContain('対戦履歴');
+    expect(h.match.game.roomId).toBe('old-a');
+    expect(h.match.game.snapshot.result.id).toBe('result-a');
+  },
+);

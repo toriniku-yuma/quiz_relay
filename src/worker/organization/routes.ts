@@ -35,6 +35,7 @@ organization.post(API_PATHS.moderationMutate, manageUsers);
 organization.post(API_PATHS.moderationPersonal, manageUsers);
 organization.post(API_PATHS.organizationSetup, mutateOrganization);
 organization.post(API_PATHS.organizationAdd, mutateOrganization);
+organization.post(API_PATHS.organizationInstanceSelection, mutateOrganization);
 organization.post(API_PATHS.organizationPublish, mutateOrganization);
 organization.post(API_PATHS.organizationOperation, mutateOrganization);
 organization.post(API_PATHS.instanceDeletion, mutateOrganization);

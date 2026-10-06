@@ -1,5 +1,6 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import {
+  accountInstanceSelections,
   organizationAccounts as accounts,
   accountWithdrawals,
   instanceGrants,
@@ -80,6 +81,9 @@ export async function recordWithdrawal(
       .set({ withdrawnAt: job.requestedAt, displayName: null, administrator: false })
       .where(eq(accounts.actorId, account.actorId));
     await tx.delete(instanceGrants).where(eq(instanceGrants.actorId, account.actorId));
+    await tx
+      .delete(accountInstanceSelections)
+      .where(eq(accountInstanceSelections.actorId, account.actorId));
     await tx
       .delete(personalQuestionSets)
       .where(eq(personalQuestionSets.authorId, account.actorId));

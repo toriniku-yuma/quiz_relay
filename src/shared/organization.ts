@@ -1,3 +1,5 @@
+import { blocks, type Sanction } from './moderation.ts';
+
 export const instancePermissions = ['questions', 'authors', 'users'] as const;
 export type InstancePermission = (typeof instancePermissions)[number];
 
@@ -11,6 +13,8 @@ export type OrganizationOverview = {
     displayName?: string | null;
     profileRevision?: number;
   };
+  addedInstanceIds?: string[];
+  sanctions?: Sanction[];
   instances: {
     id: string;
     name: string;
@@ -37,6 +41,34 @@ export function canAccessInstance(
     !!instance &&
     instance.state !== 'archived' &&
     (instance.state === 'published' || administrator || instance.permissions.length > 0)
+  );
+}
+
+export function canJoinInstance(
+  instance: OrganizationOverview['instances'][number] | undefined,
+  account: OrganizationOverview['account'],
+  sanctions: readonly Sanction[] | undefined,
+  mode: 'ranked' | 'casual' | 'room' | 'roomCreate',
+) {
+  if (
+    !instance ||
+    !account?.displayName ||
+    !sanctions ||
+    !canAccessInstance(instance, account.administrator)
+  )
+    return false;
+  const privileged = account.administrator || instance.permissions.length > 0;
+  if (
+    (!privileged &&
+      (mode === 'ranked' ? instance.rankedPauseReason : instance.casualPauseReason)) ||
+    (mode === 'casual' && instance.casualConfig?.enabled === false)
+  )
+    return false;
+  return !sanctions.some(
+    (row) =>
+      (row.instanceId === null || row.instanceId === instance.id) &&
+      (blocks(row, mode === 'ranked' ? 'ranked' : 'casual') ||
+        (mode === 'roomCreate' && blocks(row, 'rooms'))),
   );
 }
 

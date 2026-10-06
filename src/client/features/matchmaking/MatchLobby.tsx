@@ -28,7 +28,6 @@ export default function MatchLobby({
     instanceId,
     'ranked',
     targetInstanceId,
-    `${url.pathname}${url.search}`,
   );
   const registeredName = organization.data?.account?.displayName;
   const organized = organization.data?.enabled === true;

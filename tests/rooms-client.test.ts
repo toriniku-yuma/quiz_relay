@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import RoomWorkspace from '../src/client/features/rooms/RoomWorkspace';
 import { useGuest } from '../src/client/features/rooms/useGuest';
 import { API_PATHS } from '../src/shared/api-paths';
+import type { Sanction } from '../src/shared/moderation';
+import type { OrganizationOverview } from '../src/shared/organization';
 import { newRoomSettings } from '../src/shared/rooms';
 
 const h = vi.hoisted(() => ({
@@ -20,6 +22,7 @@ const h = vi.hoisted(() => ({
     matchRoom?: string;
   },
   restored: false,
+  organization: undefined as OrganizationOverview | undefined,
   url: new URL('https://quiz.test/rooms/?instance=instance-a&room=room-a'),
 }));
 vi.mock('react', async (original) => ({
@@ -43,9 +46,16 @@ vi.mock('react', async (original) => ({
   useEffect: (effect: () => (() => void) | undefined) => h.effects.push(effect),
 }));
 vi.mock('../src/client/features/rooms/api', () => ({ playRequest: h.request }));
+vi.mock('../src/client/features/moderation/useActiveSanctions', () => ({
+  useActiveSanctions: (rows: Sanction[]) => rows,
+}));
 vi.mock('../src/client/app/navigation', () => ({ navigate: h.navigate }));
 vi.mock('../src/client/app/context', () => ({
-  useApp: () => ({ auth: { user: { id: 'user-a' } }, organization: {}, url: h.url }),
+  useApp: () => ({
+    auth: { user: { id: 'user-a' } },
+    organization: { data: h.organization },
+    url: h.url,
+  }),
 }));
 vi.mock('../src/client/features/rooms/useRoom', () => ({
   useRoom: () => ({
@@ -68,6 +78,7 @@ beforeEach(() => {
   h.active = null;
   h.roomView = null;
   h.restored = false;
+  h.organization = undefined;
   h.url = new URL('https://quiz.test/rooms/?instance=instance-a&room=room-a');
   vi.stubGlobal('window', new EventTarget());
 });
@@ -128,24 +139,62 @@ function room() {
   h.cursor = 0;
   return RoomWorkspace();
 }
-it.each(['/profile/', '/rooms/?instance=instance-a'])(
-  '部屋ロビーから%sへ移動すると元の部屋だけを自動退室する',
-  (next) => {
-    h.active = { id: 'room-a', instanceId: 'instance-a' };
-    h.roomView = { id: 'room-a', playing: false };
-    room();
-    h.effects[2]();
-    h.effects = [];
-    h.url = new URL(`https://quiz.test${next}`);
-    room();
-    h.effects[2]();
-    expect(h.exit).toHaveBeenCalledExactlyOnceWith({
-      room: 'room-a',
-      instanceId: 'instance-a',
-      force: true,
-    });
-  },
-);
+
+function creationLink(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(creationLink);
+  if (!node || typeof node !== 'object') return false;
+  const element = node as { type: unknown; props: { children?: unknown } };
+  return (
+    (element.type === 'a' && element.props.children === '部屋を作る') ||
+    creationLink(element.props?.children)
+  );
+}
+it.each(
+  ([[], ['rooms'], ['casual']] as Sanction['restrictions'][]).map((restrictions) => ({
+    restrictions,
+  })),
+)('部屋作成の入口は本人の作成・参加制限に従う: %j', ({ restrictions }) => {
+  h.url.searchParams.delete('room');
+  h.organization = {
+    enabled: true,
+    account: { actorId: 'actor', administrator: false, displayName: '登録名' },
+    instances: [{ id: 'instance-a', name: '対象', state: 'published', permissions: [] }],
+    sanctions: restrictions.length
+      ? [
+          {
+            id: 'restriction',
+            actorId: 'actor',
+            instanceId: 'instance-a',
+            kind: 'partial',
+            restrictions,
+            reason: '制限',
+            expiresAt: null,
+            revokedAt: null,
+            revision: 1,
+          },
+        ]
+      : [],
+  };
+  expect(creationLink(room())).toBe(restrictions.length === 0);
+  expect(h.exit).not.toHaveBeenCalled();
+});
+it.each([
+  '/profile/',
+  '/game/',
+  '/rooms/?instance=instance-a',
+  '/rooms/?instance=instance-b',
+])('部屋ロビーから%sへ移動しても元の参加を保持する', (next) => {
+  h.active = { id: 'room-a', instanceId: 'instance-a' };
+  h.roomView = { id: 'room-a', playing: false };
+  room();
+  h.effects[2]();
+  h.effects = [];
+  h.url = new URL(`https://quiz.test${next}`);
+  room();
+  h.effects[2]();
+  expect(h.exit).not.toHaveBeenCalled();
+  expect(h.active).toEqual({ id: 'room-a', instanceId: 'instance-a' });
+});
 it.each(['edit', 'game'])('同じ部屋の%s画面への移動では参加を保持する', (view) => {
   h.active = { id: 'room-a', instanceId: 'instance-a' };
   h.roomView = { id: 'room-a', playing: false };
@@ -161,7 +210,7 @@ it('開始した本人は対戦専用ページへ移り、途中入室者はロ�
   h.active = { id: 'room-a', instanceId: 'instance-a' };
   h.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
   room();
-  h.effects[3]();
+  h.effects[2]();
   expect(h.navigate).toHaveBeenCalledExactlyOnceWith(
     '/rooms/?instance=instance-a&room=room-a&view=game',
   );
@@ -169,7 +218,7 @@ it('開始した本人は対戦専用ページへ移り、途中入室者はロ�
   h.effects = [];
   h.roomView.waiting = true;
   room();
-  h.effects[3]();
+  h.effects[2]();
   expect(h.navigate).not.toHaveBeenCalled();
 });
 it('部屋状態を確認する前の画面移動は、試合中の参加をロビー退出扱いにしない', () => {
@@ -187,7 +236,7 @@ it('新しい部屋に入った直後の旧部屋状態では、対戦画面へ�
   h.roomView = { id: 'room-a', playing: true, matchRoom: 'match-a' };
   h.url.searchParams.set('room', 'room-b');
   room();
-  h.effects[3]();
+  h.effects[2]();
   expect(h.navigate).not.toHaveBeenCalled();
 });
 it('Aの遅い復帰確認で、成立済みのB参加を上書きしない', async () => {

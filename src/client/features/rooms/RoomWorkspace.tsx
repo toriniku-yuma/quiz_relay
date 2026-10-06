@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
+import { canJoinInstance } from '../../../shared/organization';
 import type { RoomView } from '../../../shared/rooms';
 import { useApp } from '../../app/context';
 import { navigate } from '../../app/navigation';
@@ -10,6 +11,7 @@ import Modal from '../../components/Modal';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
 import LoginForm from '../auth/LoginForm';
+import { useActiveSanctions } from '../moderation/useActiveSanctions';
 import { useMutation } from '../moderation/useMutation';
 import { playRequest } from './api';
 import GuestName from './GuestName';
@@ -21,10 +23,17 @@ import { useRoom } from './useRoom';
 
 export default function RoomWorkspace() {
   const { auth, organization, guest, url } = useApp();
+  const sanctions = useActiveSanctions(organization.data?.sanctions ?? []);
   const instanceId = url.searchParams.get('instance') ?? '',
     id = url.searchParams.get('room') ?? '',
     invite = url.searchParams.get('invite') ?? '',
     view = url.searchParams.get('view') ?? '';
+  const canCreate = canJoinInstance(
+    organization.data?.instances.find((instance) => instance.id === instanceId),
+    organization.data?.account,
+    organization.data?.sanctions && sanctions,
+    'roomCreate',
+  );
   const session = useRoom(auth.user?.id ?? guest?.data?.id ?? '');
   const [rooms, setRooms] = useState<(RoomView & { memberCount: number })[]>([]),
     [info, setInfo] = useState<RoomView | null>(null),
@@ -101,37 +110,6 @@ export default function RoomWorkspace() {
   ]);
   const activeHere =
     session.active?.id === id && session.active.instanceId === instanceId;
-  const previous = useRef<{ href: string; lobby: boolean } | null>(null);
-  useEffect(() => {
-    const last = previous.current;
-    const inside =
-      url.pathname === ROOMS_PATH && activeHere && ['', 'edit', 'game'].includes(view);
-    previous.current = {
-      href: url.href,
-      lobby:
-        inside &&
-        view !== 'game' &&
-        session.room?.id === session.active?.id &&
-        !!session.room?.id &&
-        (!session.room.playing || !!session.room.waiting),
-    };
-    if (last?.lobby && last.href !== url.href && !inside && session.active)
-      void session.exit.submit({
-        room: session.active.id,
-        instanceId: session.active.instanceId,
-        force: true,
-      });
-  }, [
-    url.href,
-    url.pathname,
-    activeHere,
-    view,
-    session.active,
-    session.room?.playing,
-    session.room?.waiting,
-    session.room?.id,
-    session.exit?.submit,
-  ]);
   useEffect(() => {
     if (
       url.pathname === ROOMS_PATH &&
@@ -255,12 +233,14 @@ export default function RoomWorkspace() {
           <div className="mb-4 flex flex-wrap gap-4">
             {auth.user && (
               <>
-                <a
-                  className="underline"
-                  href={`${ROOMS_PATH}?instance=${instanceId}&view=create`}
-                >
-                  部屋を作る
-                </a>
+                {canCreate && (
+                  <a
+                    className="underline"
+                    href={`${ROOMS_PATH}?instance=${instanceId}&view=create`}
+                  >
+                    部屋を作る
+                  </a>
+                )}
                 <a
                   className="underline"
                   href={`${ROOMS_PATH}?instance=${instanceId}&view=sets`}

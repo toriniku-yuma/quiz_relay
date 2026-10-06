@@ -734,6 +734,25 @@ export const instances = quizGame
     ],
   )
   .enableRLS();
+export const accountInstanceSelections = quizGame
+  .table(
+    'account_instance_selections',
+    {
+      actorId: text('actor_id')
+        .notNull()
+        .references(() => organizationAccounts.actorId, { onDelete: 'cascade' }),
+      instanceId: uuid('instance_id')
+        .notNull()
+        .references(() => instances.id, { onDelete: 'cascade' }),
+    },
+    (t) => [
+      primaryKey({ columns: [t.actorId, t.instanceId] }),
+      index().on(t.instanceId),
+      organizationAccess(),
+    ],
+  )
+  .enableRLS();
+
 export const instanceRooms = quizGame
   .table(
     'instance_rooms',

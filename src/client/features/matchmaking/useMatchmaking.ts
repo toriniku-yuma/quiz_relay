@@ -9,7 +9,6 @@ export function useMatchmaking(
   instanceId = '',
   mode: 'ranked' | 'casual' = 'ranked',
   targetInstanceId = instanceId,
-  pageKey = '',
 ) {
   const request =
     mode === 'casual'
@@ -30,25 +29,20 @@ export function useMatchmaking(
   const { attach, leave } = game;
   const currentGame = useRef(game);
   currentGame.current = game;
-  const phase = game.snapshot?.phase;
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(true);
-  const [players, setPlayers] = useState<number | null>(null);
-  const [rules, setRules] = useState<{
-    correctAnswersToWin: number;
-    mistakesToDisqualify: number;
+  const [config, setConfig] = useState<{
+    instanceId: string;
+    data?: Awaited<ReturnType<typeof matchRequest>>;
+    error: string;
   } | null>(null);
   const [error, setError] = useState('');
   const [activeInstance, setActiveInstance] = useState('');
   const operation = useRef(0);
-  const currentPage = useRef(pageKey);
-  currentPage.current = pageKey;
-  const waitingPage = useRef<string | null>(null);
   const joining = useRef<{
     operationId: string;
     name: string;
     instanceId: string;
-    page: string;
   } | null>(null);
   const cancellation = useRef<{
     body: { room: string } | { operationId: string };
@@ -83,30 +77,31 @@ export function useMatchmaking(
     [mode, request],
   );
   useEffect(() => {
+    if (instanceId && !targetInstanceId) return;
     let active = true;
     void request(
       mode === 'casual' ? API_PATHS.casualConfig : API_PATHS.matchConfig,
       {},
       targetInstanceId,
     )
-      .then((config) => {
-        if (active && config.playersPerMatch) setPlayers(config.playersPerMatch);
-        if (active && config.rules) setRules(config.rules);
+      .then((data) => {
+        if (active) setConfig({ instanceId: targetInstanceId, data, error: '' });
       })
       .catch((error: unknown) => {
         if (active)
-          setError(
-            error instanceof Error ? error.message : '出題設定を読み込めませんでした。',
-          );
+          setConfig({
+            instanceId: targetInstanceId,
+            error:
+              error instanceof Error ? error.message : '出題設定を読み込めませんでした。',
+          });
       });
     return () => {
       active = false;
     };
-  }, [targetInstanceId, mode, request]);
+  }, [targetInstanceId, instanceId, mode, request]);
   useEffect(() => {
     let active = true;
     const restoringOperation = ++operation.current;
-    const origin = currentPage.current;
     void (
       mode === 'casual' && !subject
         ? Promise.resolve({ room: undefined })
@@ -114,7 +109,6 @@ export function useMatchmaking(
     )
       .then((result) => {
         if (active && operation.current === restoringOperation && result.room) {
-          waitingPage.current = origin;
           attach(result.room, 'instanceId' in result ? result.instanceId : instanceId);
           offerRestore();
         }
@@ -138,31 +132,6 @@ export function useMatchmaking(
       active = false;
     };
   }, [attach, leave, instanceId, mode, subject, offerRestore, restore]);
-  const previousPage = useRef(pageKey);
-  useEffect(() => {
-    const moved = previousPage.current !== pageKey;
-    previousPage.current = pageKey;
-    if (!moved && (waitingPage.current === null || waitingPage.current === pageKey))
-      return;
-    if (cancellation.current) return;
-    const pending = joining.current;
-    if (pending && pending.page !== pageKey) {
-      cancellation.current = {
-        body: { operationId: pending.operationId },
-        instanceId: pending.instanceId,
-        ...(game.roomId && (!phase || phase === 'WAITING')
-          ? { previous: { room: game.roomId, instanceId: game.roomInstanceId } }
-          : {}),
-      };
-    } else if (game.roomId && (!phase || phase === 'WAITING')) {
-      cancellation.current = {
-        body: { room: game.roomId },
-        instanceId: game.roomInstanceId,
-      };
-    } else return;
-    operation.current++;
-    setCancelAttempt((attempt) => attempt + 1);
-  }, [pageKey, game.roomId, game.roomInstanceId, phase]);
   useEffect(() => {
     if (
       !['closed', 'stopped'].includes(game.connection) ||
@@ -190,7 +159,6 @@ export function useMatchmaking(
     const finish = (message = '') => {
       joining.current = null;
       cancellation.current = null;
-      waitingPage.current = null;
       setUncertain(false);
       setRestored(false);
       setViewing(true);
@@ -225,11 +193,10 @@ export function useMatchmaking(
           (error instanceof MatchError || error instanceof PlayRequestError) &&
           error.code === 'MATCH_STARTED'
         ) {
-          // The server may have started before the navigation cancellation arrived.
+          // The server may have started before the explicit cancellation arrived.
           try {
             const result = await restore(recoveryInstance);
             if (!active || cancellation.current !== target) return;
-            waitingPage.current = null;
             if (result.room) attach(result.room, result.instanceId);
             joining.current = null;
             cancellation.current = null;
@@ -283,12 +250,13 @@ export function useMatchmaking(
       if (isCurrent()) setBusy(false);
     }
   }
+  const currentConfig = config?.instanceId === targetInstanceId ? config : null;
   return {
     game,
     busy: busy || restoring || !!cancellation.current,
-    players,
-    rules,
-    error,
+    players: currentConfig?.data?.playersPerMatch ?? null,
+    rules: currentConfig?.data?.rules ?? null,
+    error: error || currentConfig?.error || '',
     activeInstance,
     uncertain,
     restored,
@@ -302,33 +270,21 @@ export function useMatchmaking(
           name,
           operationId: crypto.randomUUID(),
           instanceId: targetInstanceId,
-          page: currentPage.current,
         };
         const pending = joining.current;
         try {
-          const { instanceId: target, page, ...body } = pending;
+          const { instanceId: target, ...body } = pending;
           const result = await request(
             mode === 'casual' ? API_PATHS.casualJoin : API_PATHS.matchJoin,
             body,
             target,
           );
           if (joining.current !== pending || cancellation.current) return;
-          if (page !== currentPage.current) {
-            cancellation.current = {
-              body: { operationId: pending.operationId },
-              instanceId: target,
-            };
-            setCancelAttempt((attempt) => attempt + 1);
-            return;
-          }
           joining.current = null;
           setUncertain(false);
           setRestored(false);
           setViewing(true);
-          if (result.room) {
-            waitingPage.current = page;
-            game.attach(result.room, target);
-          }
+          if (result.room) game.attach(result.room, target);
         } catch (error) {
           if (joining.current !== pending || cancellation.current) return;
           if (
@@ -343,30 +299,38 @@ export function useMatchmaking(
       }),
     resume: () =>
       run(async (isCurrent) => {
-        const origin = currentPage.current;
         const result = await restore(game.roomInstanceId);
         if (!isCurrent() || cancellation.current) return;
         if (result.operationId === joining.current?.operationId) {
           joining.current = null;
           setUncertain(false);
         }
-        if (result.room) {
-          waitingPage.current = origin;
-          game.attach(result.room, result.instanceId);
-        }
+        if (result.room) game.attach(result.room, result.instanceId);
         setRestored(false);
         setViewing(true);
       }),
-    cancel: () =>
-      run(async (isCurrent) => {
-        if (cancellation.current) return;
-        if (game.roomId)
-          await request(
-            mode === 'casual' ? API_PATHS.casualCancel : API_PATHS.matchCancel,
-            { room: game.roomId },
-            game.roomInstanceId,
-          );
-        if (isCurrent() && currentGame.current.roomId === game.roomId) game.leave();
-      }),
+    cancel: () => {
+      if (cancellation.current) return;
+      const pending = joining.current;
+      if (!pending)
+        return run(async (isCurrent) => {
+          if (game.roomId)
+            await request(
+              mode === 'casual' ? API_PATHS.casualCancel : API_PATHS.matchCancel,
+              { room: game.roomId },
+              game.roomInstanceId,
+            );
+          if (isCurrent() && currentGame.current.roomId === game.roomId) game.leave();
+        });
+      cancellation.current = {
+        body: { operationId: pending.operationId },
+        instanceId: pending.instanceId,
+        ...(game.roomId && (!game.snapshot || game.snapshot.phase === 'WAITING')
+          ? { previous: { room: game.roomId, instanceId: game.roomInstanceId } }
+          : {}),
+      };
+      operation.current++;
+      setCancelAttempt((attempt) => attempt + 1);
+    },
   };
 }

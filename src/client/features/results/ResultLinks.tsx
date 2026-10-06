@@ -9,7 +9,8 @@ export default function ResultLinks({
   instanceId: string;
   result: Result;
 }) {
-  const { auth } = useApp();
+  const { auth, url } = useApp();
+  if ((url.searchParams.get('instance') ?? '') !== instanceId) return null;
   const params = new URLSearchParams({ instance: instanceId });
   if (!auth.user) params.set('guest', '1');
   const href = `${HISTORY_PATH}?${params}`;

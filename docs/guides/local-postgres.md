@@ -19,7 +19,7 @@ Docker・Windowsサービス登録は不要。
 | PostgreSQL | 17.11、Windows ZIP版。既存の `.wrangler/pg-local/pgsql/bin` を再利用 |
 | 接続先 | `127.0.0.1:55432/quiz_relay_dev`。外部インターフェースでは待受しない |
 | データ | `.wrangler/postgres-dev/data`。停止・再起動で保持 |
-| DB構造 | Drizzle migration 0000〜0016適用済み。作成時はアプリ17表が空。現在は初回設定・検証データあり（9月22日に競技クイズ用12問・2人設定を追加） |
+| DB構造 | Drizzle migration 0000〜0051適用済み。既存の初回設定・問題・権限・戦績を保持。アカウント別の切替候補は空から開始 |
 | 認証 | 各DBロールに個別のランダムパスワード、SCRAM-SHA-256 |
 | ローカル秘密 | `.env.postgres-local`。管理接続・CLI用を含むため公開しない |
 | Worker接続 | `.dev.vars` のprobe／reader／results／organization専用接続だけをローカルへ変更 |

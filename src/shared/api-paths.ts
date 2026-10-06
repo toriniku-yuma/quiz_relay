@@ -37,6 +37,7 @@ export const API_PATHS = {
   moderationPersonal: '/api/organization/users/personal',
   organizationSetup: '/api/organization/setup',
   organizationAdd: '/api/organization/instances/add',
+  organizationInstanceSelection: '/api/organization/instances/selection',
   organizationRename: '/api/organization/instances/rename',
   organizationPermissions: '/api/organization/permissions',
   organizationGrants: '/api/organization/instances/grants',

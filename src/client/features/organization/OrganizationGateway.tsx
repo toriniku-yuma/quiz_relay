@@ -9,7 +9,7 @@ import InstanceDeletion from './InstanceDeletion';
 import OrganizationPanel from './OrganizationPanel';
 
 export default function OrganizationGateway() {
-  const { auth, organization, url, matchStatus, setMatchStatus } = useApp();
+  const { auth, organization, url, setMatchStatus } = useApp();
   const instanceId = url.searchParams.get('instance') ?? '';
   const view = url.searchParams.get('view') ?? '';
   const selected = organization.data?.instances.find(
@@ -22,13 +22,10 @@ export default function OrganizationGateway() {
   const available =
     legacy || canAccessInstance(selected, organization.data?.account?.administrator);
   const canResume = !!organization.data?.account && /^[0-9a-f-]{36}$/.test(instanceId);
-  const canSwitch =
-    sessionId === null ||
-    (matchStatus?.instanceId === sessionId && !matchStatus.retained);
-
   useEffect(() => {
-    if (matchingPage && (available || canResume) && canSwitch) setSessionId(instanceId);
-  }, [matchingPage, available, canResume, canSwitch, instanceId]);
+    if (matchingPage && (available || canResume) && sessionId === null)
+      setSessionId(instanceId);
+  }, [matchingPage, available, canResume, sessionId, instanceId]);
   const onStatus = useCallback(
     (status: MatchStatus) =>
       setMatchStatus((current) =>

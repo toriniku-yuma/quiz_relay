@@ -6,6 +6,7 @@ import Navigation from '../src/client/app/AppNavigation';
 const state = vi.hoisted(() => ({
   administrator: false,
   permissions: [] as ('questions' | 'authors' | 'users')[],
+  addedInstanceIds: [] as string[],
 }));
 vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
@@ -15,6 +16,7 @@ vi.mock('../src/client/app/context', () => ({
         enabled: true,
         account: { administrator: state.administrator, actorId: 'test' },
         organization: { name: '組織' },
+        addedInstanceIds: state.addedInstanceIds,
         instances: [
           {
             id: 'prepared',
@@ -41,6 +43,27 @@ it('一般ユーザーには組織管理・開発ツールを表示せず、管�
   expect(admin).toContain('開発ツール');
   expect(admin).toContain('組織管理');
   expect(admin).not.toContain('<details');
+});
+
+it('権限や直接URLではお気に入りに自動登録せず、明示的に追加した先だけを切替メニューに表示する', () => {
+  state.administrator = true;
+  state.addedInstanceIds = [];
+  const empty = renderToStaticMarkup(createElement(Navigation));
+  expect(empty).toContain('お気に入りはまだありません。');
+  expect(empty).not.toContain('data-instance-switch');
+  expect(empty).toContain('ランクマッチ');
+
+  state.addedInstanceIds = ['prepared'];
+  expect(renderToStaticMarkup(createElement(Navigation))).toContain(
+    'data-instance-switch',
+  );
+
+  state.administrator = false;
+  state.permissions = [];
+  expect(renderToStaticMarkup(createElement(Navigation))).not.toContain(
+    'data-instance-switch',
+  );
+  state.addedInstanceIds = [];
 });
 
 it('準備中の通常対戦・履歴は対象の運営者だけに表示する', () => {

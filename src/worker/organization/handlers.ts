@@ -10,6 +10,7 @@ import {
   renameInstance,
   resolveInstance,
   setInstanceGrants,
+  setInstanceSelection,
   setupOrganization,
 } from './database';
 import { requestInstanceDeletion } from './deletion';
@@ -47,6 +48,8 @@ export const mutateOrganization: Handler<AuthEnv> = async (c) => {
   const { db, close } = organizationDatabase(c.env);
   try {
     const value = input as Record<string, unknown>;
+    if (c.req.path.endsWith('/selection'))
+      return c.json(await setInstanceSelection(db, c.get('subject'), value));
     if (c.req.path.endsWith('/delete'))
       return c.json(await requestInstanceDeletion(db, c.env, c.get('subject'), value));
     if (c.req.path.endsWith('/operation')) {

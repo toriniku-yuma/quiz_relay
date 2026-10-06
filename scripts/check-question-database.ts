@@ -22,6 +22,7 @@ import type { ResultRecord } from '../src/worker/results/record.ts';
 import { verifyErasureBatches } from './check-erasure-batches.ts';
 import { verifyInstanceDeletion } from './check-instance-deletion.ts';
 import { verifyInstanceOperations } from './check-instance-operations.ts';
+import { verifyInstanceSelections } from './check-instance-selections.ts';
 import { verifyModeration } from './check-moderation-database.ts';
 import { verifyWorkflows } from './check-moderation-workflows.ts';
 import { verifyProfiles } from './check-profile-database.ts';
@@ -42,7 +43,7 @@ const run = (name: string, args: string[]) =>
     windowsHide: true,
     stdio: 'ignore',
     encoding: 'utf8',
-    timeout: 60000,
+    timeout: name === 'initdb' ? 180000 : 60000,
   });
 mkdirSync(directory, { recursive: true });
 const passwordFile = resolve(directory, 'password');
@@ -1114,6 +1115,7 @@ try {
     const { verifyErasureService } = await import('./check-erasure-service.ts');
     await verifyErasureService(db, address, directory, organizationId);
   }
+  await verifyInstanceSelections(db);
 } finally {
   await client?.end({ timeout: 5 });
   await cluster.end({ timeout: 5 });
