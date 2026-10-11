@@ -1,0 +1,1 @@
+CREATE INDEX `federation_question_cache_due` ON `quiz_federation_question_links` (`cache_purged_at`,`last_available_at`);

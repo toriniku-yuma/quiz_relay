@@ -77,6 +77,8 @@ function connect(address: string) {
   return postgres(address, { ssl: false, max: 1, prepare: false, connect_timeout: 5 });
 }
 async function setup() {
+  if (existsSync('drizzle-d1/meta/_journal.json'))
+    throw new Error('POSTGRES_IS_MIGRATION_SOURCE_ONLY');
   mkdirSync(root, { recursive: true });
   if (!existsSync(envFile)) {
     if (existsSync(resolve(data, 'PG_VERSION')))
@@ -227,29 +229,7 @@ async function main() {
     throw new Error('POSTGRES_BINARIES_REQUIRED: set LOCAL_PG_BIN');
   if (command === 'setup') await setup();
   if (command === 'start') {
-    const local = config();
-    const runtime = parseEnv(readFileSync('.dev.vars', 'utf8'));
-    if (runtime.ORGANIZATION_ENABLED !== 'true') {
-      console.error(
-        'Local organization setup is disabled; run pnpm db:local:setup, then restart pnpm dev',
-      );
-      process.exitCode = 1;
-      return;
-    }
-    for (const key of [
-      'DATABASE_URL',
-      'GAME_DATABASE_URL',
-      'RESULT_DATABASE_URL',
-      'ORGANIZATION_DATABASE_URL',
-    ]) {
-      if (runtime[key] !== local[key]) {
-        console.error(
-          `${key} differs from local configuration; run pnpm db:local:setup, then restart pnpm dev`,
-        );
-        process.exitCode = 1;
-        return;
-      }
-    }
+    config();
     await start();
     console.log('Local PostgreSQL running');
   }

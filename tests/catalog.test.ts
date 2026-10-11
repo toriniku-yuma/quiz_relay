@@ -12,8 +12,9 @@ import { adjudicate, createState, snapshot } from '../src/worker/game/state';
 import { questionProvenance, questions } from './fixtures/questions';
 
 const database = vi.hoisted(() => ({ query: vi.fn(), end: vi.fn() }));
-vi.mock('../src/worker/db/connection.ts', () => ({
-  connectDatabase: () => {
+vi.mock('../src/worker/db/d1.ts', () => ({
+  readD1: async (_db: unknown, read: () => Promise<unknown>) => read(),
+  connectD1: () => {
     const builder = {
       from: () => builder,
       innerJoin: () => builder,
@@ -21,7 +22,7 @@ vi.mock('../src/worker/db/connection.ts', () => ({
       where: () => builder,
       orderBy: () => database.query(),
     };
-    return { db: { select: () => builder }, close: database.end };
+    return { select: () => builder };
   },
 }));
 beforeEach(() => {
@@ -56,6 +57,15 @@ async function definition(): Promise<MatchDefinition> {
 }
 
 describe('1C fixed catalog', () => {
+  it('部屋の作問者表示を固定原本の検証で落とさず、本文hashを維持する', async () => {
+    const source = await definition();
+    source.kind = 'room';
+    source.questions[0].authorName = '部屋の作問者';
+    source.manifestHash = await contentHash(source.questions);
+    const loaded = await validateDefinition(source);
+    expect(loaded.questions[0].authorName).toBe('部屋の作問者');
+    expect(loaded.manifestHash).toBe(source.manifestHash);
+  });
   it('プロフィールの32書記素の作問者名を試合へ取り込める', async () => {
     const source = await definition();
     const name = '👩‍👩‍👧‍👦'.repeat(32);
@@ -168,7 +178,7 @@ describe('1C fixed catalog', () => {
 
   it('fails closed without a game DB instead of using probe credentials or bundled mocks', async () => {
     await expect(
-      loadMatchDefinition({ DATABASE_URL: 'must-not-use' } as Env, {
+      loadMatchDefinition({ GAME_D1: undefined } as Env, {
         owner: 'https://example.com',
         id: 'demo',
         version: 1,
@@ -177,9 +187,10 @@ describe('1C fixed catalog', () => {
   });
 });
 
-it('DB loader rejects absent/retired data and closes connections on every failure', async () => {
+it('D1 loader rejects absent/retired data and invalid immutable versions', async () => {
   const source = await definition();
   const rows = source.questions.map((question) => ({
+    sharedAvailable: 1,
     competition: {
       owner: source.competition.owner,
       competitionId: source.competition.id,
@@ -206,10 +217,9 @@ it('DB loader rejects absent/retired data and closes connections on every failur
       retiredAt: null,
     },
   }));
-  const env = { GAME_DATABASE_URL: 'postgres://test-only' } as Env;
+  const env = { GAME_D1: {} } as Env;
   database.query.mockResolvedValueOnce(rows);
   expect(await loadMatchDefinition(env, source.competition)).toEqual(source);
-  expect(database.end).toHaveBeenCalledTimes(1);
 
   database.query.mockResolvedValueOnce([]);
   await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
@@ -231,7 +241,6 @@ it('DB loader rejects absent/retired data and closes connections on every failur
   await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
     'database offline',
   );
-  expect(database.end).toHaveBeenCalledTimes(5);
   database.query.mockResolvedValueOnce(rows);
   expect(
     await loadMatchDefinition({
@@ -271,7 +280,6 @@ it('DB loader rejects absent/retired data and closes connections on every failur
   await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
     'QUESTION_UNAVAILABLE',
   );
-  expect(database.end).toHaveBeenCalledTimes(9);
 });
 
 it('requires an explicit non-empty question set to create a match', () => {

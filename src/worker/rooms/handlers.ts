@@ -1,11 +1,11 @@
 import type { Handler, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import { API_PATHS } from '../../shared/api-paths';
-import { resultsQuery } from '../../shared/results';
-import { validateBroughtSet, validateRoomSettings } from '../../shared/rooms';
-import { type AuthEnv, authenticate } from '../auth/handlers';
-import { loadMatchDefinition } from '../catalog/database';
-import { OrganizationError, validId } from '../organization/access';
+import { API_PATHS } from '../../shared/api-paths.ts';
+import { resultsQuery } from '../../shared/results.ts';
+import { validateBroughtSet, validateRoomSettings } from '../../shared/rooms.ts';
+import { type AuthEnv, authenticate } from '../auth/handlers.ts';
+import { loadMatchDefinition } from '../catalog/database.ts';
+import { OrganizationError, validId } from '../organization/access.ts';
 import {
   createGuest,
   ensureCasualCatalog,
@@ -18,10 +18,11 @@ import {
   publicInstances,
   roomIds,
   roomOptions,
+  roomSharedSources,
   saveCasualSettings,
-} from './database';
-import { history, report } from './reports';
-import { roomResult } from './rpc';
+} from './database.ts';
+import { history, report } from './reports.ts';
+import { roomResult } from './rpc.ts';
 
 export const optionalAuth: MiddlewareHandler<AuthEnv> = (httpContext, next) =>
   httpContext.req.header('Authorization') ? authenticate(httpContext, next) : next();
@@ -295,6 +296,7 @@ export const options: Handler<AuthEnv> = async (httpContext) => {
   const identity = await context(httpContext, 'room', true);
   return httpContext.json({
     categories: await roomOptions(httpContext.env, identity.instance.id),
+    sharedSources: await roomSharedSources(httpContext.env, identity.instance.id),
     config: identity.instance.casualConfig,
   });
 };

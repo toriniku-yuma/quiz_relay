@@ -18,14 +18,17 @@ beforeEach(() => {
   mocks.session.mockReset().mockResolvedValue({ data: { session: {} }, error: null });
   mocks.user.mockReset().mockResolvedValue({
     data: {
-      user: { email: 'self@example.test', user_metadata: { full_name: '検証管理者' } },
+      user: {
+        email: 'self@example.test',
+        user_metadata: { full_name: 'Google側の名前' },
+      },
     },
     error: null,
   });
   mocks.overview.mockReset().mockResolvedValue({
     enabled: true,
     organization: { id: 'org', name: 'テスト組織' },
-    account: { actorId: 'actor', administrator: true },
+    account: { actorId: 'actor', administrator: true, displayName: '検証管理者' },
     instances: [
       { id: 'instance', name: '初期インスタンス', state: 'preparing', permissions: [] },
     ],
@@ -47,6 +50,7 @@ it('組織・インスタンス・本人の管理者名と公開状態が読め�
     'このアカウントは組織管理者です',
   ])
     expect(html).toContain(text);
+  expect(html).not.toContain('Google側の名前');
 });
 it('ログアウト時には組織情報を取得しない', async () => {
   mocks.session.mockResolvedValue({ data: { session: null }, error: null });
@@ -68,7 +72,8 @@ it('Authの任意metadataを管理者権限として扱わない', async () => {
     instances: [],
   });
   const html = render(await loadConfigurationStatus());
-  expect(html).toContain('self@example.test');
+  expect(html).toContain('ログイン済み');
+  expect(html).not.toContain('self@example.test');
   expect(html).toContain('組織管理者ではありません');
   expect(html).not.toContain('管理者名（ログイン本人）');
 });

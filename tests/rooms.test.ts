@@ -111,6 +111,8 @@ it('問題数方式は無正解の問題も数え、指定数で引き分けを�
   const state = playing();
   state.rules.winMode = 'questions';
   state.rules.questionLimit = 1;
+  expect(state.questions.length).toBeGreaterThan(1);
+  expect(snapshot(state).questionCount).toBe(1);
   state.revealed = Array.from(state.question.text).length;
   state.deadline = 100;
   advance(state, 100);
@@ -118,6 +120,7 @@ it('問題数方式は無正解の問題も数え、指定数で引き分けを�
   expect(state.result).toMatchObject({ reason: 'question_limit', winnerId: null });
   expect(state.completed?.completedQuestions).toHaveLength(1);
   expect(snapshot(state).roomRules).toMatchObject({ winMode: 'questions', count: 1 });
+  expect(snapshot(state).questionCount).toBe(1);
 });
 it('専任は回答・接続人数条件に含めず、接続中は次問を手動で進める', () => {
   const state = playing();

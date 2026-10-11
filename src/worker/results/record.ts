@@ -1,9 +1,10 @@
-import type { Player, Result } from '../../shared/game';
-import type { MatchDefinition } from '../catalog/definition';
-import type { State } from '../game/state';
-import { type MatchKind, ratingChange, ratingPolicy } from './rating';
+import type { Player, Result } from '../../shared/game.ts';
+import type { MatchDefinition } from '../catalog/definition.ts';
+import type { State } from '../game/state.ts';
+import { type MatchKind, ratingChange, ratingPolicy } from './rating.ts';
 
 export type ResultRecord = {
+  parentRoomId?: string;
   answerStats?: State['answerStats'];
   startingRatings?: Record<string, number>;
   completedQuestions?: State['completedQuestions'];
@@ -20,6 +21,7 @@ export type ResultRecord = {
 
 export function makeResultRecord(
   state: {
+    parentRoomId?: string;
     definition?: Omit<MatchDefinition, 'questions' | 'rules'>;
     rules: MatchDefinition['rules'];
     matchId: string;
@@ -42,6 +44,7 @@ export function makeResultRecord(
     return;
   const kind = state.matchKind;
   return structuredClone({
+    ...(state.parentRoomId ? { parentRoomId: state.parentRoomId } : {}),
     ...(state.startingRatings ? { startingRatings: state.startingRatings } : {}),
     ...(state.completedQuestions ? { completedQuestions: state.completedQuestions } : {}),
     ...(state.answerStats ? { answerStats: state.answerStats } : {}),

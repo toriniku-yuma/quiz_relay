@@ -17,6 +17,7 @@ import Investigation from './Investigation';
 import SanctionEditor from './SanctionEditor';
 import UserActions from './UserActions';
 import UserCases from './UserCases';
+import UserScopeSelect from './UserScopeSelect';
 import { useActiveSanctions } from './useActiveSanctions';
 import { useModeration } from './useModeration';
 export default function UsersPanel() {
@@ -27,6 +28,15 @@ export default function UsersPanel() {
     { id: string } & import('../../../shared/moderation').ModeratedUser
   >(JSON.stringify([auth.user?.id, model.instanceId, model.query, model.filter]));
   const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkScope, setBulkScope] = useState<string | null>(model.instanceId);
+  const scopes = model.instances.filter(
+    (instance) => data?.administrator || instance.permissions.includes('users'),
+  );
+  const scopeName = (id: string | null) =>
+    id === null
+      ? '組織全体'
+      : (model.instances.find((instance) => instance.id === id)?.name ??
+        '削除済みインスタンス');
   const visible = (data?.users ?? []).map((user) => ({ ...user, id: user.actorId }));
   const allSelected =
     visible.length > 0 &&
@@ -48,11 +58,11 @@ export default function UsersPanel() {
   };
   const change = (values: Record<string, string | number>) =>
     navigate(href({ page: 1, ...values }));
-  if (!model.instanceId)
-    return <p>メニューから対象インスタンスのユーザー管理を選んでください。</p>;
   return (
     <div className="grid gap-5">
-      {!model.enabled && <p>ログインして権限を確認してください。</p>}
+      {!model.enabled && (
+        <p>ログインし、組織管理メニューからユーザー管理を開いてください。</p>
+      )}
       {model.error && (
         <>
           <p role="alert">{model.error}</p>
@@ -76,10 +86,22 @@ export default function UsersPanel() {
               </a>
               <h2 className="text-xl font-bold">{data.target.name}</h2>
               <p>所属元：{data.target.origin}</p>
-              <Investigation
-                instanceId={model.instanceId}
-                actorId={data.target.actorId}
+              <UserScopeSelect
+                value={model.instanceId}
+                instances={scopes}
+                allowOrganization={data.administrator === true}
+                onChange={(value) =>
+                  navigate(href({ instance: value ?? '', eventPage: 1 }))
+                }
               />
+              {model.instanceId ? (
+                <Investigation
+                  instanceId={model.instanceId}
+                  actorId={data.target.actorId}
+                />
+              ) : (
+                <p>過去の戦績は対象インスタンスを選ぶと確認できます。</p>
+              )}
               <h3 className="font-bold">処分・調査履歴</h3>
               <DataTable
                 label="処分・調査履歴"
@@ -117,7 +139,7 @@ export default function UsersPanel() {
                       }
                     </td>
                     <td>{data.operatorNames?.[row.operatorId] ?? '表示名未登録'}</td>
-                    <td>{row.instanceId === null ? '組織全体' : data.scopeName}</td>
+                    <td>{scopeName(row.instanceId)}</td>
                     <td className="whitespace-pre-wrap">{row.reason}</td>
                     <td>
                       {row.before && <p>変更前：{describe(row.before)}</p>}
@@ -175,7 +197,10 @@ export default function UsersPanel() {
                 <span>選択中 {selection.rows.length}件</span>
                 <Button
                   disabled={!selection.rows.length}
-                  onClick={() => setBulkOpen(true)}
+                  onClick={() => {
+                    setBulkScope(model.instanceId);
+                    setBulkOpen(true);
+                  }}
                 >
                   一括操作
                 </Button>
@@ -184,9 +209,12 @@ export default function UsersPanel() {
                 </Button>
               </div>
               <SanctionEditor
+                key={`bulk:${bulkScope}`}
                 batch={selection.rows}
                 data={{ ...data, target: undefined, canModerate: true, sanctions: [] }}
-                instanceId={model.instanceId}
+                instanceId={bulkScope}
+                scopes={scopes}
+                changeScope={setBulkScope}
                 saved={async () => {
                   await model.refresh();
                   selection.clear();
@@ -268,7 +296,7 @@ export default function UsersPanel() {
                         .filter((sanction) => sanction.actorId === row.actorId)
                         .map(
                           (sanction) =>
-                            `${sanction.instanceId === null ? '組織全体：' : ''}${sanctionLabels[sanction.kind]}`,
+                            `${scopeName(sanction.instanceId)}：${sanctionLabels[sanction.kind]}`,
                         )
                         .join(' / ') || 'なし'}
                     </td>

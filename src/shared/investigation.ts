@@ -1,4 +1,4 @@
-import type { Pagination } from './pagination';
+import type { Pagination } from './pagination.ts';
 export type MatchStatistics = {
   resultId: string;
   finishedAt: string;

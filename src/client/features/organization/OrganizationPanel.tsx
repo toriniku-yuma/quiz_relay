@@ -5,9 +5,12 @@ import { CASUAL_PATH, GAME_PATH, ROOMS_PATH, USERS_PATH } from '../../app/paths'
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
+import ExternalInstanceList from '../federation/ExternalInstanceList';
+import type { useExternalInstances } from '../federation/useExternalInstances';
 import { useActiveSanctions } from '../moderation/useActiveSanctions';
 import CasualSettings from '../rooms/CasualSettings';
 import InstanceOperations from './InstanceOperations';
+import OrganizationSettings from './OrganizationSettings';
 import type { useOrganization } from './useOrganization';
 
 const playEntries = [
@@ -20,16 +23,17 @@ export default function OrganizationPanel({
   organization,
   management = false,
   instanceId,
+  externalInstances,
 }: {
   organization: ReturnType<typeof useOrganization>;
   management?: boolean;
   instanceId?: string;
+  externalInstances?: ReturnType<typeof useExternalInstances>;
 }) {
   const { data, error, busy, mutate, refresh } = organization;
   const sanctions = useActiveSanctions(data?.sanctions ?? []);
   const [name, setName] = useState('');
   const [initialInstanceName, setInitialInstanceName] = useState('');
-  const [instanceName, setInstanceName] = useState('');
   const listedInstances =
     data?.instances.filter(
       (instance) =>
@@ -108,198 +112,159 @@ export default function OrganizationPanel({
             </Button>
           </form>
         </Panel>
+      ) : management && !instanceId && data.account?.administrator ? (
+        <OrganizationSettings organization={organization} />
       ) : (
-        <>
-          <Panel
-            title={
-              management
-                ? (data.organization?.name ?? 'インスタンス管理')
-                : '利用可能なインスタンス'
-            }
-          >
-            <p className="my-3">
-              {management
-                ? '組織のインスタンスを管理します。作成してもお気に入りには自動追加されません。'
-                : 'お気に入りに追加すると、切替メニューに表示されます。お気に入りは同じアカウントの別端末でも使えます。'}
-            </p>
-            {listedInstances.length === 0 && <p>利用可能なインスタンスはありません。</p>}
-            <ul className="grid gap-4">
-              {listedInstances.map((instance) => (
-                <li key={instance.id} className="border border-line p-4">
-                  <h3 className="font-bold">{instance.name}</h3>
-                  <p className="my-2">
-                    {instance.state === 'published'
-                      ? '公開中'
-                      : instance.state === 'archived'
-                        ? 'アーカイブ済み'
-                        : '準備中'}
-                  </p>
-                  {canAccessInstance(instance, data.account?.administrator) && (
-                    <div className="my-3 flex flex-wrap items-center gap-3">
-                      {playEntries
-                        .filter((entry) =>
-                          canJoinInstance(
-                            instance,
-                            data.account,
-                            data.sanctions && sanctions,
-                            entry.mode,
-                          ),
-                        )
-                        .map((entry) => (
-                          <a
-                            key={entry.mode}
-                            className="underline"
-                            href={`${entry.path}?instance=${encodeURIComponent(instance.id)}`}
-                          >
-                            {entry.label}
-                          </a>
-                        ))}
-                      {!management && (
-                        <>
-                          {data.addedInstanceIds?.includes(instance.id) && (
-                            <span>お気に入り登録済み</span>
-                          )}
-                          <Button
-                            disabled={busy}
-                            onClick={() =>
-                              void mutate(API_PATHS.organizationInstanceSelection, {
-                                id: instance.id,
-                                added: !data.addedInstanceIds?.includes(instance.id),
-                              })
-                            }
-                          >
-                            {data.addedInstanceIds?.includes(instance.id)
-                              ? 'お気に入りから外す'
-                              : 'お気に入りに追加'}
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {instance.state === 'preparing' && (
-                    <p className="my-2">
-                      公開前に問題の登録・停止状態・出題設定を確認してください。問題と戦績は他のインスタンスから自動コピーされません。
-                    </p>
-                  )}
-                  {management &&
-                    (data.account?.administrator || instance.permissions.length > 0) && (
-                      <p className="my-3">
-                        出題できない場合は、問題の登録・停止状態と出題設定を確認してください。カタログ管理の対象ID：
-                        <code className="break-all">{instance.id}</code>
-                      </p>
-                    )}
-                  {management &&
-                    data.account?.administrator &&
-                    instance.state !== 'archived' && (
+        <Panel title={management ? 'インスタンスの管理' : '利用可能なインスタンス'}>
+          <p className="my-3">
+            {management
+              ? 'このインスタンスの対戦・公開状態・名前を管理します。'
+              : 'お気に入りに追加すると、切替メニューに表示されます。お気に入りは同じアカウントの別端末でも使えます。'}
+          </p>
+          {listedInstances.length === 0 && <p>利用可能なインスタンスはありません。</p>}
+          <ul className="grid gap-4">
+            {listedInstances.map((instance) => (
+              <li key={instance.id} className="border border-line p-4">
+                <h3 className="font-bold">{instance.name}</h3>
+                <p className="my-2">
+                  {instance.state === 'published'
+                    ? '公開中'
+                    : instance.state === 'archived'
+                      ? 'アーカイブ済み'
+                      : '準備中'}
+                </p>
+                {canAccessInstance(instance, data.account?.administrator) && (
+                  <div className="my-3 flex flex-wrap items-center gap-3">
+                    {playEntries
+                      .filter((entry) =>
+                        canJoinInstance(
+                          instance,
+                          data.account,
+                          data.sanctions && sanctions,
+                          entry.mode,
+                        ),
+                      )
+                      .map((entry) => (
+                        <a
+                          key={entry.mode}
+                          className="underline"
+                          href={`${entry.path}?instance=${encodeURIComponent(instance.id)}`}
+                        >
+                          {entry.label}
+                        </a>
+                      ))}
+                    {!management && (
                       <>
-                        <CasualSettings instance={instance} refresh={refresh} />
-                        <InstanceOperations instance={instance} refresh={refresh} />
+                        {data.addedInstanceIds?.includes(instance.id) && (
+                          <span>お気に入り登録済み</span>
+                        )}
+                        <Button
+                          disabled={busy}
+                          onClick={() =>
+                            void mutate(API_PATHS.organizationInstanceSelection, {
+                              id: instance.id,
+                              added: !data.addedInstanceIds?.includes(instance.id),
+                            })
+                          }
+                        >
+                          {data.addedInstanceIds?.includes(instance.id)
+                            ? 'お気に入りから外す'
+                            : 'お気に入りに追加'}
+                        </Button>
                       </>
                     )}
-                  {management && data.account?.administrator && (
-                    <form
-                      key={instance.name}
-                      className="grid gap-4"
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        const name = new FormData(event.currentTarget).get('name');
-                        void mutate(API_PATHS.organizationRename, {
-                          id: instance.id,
-                          name,
-                          expectedName: instance.name,
-                        });
-                      }}
-                    >
-                      <TextField
-                        id={`name-${instance.id}`}
-                        name="name"
-                        label="インスタンス名"
-                        placeholder="例：早押しクイズ"
-                        defaultValue={instance.name}
-                        required
-                        maxLength={80}
-                      />
-                      <Button
-                        type="submit"
-                        className="justify-self-start"
-                        disabled={busy}
-                      >
-                        名前を保存
-                      </Button>
-                    </form>
+                  </div>
+                )}
+                {instance.state === 'preparing' && (
+                  <p className="my-2">
+                    公開前に問題の登録・停止状態・出題設定を確認してください。問題と戦績は他のインスタンスから自動コピーされません。
+                  </p>
+                )}
+                {management &&
+                  (data.account?.administrator || instance.permissions.length > 0) && (
+                    <p className="my-3">
+                      出題できない場合は、問題の登録・停止状態と出題設定を確認してください。カタログ管理の対象ID：
+                      <code className="break-all">{instance.id}</code>
+                    </p>
                   )}
-                  {management && data.account?.administrator && (
-                    <a
-                      className="mt-4 block underline"
-                      href={`${USERS_PATH}?instance=${instance.id}`}
-                    >
-                      ユーザー管理で権限を設定
-                    </a>
+                {management &&
+                  data.account?.administrator &&
+                  instance.state !== 'archived' && (
+                    <>
+                      <CasualSettings instance={instance} refresh={refresh} />
+                      <InstanceOperations instance={instance} refresh={refresh} />
+                    </>
                   )}
-                  {management && data.account?.administrator && (
-                    <a
-                      className="mt-4 block underline"
-                      href={`/game/?view=closure&instance=${instance.id}`}
-                    >
-                      {instance.state === 'archived'
-                        ? 'アーカイブ後の手続き'
-                        : '運営を終了する'}
-                    </a>
-                  )}
-                </li>
-              ))}
-              {unavailableFavoriteIds.map((id) => (
-                <li key={id} className="border border-line p-4">
-                  <h3 className="font-bold">
-                    {data.instances.find((instance) => instance.id === id)?.name ??
-                      '利用できないインスタンス'}
-                  </h3>
-                  <p className="my-2">お気に入り登録済み・現在は利用できません。</p>
-                  <Button
-                    disabled={busy}
-                    onClick={() =>
-                      void mutate(API_PATHS.organizationInstanceSelection, {
-                        id,
-                        added: false,
-                      })
-                    }
+                {management && data.account?.administrator && (
+                  <form
+                    key={instance.name}
+                    className="grid gap-4"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      const name = new FormData(event.currentTarget).get('name');
+                      void mutate(API_PATHS.organizationRename, {
+                        id: instance.id,
+                        name,
+                        expectedName: instance.name,
+                      });
+                    }}
                   >
-                    お気に入りから外す
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </Panel>
-          {management && !instanceId && data.account?.administrator && (
-            <Panel title="インスタンスを作成">
-              <form
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  if (
-                    await mutate(API_PATHS.organizationAdd, {
-                      name: instanceName,
+                    <TextField
+                      id={`name-${instance.id}`}
+                      name="name"
+                      label="インスタンス名"
+                      placeholder="例：早押しクイズ"
+                      defaultValue={instance.name}
+                      required
+                      maxLength={80}
+                    />
+                    <Button type="submit" className="justify-self-start" disabled={busy}>
+                      名前を保存
+                    </Button>
+                  </form>
+                )}
+                {management && data.account?.administrator && (
+                  <a className="mt-4 block underline" href={USERS_PATH}>
+                    組織のユーザー管理で権限を設定
+                  </a>
+                )}
+                {management && data.account?.administrator && (
+                  <a
+                    className="mt-4 block underline"
+                    href={`/game/?view=closure&instance=${instance.id}`}
+                  >
+                    {instance.state === 'archived'
+                      ? 'アーカイブ後の手続き'
+                      : '運営を終了する'}
+                  </a>
+                )}
+              </li>
+            ))}
+            {unavailableFavoriteIds.map((id) => (
+              <li key={id} className="border border-line p-4">
+                <h3 className="font-bold">
+                  {data.instances.find((instance) => instance.id === id)?.name ??
+                    '利用できないインスタンス'}
+                </h3>
+                <p className="my-2">お気に入り登録済み・現在は利用できません。</p>
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    void mutate(API_PATHS.organizationInstanceSelection, {
+                      id,
+                      added: false,
                     })
-                  ) {
-                    setInstanceName('');
                   }
-                }}
-              >
-                <TextField
-                  id="instance-name"
-                  label="インスタンス名"
-                  placeholder="例：早押しクイズ"
-                  required
-                  maxLength={80}
-                  value={instanceName}
-                  onChange={(event) => setInstanceName(event.target.value)}
-                />
-                <Button type="submit" tone="primary" disabled={busy}>
-                  準備中として作成
+                >
+                  お気に入りから外す
                 </Button>
-              </form>
-            </Panel>
-          )}
-        </>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+      {!management && data?.account && externalInstances && (
+        <ExternalInstanceList externalInstances={externalInstances} />
       )}
     </section>
   );

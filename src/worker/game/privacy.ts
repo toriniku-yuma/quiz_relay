@@ -1,5 +1,5 @@
-import type { MatchDefinition } from '../catalog/definition';
-import type { State } from './state';
+import type { MatchDefinition } from '../catalog/definition.ts';
+import type { State } from './state.ts';
 
 export function reviewDeadline(state: State) {
   if (!state.completed || state.result?.storage !== 'confirmed') return;
@@ -63,12 +63,16 @@ export function anonymizeState(state: State, actorId: string, questionIds: Set<s
     id: string;
     seriesId?: string;
     authorName?: string;
+    sharedSource?: { authorId: string };
   }) => {
     if (
       question.authorName &&
-      (questionIds.has(question.id) || questionIds.has(question.seriesId ?? ''))
+      (questionIds.has(question.id) ||
+        questionIds.has(question.seriesId ?? '') ||
+        question.sharedSource?.authorId === actorId)
     )
       question.authorName = '退会ユーザー';
+    if (question.sharedSource?.authorId === actorId) questionIds.add(question.id);
   };
   playerName(state.players);
   for (const question of state.questions) authorName(question);

@@ -11,7 +11,17 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn(),
 }));
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({ auth: { getUser: mocks.user } }),
+  createClient: () => ({
+    auth: {
+      getUser: mocks.user,
+      getClaims: async () => ({
+        data: {
+          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
+        },
+        error: null,
+      }),
+    },
+  }),
 }));
 vi.mock('../src/worker/organization/database', async (original) => ({
   ...(await original<typeof import('../src/worker/organization/database')>()),
@@ -68,7 +78,6 @@ it('画面別取得条件を検証済み本人情報とともに渡す', async (
     instance,
     undefined,
     view,
-    expect.any(Function),
   );
   expect(mocks.close).toHaveBeenCalled();
 });

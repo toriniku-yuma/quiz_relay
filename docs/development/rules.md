@@ -9,6 +9,8 @@
 
 仕様・設計・手順は docs に置き、AGENTS.md は入口へのリンクだけにします。
 セッション内で完結する調査結果・残タスク整理・途中経過は会話内で扱い、文書へ転記しません。文書の更新は、継続して参照する仕様・設計・手順や実装・検証状況が変わった場合、または利用者が明示的に記録を求めた場合に行います。
+スクリーンショット・実行ログ・計測レポートなどの一時成果物は `.wrangler/qa/` 等のGit管理外へ置き、コミットへ含めません。実行ごとの日時・実行ID・配備バージョン・当日の使用量・承認待ちは会話と検証出力で扱い、仕様書や手順書へ追記しません。文書から一時成果物への閲覧必須のリンクも置きません。
+継続して使う検証スクリプト・テスト・設定と、生成した検証出力を区別します。UI確認は再利用できる手順・合格条件として記載します。不要になった一時ファイルは整理し、バックアップ・秘密設定・DB原本は一時ファイルの削除対象に混ぜません。
 同じ説明は1か所にまとめ、変更は該当箇所を書き直します。日付付きの追記、作業段階の略号、再開プロンプトを積み重ねません。
 最初に結論、次に操作や条件を書く。手順は番号、比較は表を使い、長い段落は意味のまとまりで分けます。
 
@@ -55,7 +57,7 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 | `src/worker/probes/` | 検証API・検証DO・DBプローブ |
 | `src/worker/federation/` | 署名・正規化・送信先の検査 |
 | `src/worker/env.ts` | Worker bindingの型 |
-| `src/worker/db/`・`drizzle/` | Drizzleスキーマとmigration |
+| `src/worker/db/`・`drizzle-d1/` | Drizzleスキーマとmigration |
 | `tests/`・`scripts/` | テストと実HTTP・DB検証 |
 
 正式機能を probes に追加しません。機能が大きくなったときだけ、その中で routes・state・validation などに分けます。
@@ -73,8 +75,8 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 AppがページとNotFoundを選び、redirect.tsが転送URLを作り、mainが実際に転送します。
 認証コールバックは features/auth/callback、共有パスは paths.ts に置き、ページの相互importを避けます。専用ルーター依存は追加しません。
 
-`/` は `/game/` へ query・hashを保持して転送します。正式参加は `/game/`、開発参加は `/local-game/`、技術検証は `/debug/`。
-正式ホームを作るときにトップ転送を外します。Supabase Authの戻り先設定を不要に増やしません。
+`/` は `/game/` へ転送します。ランク参加は `/game/`、開発参加は `/local-game/`、技術検証は `/debug/`。正式ホームは後続のUI段階で実装します。
+認証後は検証済みの同一origin内の元画面へ戻します。外部URLへ転送せず、Clerkの戻り先設定を不要に増やしません。
 
 app/navigation.tsが通常の同一タブ内クリックとHistory APIを扱います。
 外部・API・修飾キー・download・別タブ指定はブラウザーの動作を維持します。
@@ -154,12 +156,12 @@ Tailwind v4対応とHTMLの実験的対応を使い、推奨Lintの警告も失�
 
 Drizzleの型付きAPIとDrizzle Kitを使い、`src/worker/db/schema.ts` を正とします。
 手書きSQLは未対応の権限・trigger等のcustom migrationと必要なsql式だけに限定します。
-文字列連結・独自escape・Management APIへの通常SQL送信はしません。reader・writer・migrationの権限を分け、CLIのTSも型検査します。
+文字列連結・独自escape・Management APIへの通常SQL送信はしません。公開API・非公開の消去サービス・設置者用CLIの認可を分け、CLIのTSも型検査します。
 
 人数・ルール・問題セットのJSON入力はDBの不変版へ反映し、新規参加の有効版を切り替えます。
 接続・待機の運用値は `config/runtime.json`。[設定手順](../guides/configuration.md)と[DB管理](../guides/database.md)を参照してください。
 初期問題は `supabase/seeds/mock-hiragana.json`、テスト用は `tests/fixtures/questions.ts` に置き、srcからimportしません。
-新規試合の問題はDBから取得します。pnpm installではPostgres.jsの接続終了パッチも適用します。
+新規試合の問題はDBから取得します。旧PostgreSQLは移行元の読取りにだけ残し、接続終了パッチはそのツールのために維持します。
 
 ## デプロイと既存環境の変更
 

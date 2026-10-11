@@ -5,7 +5,7 @@ import {
   manageCatalog,
   validateCatalogOperation,
 } from '../src/worker/catalog/manage.ts';
-import { connectDatabase } from '../src/worker/db/connection.ts';
+import { localD1 } from './local-d1.ts';
 
 async function main() {
   const [path, flag, ...extra] = process.argv.slice(2);
@@ -46,15 +46,15 @@ async function main() {
       return;
     }
   }
-  const url = process.env.GAME_CATALOG_DATABASE_URL;
-  if (!url) throw new Error('CATALOG_DATABASE_REQUIRED');
-  const { db, close } = connectDatabase(url, process.env.DATABASE_CA_CERT);
+  const subject = process.env.CATALOG_SUBJECT ?? process.env.INITIAL_ADMIN_SUBJECT;
+  if (!subject) throw new Error('CATALOG_SUBJECT_REQUIRED');
+  const { db, close } = await localD1();
   try {
     console.log(
       JSON.stringify(
         path === '--list'
-          ? await listCatalog(db, owner)
-          : await manageCatalog(db, owner, input),
+          ? await listCatalog(db, owner, subject)
+          : await manageCatalog(db, owner, input, subject),
         null,
         2,
       ),

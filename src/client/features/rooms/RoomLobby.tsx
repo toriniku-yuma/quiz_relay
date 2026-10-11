@@ -9,28 +9,40 @@ import Panel from '../../components/Panel';
 import GameBoard from '../game/GameBoard';
 import { useMutation } from '../moderation/useMutation';
 import ResultLinks from '../results/ResultLinks';
-import { playRequest } from './api';
 import RoomRules from './RoomRules';
 import type { useRoom } from './useRoom';
 
 export default function RoomLobby({
   session,
   gamePage = false,
+  foreign,
 }: {
   session: ReturnType<typeof useRoom>;
   gamePage?: boolean;
+  foreign?: {
+    actorId: string;
+    href: string;
+    homeHistory: string;
+    onEdit: () => void;
+    onReturn: () => void;
+    onClosed: () => void;
+  };
 }) {
   const { auth, organization, guest, setMatchStatus } = useApp();
   const room = session.room,
-    actor = organization.data?.account?.actorId ?? guest?.data?.id;
+    actor = foreign?.actorId ?? organization.data?.account?.actorId ?? guest?.data?.id;
   const mutation = useMutation(
     API_PATHS.roomMutate,
     async (request) => {
-      if (!session.isCurrent(request.room)) return;
+      if (!session.isCurrent(request.room) || request.action === 'close') return;
       await session.refresh();
       if (!session.isCurrent(request.room)) return;
       if (request.action === 'return') {
         session.game.leave();
+        if (foreign) {
+          foreign.onReturn();
+          return;
+        }
         navigate(
           `${ROOMS_PATH}?instance=${session.active?.instanceId}&room=${session.active?.id}${auth.user ? '' : '&guest=1'}`,
           true,
@@ -38,7 +50,7 @@ export default function RoomLobby({
       }
     },
     (path, body) =>
-      playRequest(path, body, String((body as Record<string, unknown>).instanceId)),
+      session.request(path, body, String((body as Record<string, unknown>).instanceId)),
   );
   const leaving = session.exit;
   const locked = mutation.busy || mutation.uncertain || leaving.busy || leaving.uncertain;
@@ -55,7 +67,9 @@ export default function RoomLobby({
         !!session.room?.matchRoom &&
         !session.room.waiting &&
         !session.game.snapshot?.result,
-      href: `${ROOMS_PATH}?instance=${session.active.instanceId}&room=${session.active.id}${session.room?.matchRoom && !session.room.waiting ? '&view=game' : ''}${auth.user ? '' : '&guest=1'}`,
+      href:
+        foreign?.href ??
+        `${ROOMS_PATH}?instance=${session.active.instanceId}&room=${session.active.id}${session.room?.matchRoom && !session.room.waiting ? '&view=game' : ''}${auth.user ? '' : '&guest=1'}`,
     });
     return () =>
       setMatchStatus((current) => (current?.roomId === roomId ? null : current));
@@ -66,6 +80,7 @@ export default function RoomLobby({
     session.game.snapshot?.result,
     setMatchStatus,
     auth.user,
+    foreign?.href,
   ]);
   if (!room) return <p role="status">ロビーを確認しています。{session.error}</p>;
   const member = room.members.find((candidateMember) => candidateMember.id === actor),
@@ -81,7 +96,8 @@ export default function RoomLobby({
             <RoomRules settings={room.settings} />
             <p role="status">
               {room.closed ? '部屋は閉じています。' : room.playing ? '対戦中' : 'ロビー'}{' '}
-              ／ {session.connection === 'open' ? '接続済み' : '接続を確認中'}
+              {!room.closed &&
+                `／ ${session.connection === 'open' ? '接続済み' : '接続を確認中'}`}
             </p>
             {room.waiting && (
               <p>途中入室のため、現在の試合が終わるまでロビーでお待ちください。</p>
@@ -131,12 +147,18 @@ export default function RoomLobby({
                   >
                     部屋主が開始
                   </Button>
-                  <a
-                    className="p-3 underline"
-                    href={`${ROOMS_PATH}?instance=${room.instanceId}&room=${room.id}&view=edit`}
-                  >
-                    設定を変更
-                  </a>
+                  {foreign ? (
+                    <Button disabled={locked} onClick={foreign.onEdit}>
+                      設定を変更
+                    </Button>
+                  ) : (
+                    <a
+                      className="p-3 underline"
+                      href={`${ROOMS_PATH}?instance=${room.instanceId}&room=${room.id}&view=edit`}
+                    >
+                      設定を変更
+                    </a>
+                  )}
                 </>
               )}
             </>
@@ -151,9 +173,14 @@ export default function RoomLobby({
           )}
           <Button
             disabled={locked || (room.playing && !room.waiting && !finished)}
-            onClick={() =>
-              void leaving.submit({ room: room.id, instanceId: room.instanceId })
-            }
+            onClick={() => {
+              if (room.closed) {
+                session.leave();
+                foreign?.onClosed();
+                return;
+              }
+              void leaving.submit({ room: room.id, instanceId: room.instanceId });
+            }}
           >
             部屋から退出
           </Button>
@@ -206,7 +233,14 @@ export default function RoomLobby({
           )}
         </>
       )}
-      {finished && <ResultLinks instanceId={room.instanceId} result={finished} />}
+      {finished &&
+        (foreign ? (
+          <a className="font-bold underline" href={foreign.homeHistory}>
+            所属元の履歴を確認
+          </a>
+        ) : (
+          <ResultLinks instanceId={room.instanceId} result={finished} />
+        ))}
     </div>
   );
 }

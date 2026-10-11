@@ -6,7 +6,11 @@ import { useGame } from '../game/useGame';
 import { useMutation } from '../moderation/useMutation';
 import { playRequest } from './api';
 
-export function useRoom(identity: string) {
+export function useRoom(
+  identity: string,
+  foreign?: { request: typeof playRequest; lobbySocket: string; gameSocket: string },
+) {
+  const request = foreign?.request ?? playRequest;
   const key = `quiz-relay-room:${identity}`;
   const [active, setActive] = useState<{ id: string; instanceId: string } | null>(() => {
     try {
@@ -18,7 +22,12 @@ export function useRoom(identity: string) {
   const [room, setRoom] = useState<RoomView | null>(null),
     [error, setError] = useState(''),
     [connection, setConnection] = useState('idle');
-  const game = useGame('formal', `room:${identity}`, active?.instanceId ?? '');
+  const game = useGame(
+    'formal',
+    `room:${identity}`,
+    active?.instanceId ?? '',
+    foreign?.gameSocket,
+  );
   const { attach } = game;
   const leaveGame = game.leave;
   const current = useRef(active);
@@ -43,18 +52,22 @@ export function useRoom(identity: string) {
   }, [identity, key, leaveGame]);
   const refresh = useCallback(async () => {
     if (!active) return;
-    const result = await playRequest<{ room: RoomView }>(
+    const result = await request<{ room: RoomView }>(
       API_PATHS.roomView,
       { room: active.id },
       active.instanceId,
     );
     if (current.current === active) setRoom(result.room);
-  }, [active]);
+  }, [active, request]);
   const join = useCallback(
     (id: string, instanceId: string) => {
       const next = { id, instanceId };
       current.current = next;
-      sessionStorage.setItem(key, JSON.stringify(next));
+      try {
+        sessionStorage.setItem(key, JSON.stringify(next));
+      } catch {
+        /* The live session does not require browser storage. */
+      }
       setRoom(null);
       leaveGame();
       setActive(next);
@@ -65,7 +78,11 @@ export function useRoom(identity: string) {
   );
   const leave = useCallback(() => {
     current.current = null;
-    sessionStorage.removeItem(key);
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      /* Storage can be unavailable in private browsing. */
+    }
     setActive(null);
     setRoom(null);
     leaveGame();
@@ -76,7 +93,7 @@ export function useRoom(identity: string) {
       if (current.current?.id === request.room) leave();
     },
     (path, body) =>
-      playRequest(path, body, String((body as Record<string, unknown>).instanceId)),
+      request(path, body, String((body as Record<string, unknown>).instanceId)),
   );
   const retryExit = useRef(exit.submit);
   retryExit.current = exit.submit;
@@ -87,22 +104,31 @@ export function useRoom(identity: string) {
   }, [exit.uncertain, exit.busy]);
   useEffect(() => {
     if (!active) return;
-    const url = new URL(API_PATHS.roomSocket, location.origin);
+    const url = new URL(foreign?.lobbySocket ?? API_PATHS.roomSocket, location.origin);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('room', active.id);
     url.searchParams.set('instance', active.instanceId);
-    let live = true;
+    let live = true,
+      closed = false;
     const stillActive = () => live && current.current === active;
-    void playRequest<{ room: RoomView }>(
+    void request<{ room: RoomView }>(
       API_PATHS.roomView,
       { room: active.id },
       active.instanceId,
     )
       .then((response) => {
-        if (stillActive()) setRoom(response.room);
+        if (stillActive()) {
+          closed = response.room.closed;
+          setRoom(response.room);
+        }
       })
       .catch((caughtError) => {
-        if (stillActive()) setError(caughtError.message);
+        if (!stillActive()) return;
+        if (['ROOM_CLOSED', 'ROOM_NOT_FOUND'].includes(caughtError.code)) {
+          leave();
+          return;
+        }
+        setError(caughtError.message);
       });
     const disconnect = connectGameSocket(url, {
       sync: () => 'sync',
@@ -116,11 +142,13 @@ export function useRoom(identity: string) {
       released: () => {
         if (stillActive()) leave();
       },
+      finished: () => closed,
       message: (data) => {
         if (!stillActive()) return false;
         const value = JSON.parse(data) as { type?: string; room?: RoomView };
         if (value.type !== 'lobby' || !value.room || value.room.id !== active.id)
           return false;
+        closed = value.room.closed;
         setRoom(value.room);
         return true;
       },
@@ -129,11 +157,11 @@ export function useRoom(identity: string) {
       live = false;
       disconnect();
     };
-  }, [active, leave]);
+  }, [active, leave, request, foreign?.lobbySocket]);
   useEffect(() => {
     if (!room?.matchRoom || !active || room.id !== active.id) return;
     let live = true;
-    void playRequest<{ room: string }>(
+    void request<{ room: string }>(
       API_PATHS.roomGame,
       { room: active.id },
       active.instanceId,
@@ -147,8 +175,9 @@ export function useRoom(identity: string) {
     return () => {
       live = false;
     };
-  }, [room?.matchRoom, room?.id, active, attach]);
+  }, [room?.matchRoom, room?.id, active, attach, request]);
   return {
+    request,
     active,
     room,
     game,

@@ -81,7 +81,10 @@ export default function QuestionImport({
                         {
                           id:
                             data.categories.find(
-                              (category) => category.active && category.name === name,
+                              (category) =>
+                                category.active &&
+                                !category.importOnly &&
+                                category.name === name,
                             )?.id ?? '',
                         },
                       ]),
@@ -117,7 +120,7 @@ export default function QuestionImport({
               >
                 <option value="">選択してください</option>
                 {data.categories
-                  .filter((category) => category.active)
+                  .filter((category) => category.active && !category.importOnly)
                   .map((category) => (
                     <option key={category.id} value={category.id}>
                       {category.name}
@@ -151,11 +154,11 @@ export default function QuestionImport({
       {error && <p role="alert">{error}</p>}
       {model.error && <p role="alert">{model.error}</p>}
       {done && <p role="status">下書きとして取り込みました。</p>}
-      {model.uncertain && (
+      {model.uncertain && !model.busy && (
         <p>保存結果が不明です。入力を保持したまま同じ内容で再試行できます。</p>
       )}
       <Button type="submit" disabled={!canSubmit || model.busy || !source}>
-        {model.uncertain ? '同じ内容で再試行' : '取り込む'}
+        {model.busy ? '取り込み中…' : model.uncertain ? '同じ内容で再試行' : '取り込む'}
       </Button>
     </form>
   );

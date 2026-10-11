@@ -2,32 +2,13 @@
 
 [ドキュメント一覧](../README.md)
 
-専用のDB管理資格情報を用意し、対象インスタンスを確認してください。投稿・審査のWeb画面とは別の手順です。
-
-この文書は実装済みCLIの契約・手順。投稿・審査・複数読み・カテゴリ抽選等の[新サービス仕様](../spec/overview.md)は未実装で、このJSON形式を将来の作問フォームの制約にしない。
-
-管理画面も結果保存・管理の完了条件。
-
-最初の管理経路は専用DB資格情報を使うCLI。HTTP管理API・管理画面は追加せず、処理をsrc/worker/catalog/manage.tsへ分離した。
-
-将来の画面もこの検証・トランザクションを再利用する。音源・効果音は次の区切り。
+対象インスタンスと組織管理者を確認して、ローカルD1の初期構築・固定カタログ管理を行います。日常の投稿・審査・分類は実装済みのWeb画面を使用します。
 
 <a id="catalog-management-002"></a>
 ## 準備と認可
 
-この作業環境は0008〜0010のmigrationと管理者登録を適用済み。既存の問題・プロファイル・人数・ルールは変更していない。
-
-別環境では `pnpm db:migrate` 後に `pnpm catalog:setup --apply` を1回実行する。
-
-管理者の初期登録には.env.supabase-adminのGAME_MIGRATION_DATABASE_URLを使用する。
-
-quiz_game_catalogの新規ランダムパスワードを設定し、GAME_CATALOG_DATABASE_URLとして同ファイルへ保存する。既存キーがあれば接続と開催元を確認し、資格情報は保持する。初期登録は同時実行しない。
-
-開催元は環境変数GAME_OWNER、未設定ならconfig/matchmaking.jsonのowner。catalog_operatorsでDBロールと開催元を結び付け、操作ごとの認可とRLSの両方で制限する。
-
-未登録ロール・他開催元・readerによる管理を拒否する。JSONを書き換えただけで権限は広がらない。通常運用は専用管理資格情報だけを使用し、migration管理者・設定writer・結果writerとは分離する。
-
-管理用資格情報をWorkerやブラウザーへ配置しない。
+`pnpm db:migrate --local` を適用し、通常画面で組織と管理者を登録します。CLIは `.dev.vars` の `CATALOG_SUBJECT`、未設定なら `INITIAL_ADMIN_SUBJECT` を使い、対象ownerに属する組織管理者をサーバーと同じ認可処理で確認します。
+`GAME_OWNER` とJSON内ownerを対象インスタンスの不変ownerへ合わせます。通常インスタンスのownerは `urn:uuid:内部ID` です。プレビューではDBへ接続せず、実行時に権限と対象を再検証します。CLIはクラウドDBへ接続せず、旧PostgreSQLの管理接続やロール設定を使用しません。
 
 <a id="catalog-management-003"></a>
 ## 操作
@@ -105,22 +86,18 @@ idは英数字・ハイフン・下線の1〜64文字。versionは1。問題・�
 $catalogConfig = Get-Content config/matchmaking.local.json -Raw | ConvertFrom-Json
 $catalogConfig.playersPerMatch = 3
 $catalogRequest = @{ operation = 'configure'; profile = 'local'; config = $catalogConfig }
-$catalogRequest | ConvertTo-Json -Depth 10 | Set-Content request.json -Encoding utf8
-pnpm catalog:manage request.json
-pnpm catalog:manage request.json --apply
+New-Item -ItemType Directory -Path .wrangler/qa -Force | Out-Null
+$catalogRequest | ConvertTo-Json -Depth 10 | Set-Content .wrangler/qa/catalog-request.json -Encoding utf8
+pnpm catalog:manage .wrangler/qa/catalog-request.json
+pnpm catalog:manage .wrangler/qa/catalog-request.json --apply
 ```
 
-上記は実行するとローカル設定を変更する例。今回の実装・検証で既存local/defaultの人数は変更していない。既存の `pnpm config:apply:*` も維持する。
+上記は実行するとローカル設定を変更する例です。操作用の一時JSONはGit管理外へ置き、継続して使う出題設定は `config/` で管理します。
 
 競技条件の変更は新規参加から反映され、既存の待機列・開始済み試合の固定版へ遡及しない。
 
 <a id="catalog-management-008"></a>
 ## 検証
 
-- `pnpm db:check:catalog:ddl`：全migrationを隔離名のスキーマ・ロールで実行しrollback。
-- `pnpm db:check:catalog`：専用管理者の実接続。
-
-  登録/改訂/停止、再実行、旧版保持、順序付きセット、ルール/人数反映、改訂途中失敗の原子性、別接続とのロック排他、開催元RLS、reader/結果表/所有者変更の拒否を確認。検証用データはすべてrollbackし残さない。
-- `pnpm run check`：入力検証と既存ゲーム・開始前の停止チェックの回帰、型、Lint、ビルド。
-
-新規UI・クラウドWorker配置・外部配送は対象外。管理操作は通常ゲームのAPIへ公開していない。Web管理の本人認証・権限は[組織仕様](../spec/organization.md)に従います。
+`pnpm db:check` で隔離した実D1に全migrationを適用し、登録・改訂・停止・セット作成・旧版保持・競合rollback・ownerと管理者の認可を確認します。`pnpm run check` は入力検証・開始前の停止チェック・ゲーム回帰・型・Lint・ビルドを確認します。
+このCLIの検証と、Web本人認証・公開Worker・外部配送の受入は別に確認します。

@@ -1,44 +1,52 @@
-import { and, asc, eq, exists, or, sql } from 'drizzle-orm';
-import { connectDatabase } from '../db/connection.ts';
+import { and, asc, eq, exists, inArray, or, sql } from 'drizzle-orm';
+import { connectD1, readD1 } from '../db/d1.ts';
 import {
   questionAvailability as a,
   matchmakingSettings as active,
   competitions as c,
   questionSetItems as i,
+  matchResults,
   questionVersions as q,
   rulesetVersions as r,
+  resultPlayers,
   questionSets as s,
 } from '../db/schema.ts';
-import type { Env } from '../env';
-import { rankingBand } from '../questions/ranking.ts';
-import { type VersionRef, validateDefinition, validateRef } from './definition.ts';
+import type { Env } from '../env.ts';
+import { sharedQuestionAvailableSQL } from '../federation/question-access.ts';
+import { decodeSelection, privateSelectionSQL } from '../results/privacy.ts';
+import {
+  type MatchDefinition,
+  type VersionRef,
+  validateDefinition,
+  validateRef,
+} from './definition.ts';
+import { contentHash } from './hash.ts';
 
 // One statement keeps the definition, ordered questions and availability in one DB snapshot.
 export async function loadMatchDefinition(
   env: Env,
   reference?: VersionRef,
   actorId?: string,
-) {
+): Promise<MatchDefinition> {
   const ref = reference ? validateRef(reference) : null;
   const owner = ref?.owner ?? env.GAME_OWNER;
   const profile = env.GAME_CONFIG_PROFILE;
   if (!ref && (!profile || !/^[a-zA-Z0-9_-]{1,64}$/.test(profile)))
     throw new Error('INVALID_CONFIG_PROFILE');
-  const binding = env.GAME_HYPERDRIVE;
-  const url = binding?.connectionString ?? env.GAME_DATABASE_URL;
-  if (!url) throw new Error('GAME_DATABASE_NOT_CONFIGURED');
-  const { db, close } = connectDatabase(url, env.DATABASE_CA_CERT, !!binding);
-  try {
+  if (!env.GAME_D1) throw new Error('GAME_DATABASE_NOT_CONFIGURED');
+  const db = connectD1(env.GAME_D1);
+  return readD1(db, async () => {
     const rows = await db
       .select({
         competition: c,
         ruleset: r,
         questionSet: s,
-        privateSelection: sql<
-          typeof s.$inferSelect.selection
-        >`quiz_game.private_selection(${s.owner},${s.selection})`,
+        privateSelection: privateSelectionSQL(s.owner, s.selection).mapWith(
+          decodeSelection,
+        ),
         question: q.payload,
         availability: a,
+        sharedAvailable: sharedQuestionAvailableSQL(q.owner, q.questionId),
       })
       .from(c)
       .innerJoin(
@@ -60,7 +68,12 @@ export async function loadMatchDefinition(
           or(
             eq(i.setId, s.setId),
             and(
-              sql`${s.setId} ~ '^authored-(band-[0-2]|casual)$'`,
+              inArray(s.setId, [
+                'authored-band-0',
+                'authored-band-1',
+                'authored-band-2',
+                'authored-casual',
+              ]),
               sql`${i.setId} LIKE ${s.setId} || '-chunk-%'`,
             ),
           ),
@@ -104,20 +117,34 @@ export async function loadMatchDefinition(
       actorId &&
       /^authored-band-[0-2]$/.test(rows[0].competition.competitionId)
     ) {
-      const band = await rankingBand(
-        env,
-        owner,
-        actorId,
-        rows[0].questionSet.selection?.boundaries,
-      );
+      const [rating] = await db
+        .select({
+          value:
+            sql<number>`1000 + coalesce(sum(${resultPlayers.ratingDelta}), 0)`.mapWith(
+              Number,
+            ),
+        })
+        .from(resultPlayers)
+        .innerJoin(matchResults, eq(matchResults.resultId, resultPlayers.resultId))
+        .where(
+          and(
+            eq(matchResults.owner, owner),
+            eq(resultPlayers.actorId, actorId),
+            sql`json_extract(${matchResults.payload}, '$.kind') = 'ranked'`,
+          ),
+        );
+      const boundaries = rows[0].questionSet.selection?.boundaries ?? [1200, 1600];
+      const band =
+        rating.value < boundaries[0] ? 0 : rating.value < boundaries[1] ? 1 : 2;
       if (band > 0)
         return loadMatchDefinition({
           ...env,
           GAME_CONFIG_PROFILE: `${profile}-band-${band}`,
         });
     }
+    const availableRows = rows.filter((row) => row.sharedAvailable === 1);
     if (
-      rows.every(
+      availableRows.every(
         (row) =>
           !row.question || (!!row.availability && row.availability.retiredAt !== null),
       )
@@ -126,7 +153,7 @@ export async function loadMatchDefinition(
         band: rows[0].questionSet.selection?.band,
       });
     if (
-      rows.some(
+      availableRows.some(
         (row) =>
           !row.question || !row.availability || row.availability.retiredAt !== null,
       )
@@ -151,11 +178,12 @@ export async function loadMatchDefinition(
       },
       playersPerMatch: competition.playersPerMatch,
       rulesHash: ruleset.rulesHash,
-      manifestHash: questionSet.manifestHash,
+      manifestHash:
+        availableRows.length === rows.length
+          ? questionSet.manifestHash
+          : await contentHash(availableRows.map((row) => row.question)),
       rules: ruleset.config,
-      questions: rows.map((row) => row.question),
+      questions: availableRows.map((row) => row.question),
     });
-  } finally {
-    await close();
-  }
+  });
 }

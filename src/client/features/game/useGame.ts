@@ -29,6 +29,7 @@ export function useGame(
   mode: 'local' | 'formal' = 'local',
   subject = '',
   instanceId = '',
+  socketPath?: string,
 ) {
   const [saved] = useState(() => readGameSession(mode, subject));
   const [snapshot, setSnapshot] = useState<Snapshot | null>(saved?.snapshot ?? null);
@@ -53,7 +54,7 @@ export function useGame(
     const stillActive = () => currentRoom.current === room;
 
     const url = new URL(
-      mode === 'local' ? API_PATHS.gameSocket : API_PATHS.matchSocket,
+      socketPath ?? (mode === 'local' ? API_PATHS.gameSocket : API_PATHS.matchSocket),
       location.origin,
     );
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -74,13 +75,16 @@ export function useGame(
       error: (value) => {
         if (stillActive()) setError(value);
       },
+      finished: () => currentSnapshot.current?.result?.storage === 'confirmed',
       released: () => {
         if (!stillActive()) return;
         currentRoom.current = null;
         setRoom(null);
-        setSnapshot(null);
+        if (!currentSnapshot.current?.result) {
+          setSnapshot(null);
+          currentSnapshot.current = null;
+        }
         setPanel(null);
-        currentSnapshot.current = null;
         pendingCommand.current = null;
         setPending(false);
         saveGameSession(null, null, mode, subject);
@@ -129,7 +133,7 @@ export function useGame(
       clearInterval(ticker);
       socket.current = null;
     };
-  }, [room, mode, subject, instanceId]);
+  }, [room, mode, subject, instanceId, socketPath]);
 
   async function join(input: {
     room: string;

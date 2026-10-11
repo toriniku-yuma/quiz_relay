@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { normalizeDisplayName, type Profile } from '../../shared/profile.ts';
+import { changeD1, type Database } from '../db/d1.ts';
 import {
   organizationAccounts as accounts,
   instances,
@@ -7,12 +8,8 @@ import {
 } from '../db/schema.ts';
 import { publishQuestionCatalog } from '../questions/catalog.ts';
 import { OrganizationError } from './access.ts';
-import { type organizationDatabase, organizationIdentity } from './database.ts';
-
-type Database = Pick<
-  ReturnType<typeof organizationDatabase>['db'],
-  'select' | 'insert' | 'update' | 'delete' | 'transaction'
->;
+import { organizationIdentity } from './database.ts';
+import { accountDisplayName } from './display-name.ts';
 
 export async function currentProfileNames(
   db: Pick<Database, 'select'>,
@@ -23,14 +20,14 @@ export async function currentProfileNames(
   const rows = await db
     .select({
       actorId: accounts.actorId,
-      displayName: accounts.displayName,
+      displayName: accountDisplayName,
       withdrawnAt: accounts.withdrawnAt,
     })
     .from(accounts)
     .where(
       and(
         eq(accounts.organizationId, organizationId),
-        inArray(accounts.actorId, actorIds),
+        sql`${accounts.actorId} in (select value from json_each(${JSON.stringify(actorIds)}))`,
       ),
     );
   return new Map(
@@ -54,21 +51,16 @@ export async function saveProfile(
     Number(input.revision) < 0
   )
     throw new OrganizationError('INVALID_PROFILE', 400);
-  return db.transaction(async (tx) => {
+  return changeD1(db, async (writes) => {
+    const tx = db;
     const { organization, account } = await organizationIdentity(tx, subject);
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`profile:${organization.id}`}, 0))`,
-    );
-    // Use the same locks as question edits so a concurrent save cannot restore an old author name.
+    // The native batch revision also protects all affected question catalogs.
     const scopes = await tx
       .select()
       .from(instances)
       .where(eq(instances.organizationId, organization.id))
       .orderBy(asc(instances.id));
-    for (const scope of scopes)
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${scope.id}`}, 0))`,
-      );
+
     const [current] = await tx
       .select()
       .from(accounts)
@@ -89,24 +81,32 @@ export async function saveProfile(
       )
       .limit(1);
     if (duplicate) throw new OrganizationError('DISPLAY_NAME_TAKEN', 409);
-    await tx.execute(
-      sql`select set_config('quiz.organization_id', ${organization.id}, true)`,
+    writes.push(
+      tx
+        .update(accounts)
+        .set({ displayName, profileRevision: current.profileRevision + 1 })
+        .where(eq(accounts.actorId, current.actorId)),
     );
-    await tx
-      .update(accounts)
-      .set({ displayName, profileRevision: current.profileRevision + 1 })
-      .where(eq(accounts.actorId, current.actorId));
-    const updated = await tx
-      .update(submissions)
-      .set({ authorName: displayName })
-      .where(eq(submissions.authorId, current.actorId))
-      .returning({
-        instanceId: submissions.instanceId,
-        publishedId: submissions.publishedId,
-      });
+    const updated = (
+      await tx.select().from(submissions).where(eq(submissions.authorId, current.actorId))
+    ).map((row) => ({ ...row, authorName: displayName }));
+    writes.push(
+      tx
+        .update(submissions)
+        .set({ authorName: displayName })
+        .where(eq(submissions.authorId, current.actorId)),
+    );
     for (const scope of scopes)
       if (updated.some((row) => row.instanceId === scope.id && row.publishedId))
-        await publishQuestionCatalog(tx, scope.id, scope.owner, profile);
+        await publishQuestionCatalog(
+          tx,
+          writes,
+          scope.id,
+          scope.owner,
+          profile,
+          undefined,
+          { submissions: updated },
+        );
     return { displayName, revision: current.profileRevision + 1 };
   });
 }

@@ -68,6 +68,35 @@ it('保存後の取得失敗を伝え、開き直すと古い詳細を再取得�
   expect(hook().data?.sanctions[0].revision).toBe(2);
   expect(hook().error).toBe('');
 });
+it('ポップアップの対象を切り替えたら古い詳細を隠し、遅れた応答で上書きしない', async () => {
+  const hook = () => render(() => useUserActions(null, 'actor', mocks.saved));
+  let first: (value: unknown) => void = () => {};
+  let second: (value: unknown) => void = () => {};
+  mocks.request
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          first = resolve;
+        }),
+    )
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          second = resolve;
+        }),
+    );
+  const pendingFirst = hook().changeScope('first');
+  const pendingSecond = hook().changeScope('second');
+  expect(hook().data).toBeNull();
+  second({ sanctions: [{ revision: 2 }], target: { permissions: ['users'] } });
+  await pendingSecond;
+  first({ sanctions: [{ revision: 1 }], target: { permissions: ['questions'] } });
+  await pendingFirst;
+  expect(hook().scope).toBe('second');
+  expect(hook().data?.sanctions[0].revision).toBe(2);
+  expect(hook().data?.target?.permissions).toEqual(['users']);
+  expect(hook().busy).toBe(false);
+});
 it('一覧だけ更新されても権限の編集開始時の基準を保持する', async () => {
   const user = {
     actorId: 'actor',

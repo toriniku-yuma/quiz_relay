@@ -78,6 +78,9 @@ it('preserves auth query and hash during the root redirect', () => {
     '/game/?code=test#state=value',
   );
   expect(rootRedirect(new URL('https://app.example/debug/'))).toBeNull();
+  expect(rootRedirect(new URL('https://app.example/?instance=a#saved'))).toBe(
+    '/game/?instance=a#saved',
+  );
 });
 
 it('keeps the debug auth callback target only for a recognized callback and destination', () => {

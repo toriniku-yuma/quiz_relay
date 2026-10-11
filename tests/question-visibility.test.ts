@@ -2,8 +2,8 @@ import { expect, it } from 'vitest';
 import type { Env } from '../src/worker/env';
 import { dummyCharacters, graphemes } from '../src/worker/game/questions';
 import { advance, createState, snapshot } from '../src/worker/game/state';
-import { scheduledQuestions } from '../src/worker/questions/scheduled';
 import { questionStatistics } from '../src/worker/questions/statistics';
+import { scheduledD1 } from '../src/worker/scheduled';
 import { resultFixture } from './fixtures/result';
 
 it('作問者名は設定を固定し、問題終了後だけに表示する', () => {
@@ -88,8 +88,8 @@ it('実績は試合単位で重複排除し、人数・世代・実力帯を混�
   ).toEqual([]);
 });
 
-it('有効化されていない定期処理はDB設定なしでも何も実行しない', async () => {
-  await expect(
-    scheduledQuestions({ ORGANIZATION_ENABLED: 'true' } as Env),
-  ).resolves.toBeUndefined();
+it('定期処理はDBと非公開の消去Workerの設定を必須とする', async () => {
+  await expect(scheduledD1({ ORGANIZATION_ENABLED: 'true' } as Env)).rejects.toThrow(
+    'MAINTENANCE_CONFIGURATION_REQUIRED',
+  );
 });

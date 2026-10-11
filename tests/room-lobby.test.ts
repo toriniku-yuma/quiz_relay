@@ -159,6 +159,40 @@ async function start(stub: Stub) {
   });
 }
 
+it('開始準備中のalarmは生きている予約を保持し、期限切れだけ回収する', async () => {
+  const room = await lobby();
+  try {
+    const childId = crypto.randomUUID();
+    await runInDurableObject(room.stub, async (_instance, ctx) => {
+      const saved = await readStored<UserRoom>(ctx.storage, 'user-room');
+      if (!saved) throw new Error('room');
+      saved.starting = {
+        operationId: crypto.randomUUID(),
+        hash: 'pending',
+        revision: saved.revision,
+        id: childId,
+        expires: Date.now() + 60000,
+      };
+      await ctx.storage.transaction((tx) => writeStored(tx, 'user-room', saved));
+      await ctx.storage.setAlarm(Date.now() + 1);
+    });
+    await runDurableObjectAlarm(room.stub);
+    expect((await read(room.stub))?.starting?.id).toBe(childId);
+    await runInDurableObject(room.stub, async (_instance, ctx) => {
+      const saved = await readStored<UserRoom>(ctx.storage, 'user-room');
+      if (!saved?.starting) throw new Error('start');
+      saved.starting.expires = Date.now() - 1;
+      await ctx.storage.transaction((tx) => writeStored(tx, 'user-room', saved));
+      await ctx.storage.setAlarm(Date.now() + 1);
+    });
+    await runDurableObjectAlarm(room.stub);
+    expect((await read(room.stub))?.starting).toBeUndefined();
+    expect(await start(room.stub)).toMatchObject({ ok: true });
+  } finally {
+    room.close();
+  }
+});
+
 it('8回答者＋専任。準備完了・部屋主開始、未出題内容はロビーへ送らない', async () => {
   const room = await lobby(8, true),
     games: WebSocket[] = [];
@@ -355,7 +389,13 @@ it('開始の応答不明をalarmで回復し、失効を先に受けた子sessi
       (await childState(child))?.players.some((player) => player.id === actor(0).id),
     ).toBe(false);
     expect(
-      await child.initializeRoomMatch(definition, scope, [actor(0), actor(1)], tokens),
+      await child.initializeRoomMatch(
+        definition,
+        scope,
+        [actor(0), actor(1)],
+        tokens,
+        room.id,
+      ),
     ).toEqual({ ok: true });
     expect(
       (await childState(child))?.players.some((player) => player.id === actor(0).id),

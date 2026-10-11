@@ -9,6 +9,7 @@ import {
 import Button from '../../components/Button';
 import Checkbox from '../../components/Checkbox';
 import Modal from '../../components/Modal';
+import UserScopeSelect from './UserScopeSelect';
 import { useMutation } from './useMutation';
 
 const labels = {
@@ -22,12 +23,22 @@ export default function UserPermissions({
   open,
   onClose,
   saved,
+  scopes,
+  changeScope,
+  loading = false,
+  loadError = '',
+  reload,
 }: {
   user: ModeratedUser;
   instanceId: string | null;
   open: boolean;
   onClose: () => void;
   saved: () => Promise<void>;
+  scopes?: { id: string; name: string }[];
+  changeScope?: (value: string | null) => void;
+  loading?: boolean;
+  loadError?: string;
+  reload?: () => Promise<boolean>;
 }) {
   const [permissions, setPermissions] = useState<InstancePermission[]>(
       user.permissions ?? [],
@@ -43,10 +54,34 @@ export default function UserPermissions({
   return (
     <Modal title={`権限設定：${user.name}`} busy={mutation.busy} onClose={onClose}>
       <div className="grid gap-5">
+        {scopes && changeScope && (
+          <UserScopeSelect
+            value={instanceId}
+            instances={scopes}
+            onChange={changeScope}
+            disabled={mutation.busy || mutation.uncertain || loading || !!loadError}
+            organizationLabel="インスタンスを選択してください"
+          />
+        )}
+        {!instanceId && (
+          <p>
+            モデレーター権限を変更するインスタンスを選んでください。管理者の引き継ぎは組織全体に適用します。
+          </p>
+        )}
+        {loading && <p role="status">最新の権限を取得しています。</p>}
+        {loadError && (
+          <div className="grid gap-3">
+            <p role="alert">最新の権限を取得できませんでした。{loadError}</p>
+            <Button disabled={loading || mutation.busy} onClick={() => void reload?.()}>
+              再試行
+            </Button>
+          </div>
+        )}
         <form
           className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault();
+            if (!instanceId || loading || loadError) return;
             void mutation.submit({
               action: 'permissions',
               instanceId,
@@ -57,7 +92,14 @@ export default function UserPermissions({
           }}
         >
           <fieldset
-            disabled={mutation.busy || mutation.uncertain || user.administrator}
+            disabled={
+              mutation.busy ||
+              mutation.uncertain ||
+              loading ||
+              !!loadError ||
+              user.administrator ||
+              !instanceId
+            }
             className="grid gap-3"
           >
             <legend>このインスタンスのモデレーター権限</legend>
@@ -82,7 +124,16 @@ export default function UserPermissions({
           {user.administrator ? (
             <p>組織管理者はすべての管理権限を持っています。</p>
           ) : (
-            <Button type="submit" disabled={mutation.busy || mutation.uncertain}>
+            <Button
+              type="submit"
+              disabled={
+                mutation.busy ||
+                mutation.uncertain ||
+                loading ||
+                !!loadError ||
+                !instanceId
+              }
+            >
               権限を保存
             </Button>
           )}

@@ -189,6 +189,7 @@ export default function QuestionAdministration({
                     <span>
                       {availableCategory.name}（
                       {availableCategory.active ? '有効' : '廃止'}）
+                      {availableCategory.importOnly ? '・取り込み専用' : ''}
                     </span>
                     {!selectedId ? (
                       <a

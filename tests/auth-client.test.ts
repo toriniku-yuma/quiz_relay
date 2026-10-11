@@ -8,6 +8,7 @@ vi.mock('@supabase/supabase-js', () => ({ createClient: () => ({ auth }) }));
 beforeEach(() => {
   vi.stubGlobal('window', { isSecureContext: true, dispatchEvent: vi.fn() });
   vi.stubGlobal('history', { replaceState: vi.fn() });
+  vi.stubGlobal('location', new URL('https://quiz.example/game/'));
   vi.stubGlobal('PopStateEvent', Event);
   vi.stubGlobal('localStorage', {
     getItem: () => JSON.stringify({ url: 'https://auth.test', publishableKey: 'test' }),
@@ -21,7 +22,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-it('共通ログアウトはゲーム失効・Auth解除の完了後にログイン画面へ移動する', async () => {
+it('共通ログアウトはゲーム失効・Auth解除の完了後にゲスト画面へ移動する', async () => {
   let complete: (value: Response) => void = () => {};
   let completeAuth: (value: { error: null }) => void = () => {};
   auth.signOut.mockImplementation(
@@ -54,7 +55,8 @@ it('共通ログアウトはゲーム失効・Auth解除の完了後にログイ
   completeAuth({ error: null });
   await expect(operation).resolves.toEqual({ signedOut: true });
   expect(auth.signOut).toHaveBeenCalledOnce();
-  expect(history.replaceState).toHaveBeenCalledWith(null, '', '/game/');
+  expect(auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+  expect(history.replaceState).toHaveBeenCalledWith(null, '', '/game/?guest=1');
   expect(window.dispatchEvent).toHaveBeenCalledWith(
     expect.objectContaining({ type: 'popstate' }),
   );
@@ -95,6 +97,26 @@ it.each([true, false])(
     });
     await expect(signOut()).rejects.toThrow('AUTH_LOGOUT_FAILED');
     if (retained) expect(history.replaceState).not.toHaveBeenCalled();
-    else expect(history.replaceState).toHaveBeenCalledWith(null, '', '/game/');
+    else expect(history.replaceState).toHaveBeenCalledWith(null, '', '/game/?guest=1');
   },
 );
+it('Auth解除中にURLが変わっても元の部屋instanceへゲストで戻り、外部自動ログイン指定を残さない', async () => {
+  const instance = crypto.randomUUID();
+  vi.stubGlobal(
+    'location',
+    new URL(
+      `https://quiz.example/rooms/?instance=${instance}&home=https://home.example&source=source&mode=room`,
+    ),
+  );
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ok: true })));
+  auth.signOut.mockImplementation(async () => {
+    vi.stubGlobal('location', new URL('https://quiz.example/game/'));
+    return { error: null };
+  });
+  await signOut();
+  expect(history.replaceState).toHaveBeenCalledWith(
+    null,
+    '',
+    `/rooms/?guest=1&instance=${instance}`,
+  );
+});

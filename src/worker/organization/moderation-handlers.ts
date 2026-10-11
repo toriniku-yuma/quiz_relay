@@ -1,14 +1,13 @@
 import { eq } from 'drizzle-orm';
 import type { Handler } from 'hono';
-import type { AuthEnv } from '../auth/handlers';
-import { connectDatabase } from '../db/connection';
-import { instances, matchResults } from '../db/schema';
-import { readInvestigation } from '../results/investigation';
-import { OrganizationError, organizationEnabled, validId } from './access';
-import { bulkSanctions } from './bulk';
-import { organizationDatabase } from './database';
-import { moderationOverview, mutateSanction, personalModeration } from './moderation';
-import { moderationWorkflow } from './workflow';
+import type { AuthEnv } from '../auth/handlers.ts';
+import { instances, matchResults } from '../db/schema.ts';
+import { readInvestigation } from '../results/investigation.ts';
+import { OrganizationError, organizationEnabled, validId } from './access.ts';
+import { bulkSanctions } from './bulk.ts';
+import { organizationDatabase } from './database.ts';
+import { moderationOverview, mutateSanction, personalModeration } from './moderation.ts';
+import { moderationWorkflow } from './workflow.ts';
 
 export const manageUsers: Handler<AuthEnv> = async (context) => {
   if (!organizationEnabled(context.env))
@@ -46,19 +45,11 @@ export const manageUsers: Handler<AuthEnv> = async (context) => {
     if (context.req.path.endsWith('/workflow')) {
       let evidence: typeof matchResults.$inferSelect.payload | undefined;
       if (value.action === 'report') {
-        const binding = context.env.GAME_HYPERDRIVE,
-          url = binding?.connectionString ?? context.env.GAME_DATABASE_URL;
-        if (!url) throw new OrganizationError('RESULTS_UNAVAILABLE', 503);
-        const reader = connectDatabase(url, context.env.DATABASE_CA_CERT, !!binding);
-        try {
-          const rows = await reader.db
-            .select()
-            .from(matchResults)
-            .where(eq(matchResults.resultId, validId(value.resultId)));
-          evidence = rows[0]?.payload;
-        } finally {
-          await reader.close();
-        }
+        const rows = await db
+          .select()
+          .from(matchResults)
+          .where(eq(matchResults.resultId, validId(value.resultId)));
+        evidence = rows[0]?.payload;
       }
       return context.json(
         await moderationWorkflow(db, context.get('subject'), value, evidence),
@@ -76,14 +67,10 @@ export const manageUsers: Handler<AuthEnv> = async (context) => {
       );
       if (!scope || (value.reportId && !report))
         throw new OrganizationError('REPORT_NOT_FOUND', 404);
-      const binding = context.env.GAME_HYPERDRIVE,
-        url = binding?.connectionString ?? context.env.GAME_DATABASE_URL;
-      if (!url) throw new OrganizationError('RESULTS_UNAVAILABLE', 503);
-      const reader = connectDatabase(url, context.env.DATABASE_CA_CERT, !!binding);
       try {
         return context.json(
           await readInvestigation(
-            reader.db,
+            db,
             scope.owner,
             result.target.actorId,
             report?.resultId ?? null,
@@ -97,8 +84,6 @@ export const manageUsers: Handler<AuthEnv> = async (context) => {
         )
           throw new OrganizationError(error.message, 400);
         throw error;
-      } finally {
-        await reader.close();
       }
     }
     return context.json(result);

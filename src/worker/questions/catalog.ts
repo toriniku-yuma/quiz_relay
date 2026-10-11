@@ -1,61 +1,108 @@
 import { and, asc, eq, max, sql } from 'drizzle-orm';
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import type { CasualSettings } from '../../shared/rooms.ts';
 import { contentHash } from '../catalog/hash.ts';
+import { type D1Write, type Database, rowsD1 } from '../db/d1.ts';
 import {
-  questionAvailability as availability,
   competitions,
   instances,
   matchmakingSettings,
+  questionAvailability,
   questionSetItems,
   questionSets,
   questionSettings,
-  questionVersions as questions,
+  questionSubmissions,
+  questionVersions,
   rulesetVersions,
-  questionSubmissions as submissions,
 } from '../db/schema.ts';
 import { rules } from '../game/rules.ts';
 
-type Database = Pick<
-  PostgresJsDatabase,
-  'select' | 'insert' | 'update' | 'delete' | 'execute' | 'transaction'
->;
+// Explicit pending question rows let a single native batch publish their catalog.
+export type CatalogChanges = {
+  submissions?: (typeof questionSubmissions.$inferSelect)[];
+  questions?: (typeof questionVersions.$inferInsert)[];
+  availability?: (typeof questionAvailability.$inferInsert)[];
+  configuration?: Pick<typeof questionSettings.$inferSelect, 'config' | 'revision'>;
+  casualConfig?: CasualSettings;
+};
 
-// Automatic catalogs are immutable generations, just like CLI catalogs. Existing rooms retain their generation.
 export async function publishQuestionCatalog(
   db: Database,
+  writes: D1Write[],
   instanceId: string,
   owner: string,
   profile: string,
   rankedPlayers?: number,
+  changes: CatalogChanges = {},
 ) {
-  const [configuration] = await db
+  const [storedConfiguration] = await db
     .select()
     .from(questionSettings)
     .where(eq(questionSettings.instanceId, instanceId));
-  await db.execute(sql`select pg_advisory_xact_lock(hashtextextended(${owner}, 0))`);
-  const current = await db
+  const configuration = changes.configuration ?? storedConfiguration;
+  const stored = await db
     .select({
-      question: questions.payload,
-      availability,
-      authorName: sql<string>`coalesce(${submissions.provenance}->>'author', ${submissions.authorName})`,
+      submission: questionSubmissions,
+      question: questionVersions.payload,
+      availability: questionAvailability,
     })
-    .from(submissions)
+    .from(questionSubmissions)
     .innerJoin(
-      questions,
+      questionVersions,
       and(
-        eq(questions.owner, owner),
-        eq(questions.questionId, sql`${submissions.publishedId}::text`),
+        eq(questionVersions.owner, owner),
+        eq(questionVersions.questionId, questionSubmissions.publishedId),
       ),
     )
     .innerJoin(
-      availability,
+      questionAvailability,
       and(
-        eq(availability.owner, questions.owner),
-        eq(availability.questionId, questions.questionId),
+        eq(questionAvailability.owner, questionVersions.owner),
+        eq(questionAvailability.questionId, questionVersions.questionId),
       ),
     )
-    .where(eq(submissions.instanceId, instanceId))
-    .orderBy(asc(submissions.id));
+    .where(eq(questionSubmissions.instanceId, instanceId))
+    .orderBy(asc(questionSubmissions.id));
+  const current = new Map(stored.map((row) => [row.submission.id, row]));
+  for (const submission of changes.submissions ?? []) {
+    if (submission.instanceId !== instanceId) continue;
+    if (!submission.publishedId) {
+      current.delete(submission.id);
+      continue;
+    }
+    const question =
+      changes.questions?.find(
+        (row) => row.owner === owner && row.questionId === submission.publishedId,
+      )?.payload ??
+      stored.find((row) => row.question.id === submission.publishedId)?.question;
+    const availability =
+      changes.availability?.find(
+        (row) => row.owner === owner && row.questionId === submission.publishedId,
+      ) ?? stored.find((row) => row.question.id === submission.publishedId)?.availability;
+    if (!question || !availability) throw new Error('PUBLISHED_QUESTION_NOT_FOUND');
+    current.set(submission.id, {
+      submission,
+      question,
+      availability: {
+        owner,
+        questionId: question.id,
+        retiredAt: availability.retiredAt ?? null,
+      },
+    });
+  }
+  for (const row of current.values()) {
+    const availability = changes.availability?.find(
+      (entry) => entry.owner === owner && entry.questionId === row.question.id,
+    );
+    if (availability)
+      row.availability = {
+        owner,
+        questionId: row.question.id,
+        retiredAt: availability.retiredAt ?? null,
+      };
+  }
+  const entries = [...current.values()].sort((left, right) =>
+    left.submission.id.localeCompare(right.submission.id),
+  );
   const [old] = await db
     .select({ rules: rulesetVersions.config, players: competitions.playersPerMatch })
     .from(matchmakingSettings)
@@ -83,56 +130,67 @@ export async function publishQuestionCatalog(
     ...(old?.rules ?? { ...rules, showSelections: true }),
     choiceCount: 4,
   };
-  const rulesHash = await contentHash(config);
   const ruleId = 'authored';
   const [latestRule] = await db
     .select({ version: max(rulesetVersions.version) })
     .from(rulesetVersions)
     .where(and(eq(rulesetVersions.owner, owner), eq(rulesetVersions.rulesetId, ruleId)));
   const ruleVersion = (latestRule?.version ?? 0) + 1;
-  await db
-    .insert(rulesetVersions)
-    .values({ owner, rulesetId: ruleId, version: ruleVersion, rulesHash, config });
+  const latest = await db
+    .select({ id: competitions.competitionId, version: max(competitions.version) })
+    .from(competitions)
+    .where(
+      and(
+        eq(competitions.owner, owner),
+        sql`${competitions.competitionId} in ('authored-casual','authored-band-0','authored-band-1','authored-band-2')`,
+      ),
+    )
+    .groupBy(competitions.competitionId);
   const [instance] = await db
     .select()
     .from(instances)
     .where(eq(instances.id, instanceId));
+  if (!instance || instance.owner !== owner) throw new Error('INSTANCE_NOT_FOUND');
+  const sets: (typeof questionSets.$inferInsert)[] = [];
+  const items: (typeof questionSetItems.$inferInsert)[] = [];
+  const competitionRows: (typeof competitions.$inferInsert)[] = [];
+  const profiles: (typeof matchmakingSettings.$inferInsert)[] = [];
   for (const band of [0, 1, 2, 3]) {
     const casual = band === 3;
     const id = casual ? 'authored-casual' : `authored-band-${band}`;
-    const profiles = casual
+    const targets = casual
       ? [`${profile}-casual`]
       : band === 0
         ? [profile, `${profile}-band-0`]
         : [`${profile}-band-${band}`];
-    const available = current
+    const available = entries
       .filter(
-        (catalogEntry) =>
-          catalogEntry.availability.retiredAt === null &&
-          catalogEntry.question.difficulty !== undefined &&
+        (entry) =>
+          entry.availability.retiredAt === null &&
+          entry.question.difficulty !== undefined &&
           (casual ||
-            (catalogEntry.question.difficulty <= band &&
+            (entry.question.difficulty <= band &&
               (configuration?.config.difficultyWeights?.[band]?.[
-                catalogEntry.question.difficulty
+                entry.question.difficulty
               ] ?? 1) > 0 &&
-              (configuration?.config.categoryWeights?.[
-                catalogEntry.question.categoryId ?? ''
-              ] ?? 1) > 0)),
+              (configuration?.config.categoryWeights?.[entry.question.categoryId ?? ''] ??
+                1) > 0)),
       )
-      .map((catalogEntry) => catalogEntry.question);
-    const [latest] = await db
-      .select({ version: max(competitions.version) })
-      .from(competitions)
-      .where(and(eq(competitions.owner, owner), eq(competitions.competitionId, id)));
-    const version = (latest?.version ?? 0) + 1;
-    await db.insert(questionSets).values({
+      .map((entry) => entry.question);
+    const version = (latest.find((row) => row.id === id)?.version ?? 0) + 1;
+    sets.push({
       owner,
       setId: id,
       version,
       manifestHash: await contentHash(available),
       selection: {
         authorNames: configuration?.config.showAuthor
-          ? Object.fromEntries(current.map((row) => [row.question.id, row.authorName]))
+          ? Object.fromEntries(
+              entries.map((row) => [
+                row.question.id,
+                row.submission.provenance?.author ?? row.submission.authorName,
+              ]),
+            )
           : {},
         band: casual ? 2 : band,
         boundaries: configuration?.config.rankBoundaries ?? [1200, 1600],
@@ -153,11 +211,9 @@ export async function publishQuestionCatalog(
       const setId =
         start === 0 ? id : `${id}-chunk-${String(start / 100).padStart(6, '0')}`;
       if (start > 0)
-        await db
-          .insert(questionSets)
-          .values({ owner, setId, version, manifestHash: await contentHash(chunk) });
-      await db.insert(questionSetItems).values(
-        chunk.map((question, index) => ({
+        sets.push({ owner, setId, version, manifestHash: await contentHash(chunk) });
+      items.push(
+        ...chunk.map((question, index) => ({
           owner,
           setId,
           setVersion: version,
@@ -167,30 +223,40 @@ export async function publishQuestionCatalog(
         })),
       );
     }
-    await db.insert(competitions).values({
+    competitionRows.push({
       owner,
       competitionId: id,
       version,
       playersPerMatch: casual
-        ? (instance?.casualConfig.players ?? 4)
+        ? (changes.casualConfig ?? instance.casualConfig).players
         : (rankedPlayers ?? old?.players ?? 4),
       rulesetId: ruleId,
       rulesetVersion: ruleVersion,
       setId: id,
       setVersion: version,
     });
-    for (const target of profiles)
-      await db
-        .insert(matchmakingSettings)
-        .values({
-          owner,
-          profile: target,
-          competitionId: id,
-          competitionVersion: version,
-        })
-        .onConflictDoUpdate({
-          target: [matchmakingSettings.owner, matchmakingSettings.profile],
-          set: { competitionId: id, competitionVersion: version },
-        });
+    profiles.push(
+      ...targets.map((profile) => ({
+        owner,
+        profile,
+        competitionId: id,
+        competitionVersion: version,
+      })),
+    );
   }
+  writes.push(
+    db.insert(rulesetVersions).values({
+      owner,
+      rulesetId: ruleId,
+      version: ruleVersion,
+      rulesHash: await contentHash(config),
+      config,
+    }),
+    rowsD1(questionSets, sets),
+  );
+  if (items.length) writes.push(rowsD1(questionSetItems, items));
+  writes.push(
+    rowsD1(competitions, competitionRows),
+    rowsD1(matchmakingSettings, profiles, true),
+  );
 }

@@ -1,2 +1,1 @@
-drizzle/*.sql text eol=lf
-drizzle/meta/*.json text eol=lf
+drizzle-d1/*.sql text eol=lf

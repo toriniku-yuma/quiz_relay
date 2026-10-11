@@ -1,5 +1,5 @@
-import type { RoomEvent, Snapshot } from '../../shared/game';
-import { settings } from '../../shared/settings';
+import type { RoomEvent, Snapshot } from '../../shared/game.ts';
+import { settings } from '../../shared/settings.ts';
 
 export function appendEvent(
   events: RoomEvent[],

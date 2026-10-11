@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { MiddlewareHandler } from 'hono';
-import type { Env } from '../env';
+import type { Env } from '../env.ts';
 
 export const authorizeProbe: MiddlewareHandler<{ Bindings: Env }> = async (
   context,

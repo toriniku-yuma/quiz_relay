@@ -1,25 +1,28 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { GameMessage, Reply, Snapshot } from '../../shared/game';
-import { settings } from '../../shared/settings';
-import { loadMatchDefinition } from '../catalog/database';
-import { type MatchDefinition, validateDefinition } from '../catalog/definition';
-import { contentHash } from '../catalog/hash';
-import type { Env } from '../env';
+import type { GameMessage, Reply, Snapshot } from '../../shared/game.ts';
+import { settings } from '../../shared/settings.ts';
+import { loadMatchDefinition } from '../catalog/database.ts';
+import { type MatchDefinition, validateDefinition } from '../catalog/definition.ts';
+import { contentHash } from '../catalog/hash.ts';
+import type { Env } from '../env.ts';
+import { refreshParticipationAccess } from '../federation/participation.ts';
+import { dispatchSavedResult } from '../federation/results.ts';
+import { failureCode } from '../http/handlers.ts';
 import {
   reservationLifetime,
   sessionLifetime,
   waitingLifetime,
-} from '../matchmaking/config';
-import type { InstanceScope } from '../matchmaking/Matchmaker';
-import { allowedInstanceActors } from '../organization/database';
-import { registerInstanceRoom } from '../organization/rooms';
-import { rankingRating } from '../questions/ranking';
-import { ResultConflict, saveResult } from '../results/database';
-import type { Participant } from '../rooms/database';
-import { RoomLobby } from '../rooms/RoomLobby';
-import { roomRpc } from '../rooms/rpc';
-import { anonymizeState, expireReview, reviewDeadline } from './privacy';
-import { replayEvents } from './recovery';
+} from '../matchmaking/config.ts';
+import type { InstanceScope } from '../matchmaking/Matchmaker.ts';
+import { allowedInstanceActors } from '../organization/database.ts';
+import { registerInstanceRoom } from '../organization/rooms.ts';
+import { rankingRating } from '../questions/ranking.ts';
+import { ResultConflict, saveResult } from '../results/database.ts';
+import type { Participant } from '../rooms/database.ts';
+import { RoomLobby } from '../rooms/RoomLobby.ts';
+import { roomRpc } from '../rooms/rpc.ts';
+import { anonymizeState, expireReview, reviewDeadline } from './privacy.ts';
+import { replayEvents } from './recovery.ts';
 import {
   adjudicate,
   advance,
@@ -32,9 +35,9 @@ import {
   type State,
   snapshot,
   updateConnections,
-} from './state';
-import { readStored, writeStored } from './storage';
-import { parseCommand, parseSync } from './validation';
+} from './state.ts';
+import { readStored, writeStored } from './storage.ts';
+import { parseCommand, parseSync } from './validation.ts';
 
 type Room = {
   initialization?: string;
@@ -42,6 +45,7 @@ type Room = {
   scope?: InstanceScope;
   generations?: Record<string, string>;
   resultRetryAt?: number;
+  resultErrorCode?: string;
   state: State;
   sessions: Record<string, string>;
   localSetup?: { questionIndex: number };
@@ -63,6 +67,17 @@ type Attachment = {
 const heartbeatTimeout = settings.connection.heartbeatTimeoutMs;
 
 export class GameRoom extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    if (env.PROBES_ENABLED === 'true' && env.ROOM_LIFECYCLE_LOGS === 'true')
+      console.info(
+        JSON.stringify({
+          event: 'game_room_initialized',
+          objectId: ctx.id.toString(),
+          sockets: ctx.getWebSockets().length,
+        }),
+      );
+  }
   private userLobby() {
     return new RoomLobby(this.ctx, this.env);
   }
@@ -111,6 +126,7 @@ export class GameRoom extends DurableObject<Env> {
     scope: InstanceScope,
     actors: (Participant & { role?: 'presenter' })[],
     tokens: Record<string, string>,
+    parentRoomId?: string,
   ) {
     definition = await validateDefinition(definition);
     if (
@@ -124,7 +140,13 @@ export class GameRoom extends DurableObject<Env> {
       actors.some((actor) => !tokens[actor.id])
     )
       throw new Error('INVALID_SETUP');
-    const initialization = await contentHash([scope, definition, actors, tokens]);
+    const initialization = await contentHash([
+      scope,
+      definition,
+      actors,
+      tokens,
+      ...(parentRoomId ? [parentRoomId] : []),
+    ]);
     const existing = await readStored<Room>(this.ctx.storage, 'room');
     if (existing) {
       if (existing.initialization !== initialization)
@@ -159,6 +181,7 @@ export class GameRoom extends DurableObject<Env> {
         disqualified: false,
         connected: false,
       }));
+      if (parentRoomId) state.parentRoomId = parentRoomId;
       const room: Room = {
         initialization,
         registered: true,
@@ -187,6 +210,18 @@ export class GameRoom extends DurableObject<Env> {
       await this.save(room);
       return { ok: true as const };
     });
+  }
+  async reservationIdentity(actorId: string, token: string) {
+    const room = await readStored<Room>(this.ctx.storage, 'room');
+    if (
+      !room ||
+      room.sessions[token] !== actorId ||
+      !room.lobby ||
+      room.lobby.closed ||
+      Date.now() >= room.lobby.sessionExpires
+    )
+      throw new Error('STALE_RESERVATION');
+    return { matchId: room.state.matchId, phase: room.state.phase };
   }
   async reserve(
     actorId: string,
@@ -298,6 +333,7 @@ export class GameRoom extends DurableObject<Env> {
     capacity: number;
   } | null> {
     if (await this.userLobby().read()) return this.userLobby().status();
+    await this.refreshForeignWaiting();
     return this.ctx.blockConcurrencyWhile(async () => {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (!room?.lobby) return null;
@@ -348,6 +384,17 @@ export class GameRoom extends DurableObject<Env> {
     return {
       instanceId: room.scope?.id ?? null,
       owner: room.scope?.owner ?? room.state.definition?.competition.owner ?? null,
+    };
+  }
+
+  async persistenceStatus(instanceId: string) {
+    const room = await readStored<Room>(this.ctx.storage, 'room');
+    if (room?.scope?.id !== instanceId) return null;
+    return {
+      phase: room.state.phase,
+      resultId: room.state.result?.id ?? null,
+      storage: room.state.result?.storage ?? null,
+      errorCode: room.resultErrorCode ?? null,
     };
   }
 
@@ -550,13 +597,17 @@ export class GameRoom extends DurableObject<Env> {
     });
   }
 
-  private async checkWaitingAccess(room: Room) {
+  private async checkWaitingAccess(room: Room, connectingActor?: string) {
     if (!room.scope || !room.lobby || room.state.phase !== 'WAITING') return;
     const allowed = new Set(
       await allowedInstanceActors(
         this.env,
         room.scope,
         room.state.players.map((player) => player.id),
+        room.state.parentRoomId ?? room.state.matchId,
+        room.state.players
+          .filter((player) => !player.connected && player.id !== connectingActor)
+          .map((player) => player.id),
       ),
     );
     const denied = room.state.players.filter((player) => !allowed.has(player.id));
@@ -663,6 +714,7 @@ export class GameRoom extends DurableObject<Env> {
 
   async fetch(request: Request) {
     if (await this.userLobby().read()) return this.userLobby().fetch(request);
+    await this.refreshForeignWaiting(true, request);
     let validation:
       | {
           matchId: string;
@@ -757,7 +809,7 @@ export class GameRoom extends DurableObject<Env> {
           }
         }
 
-        await this.checkWaitingAccess(room);
+        await this.checkWaitingAccess(room, actorId);
         if (!room.sessions[session]) return new Response(null, { status: 403 });
         if (
           this.liveSockets().filter(
@@ -826,6 +878,27 @@ export class GameRoom extends DurableObject<Env> {
         };
       }
     }
+  }
+
+  private async refreshForeignWaiting(force = false, request?: Request) {
+    const room = await readStored<Room>(this.ctx.storage, 'room');
+    if (
+      request &&
+      (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket' ||
+        !room?.sessions[request.headers.get('X-Game-Session') ?? ''] ||
+        (request.headers.get('X-Game-Instance') ?? '') !== (room.scope?.id ?? ''))
+    )
+      return;
+    if (room?.scope && room.state.phase === 'WAITING')
+      await refreshParticipationAccess(
+        this.env,
+        room.scope.id,
+        room.state.players.map((player) => player.id),
+        force,
+        room.state.parentRoomId ? undefined : room.state.matchId,
+        false,
+        room.state.parentRoomId,
+      );
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
@@ -943,7 +1016,17 @@ export class GameRoom extends DurableObject<Env> {
       await saveResult({ ...this.env, GAME_OWNER: resultOwner }, pending);
       status = 'confirmed';
     } catch (error) {
-      if (!(error instanceof ResultConflict)) return;
+      if (!(error instanceof ResultConflict)) {
+        await this.ctx.blockConcurrencyWhile(async () => {
+          const room = await readStored<Room>(this.ctx.storage, 'room');
+          if (!room || room.state.result?.id !== pending.result.id) return;
+          room.resultErrorCode = failureCode(error);
+          if (room.resultErrorCode === 'CPU_LIMIT')
+            room.resultRetryAt = Date.now() + 60000;
+          await this.save(room);
+        });
+        return;
+      }
       status = 'conflict';
     }
     await this.ctx.blockConcurrencyWhile(async () => {
@@ -956,10 +1039,22 @@ export class GameRoom extends DurableObject<Env> {
         return;
       room.state.result.storage = status;
       delete room.resultRetryAt;
+      delete room.resultErrorCode;
       changed(room.state, Date.now());
       await this.save(room);
       this.broadcast(room);
     });
+    if (status === 'confirmed')
+      this.ctx.waitUntil(
+        dispatchSavedResult(this.env, pending.result.id).catch((error) => {
+          console.error(
+            JSON.stringify({
+              event: 'federation_result_dispatch_failed',
+              code: failureCode(error),
+            }),
+          );
+        }),
+      );
   }
 
   async webSocketClose(socket: WebSocket) {

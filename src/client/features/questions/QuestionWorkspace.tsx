@@ -64,6 +64,10 @@ export default function QuestionWorkspace({
     direction,
     band,
     players,
+    shared,
+    sourceInstanceId,
+    peerOrigin,
+    sourceCategory,
   } = listState;
   function updateList(change: Partial<typeof listState>) {
     if (listing)
@@ -83,6 +87,10 @@ export default function QuestionWorkspace({
         direction,
         band,
         players,
+        shared,
+        sourceInstanceId,
+        peerOrigin,
+        sourceCategory,
       })
     : undefined;
   const returnHref = questionReturnHref(search, instanceId);
@@ -108,6 +116,10 @@ export default function QuestionWorkspace({
           category,
           sort,
           direction,
+          shared,
+          sourceInstanceId,
+          peerOrigin,
+          sourceCategory,
         }
       : undefined,
     !listing && page !== 'management' ? { page, id: selectedId } : undefined,
@@ -134,6 +146,10 @@ export default function QuestionWorkspace({
       category,
       band,
       players,
+      shared,
+      sourceInstanceId,
+      peerOrigin,
+      sourceCategory,
     ]),
   );
   const [actionRows, setActionRows] = useState<Submission[]>([]),
@@ -324,6 +340,101 @@ export default function QuestionWorkspace({
             }}
           />
           <div className="flex flex-wrap gap-3">
+            {page === 'review' && (
+              <>
+                <label>
+                  問題の種類{' '}
+                  <select
+                    className="border border-line p-2"
+                    value={shared}
+                    onChange={(event) =>
+                      updateList({
+                        shared: event.target.value as typeof shared,
+                        ...(event.target.value === 'local'
+                          ? { sourceInstanceId: '', peerOrigin: '', sourceCategory: '' }
+                          : {}),
+                      })
+                    }
+                  >
+                    <option value="all">すべて</option>
+                    <option value="local">このインスタンスの問題</option>
+                    <option value="shared">共有問題</option>
+                    <option value="excluded">除外した共有問題</option>
+                  </select>
+                </label>
+                <label>
+                  共有元{' '}
+                  <select
+                    className="border border-line p-2"
+                    value={sourceInstanceId ? `${peerOrigin}|${sourceInstanceId}` : ''}
+                    onChange={(event) => {
+                      const [origin, id] = event.target.value.split('|');
+                      updateList({
+                        sourceInstanceId: id ?? '',
+                        peerOrigin: origin ?? '',
+                        sourceCategory: '',
+                        shared: 'shared',
+                      });
+                    }}
+                  >
+                    <option value="">すべて</option>
+                    {data?.sharedSources?.map((source) => (
+                      <option
+                        key={`${source.peerOrigin}|${source.instanceId}`}
+                        value={`${source.peerOrigin}|${source.instanceId}`}
+                      >
+                        {source.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  共有元のカテゴリ{' '}
+                  <select
+                    className="border border-line p-2"
+                    value={
+                      sourceCategory
+                        ? `${peerOrigin}|${sourceInstanceId}|${sourceCategory}`
+                        : ''
+                    }
+                    onChange={(event) => {
+                      const [origin, id, categoryId] = event.target.value.split('|');
+                      updateList({
+                        sourceCategory: categoryId ?? '',
+                        ...(categoryId
+                          ? { peerOrigin: origin, sourceInstanceId: id, shared: 'shared' }
+                          : {}),
+                      });
+                    }}
+                  >
+                    <option value="">すべて</option>
+                    {data?.sharedSourceCategories
+                      ?.filter(
+                        (category) =>
+                          !sourceInstanceId ||
+                          (category.instanceId === sourceInstanceId &&
+                            category.peerOrigin === peerOrigin),
+                      )
+                      .map((category) => (
+                        <option
+                          key={`${category.peerOrigin}|${category.instanceId}|${category.id}`}
+                          value={`${category.peerOrigin}|${category.instanceId}|${category.id}`}
+                        >
+                          {category.name}（
+                          {
+                            data.sharedSources?.find(
+                              (source) =>
+                                source.peerOrigin === category.peerOrigin &&
+                                source.instanceId === category.instanceId,
+                            )?.name
+                          }
+                          ）
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              </>
+            )}
             {page !== 'pending' && (
               <label>
                 状態{' '}
@@ -542,6 +653,7 @@ export default function QuestionWorkspace({
                 </td>
                 <td>
                   {statusLabels[row.status]}
+                  {row.shared?.excluded ? '・出題から除外' : ''}
                   {row.deletedAt
                     ? '・削除済み'
                     : row.stopped || row.reviewHold
@@ -552,6 +664,11 @@ export default function QuestionWorkspace({
                   {data?.categories.find(
                     (availableCategory) => availableCategory.id === row.input.categoryId,
                   )?.name ?? '未設定'}
+                  {row.shared && (
+                    <p className="text-xs">
+                      共有元カテゴリ：{row.shared.sourceCategory?.name}
+                    </p>
+                  )}
                 </td>
                 <td>
                   {row.provenance?.author ??
@@ -566,7 +683,7 @@ export default function QuestionWorkspace({
                   <>
                     <td>
                       {
-                        ['初級', '中級', '上級'][
+                        ['簡単', '普通', '難しい'][
                           row.metrics?.difficulty ?? row.input.difficulty
                         ]
                       }
@@ -644,7 +761,7 @@ export default function QuestionWorkspace({
                   非公開の根拠：{selected.input.evidence}
                 </p>
                 <p>出典：{selected.input.source || 'なし'}</p>
-                <p>難易度：{['初級', '中級', '上級'][selected.input.difficulty]}</p>
+                <p>難易度：{['簡単', '普通', '難しい'][selected.input.difficulty]}</p>
               </>
             )
           )}
@@ -703,7 +820,16 @@ export default function QuestionWorkspace({
                   改訂履歴を確認
                 </Button>
               </div>
+              {selected.shared && (
+                <p>
+                  共有問題です。本文・カテゴリの改訂は共有元で行います。
+                  {selected.shared.expired
+                    ? '保存期限を過ぎたため、内容を再取得するまで利用できません。'
+                    : '除外・解除は「全問題」の問題操作で設定できます。'}
+                </p>
+              )}
               {reviewing &&
+                !selected.shared &&
                 (selected.publishedId ||
                   (selected.status === 'pending' &&
                     (data.administrator || selected.authorId !== data.actorId))) && (
@@ -759,7 +885,7 @@ export default function QuestionWorkspace({
                   ))}
                 </ul>
               )}
-              {page === 'edit' && (
+              {page === 'edit' && !selected.shared && (
                 <a className="underline" href={href('categoryRequest', selected.id)}>
                   カテゴリ変更を申請する
                 </a>

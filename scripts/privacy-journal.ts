@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { exportPrivacyJournal, restorePrivacyJournal } from '../src/erasure/recovery.ts';
-import { connectDatabase } from '../src/worker/db/connection.ts';
+import { localD1 } from './local-d1.ts';
 
 const [command, path, approval] = process.argv.slice(2);
 if (
@@ -9,9 +9,7 @@ if (
   (command === 'restore' && approval !== '--apply')
 )
   throw new Error('Usage: privacy-journal.ts export FILE | restore FILE --apply');
-const address = process.env.PRIVACY_RECOVERY_DATABASE_URL;
-if (!address) throw new Error('PRIVACY_RECOVERY_DATABASE_URL_REQUIRED');
-const { db, close } = connectDatabase(address, process.env.DATABASE_CA_CERT);
+const { db, close } = await localD1();
 try {
   if (command === 'export')
     writeFileSync(path, JSON.stringify(await exportPrivacyJournal(db)), {

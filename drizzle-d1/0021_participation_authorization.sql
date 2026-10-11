@@ -1,0 +1,1 @@
+ALTER TABLE `quiz_federation_reservations` ADD `authorization_id` text DEFAULT '' NOT NULL;

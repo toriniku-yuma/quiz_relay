@@ -106,6 +106,10 @@ it('条件変更中と取得失敗時は古い結果・件数・ページ数を�
 
 it('一覧条件と戻り先を保持し、外部URL・別インスタンスへの戻り先を受け入れない', () => {
   const state = {
+    shared: 'shared' as const,
+    sourceCategory: '33333333-3333-4333-8333-333333333333',
+    peerOrigin: 'https://source.quiz-relay.workers.dev',
+    sourceInstanceId: '22222222-2222-4222-8222-222222222222',
     band: 'all' as const,
     players: 'all' as const,
     sort: 'text',
@@ -132,6 +136,10 @@ it('一覧条件と戻り先を保持し、外部URL・別インスタンスへ�
       questionReturnHref(`return=${encodeURIComponent(value)}`, 'instance'),
     ).toBeUndefined();
   expect(questionListState('page=-1&size=20&status=invalid&category=invalid')).toEqual({
+    shared: 'all',
+    sourceCategory: '',
+    peerOrigin: '',
+    sourceInstanceId: '',
     band: 'all',
     players: 'all',
     sort: 'updatedAt',

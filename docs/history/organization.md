@@ -345,7 +345,7 @@ HTTP側でCookieを削除してもサーバー側の資格は残り、すでに�
 
 ### R07 / P2 / 追加インスタンスのカタログを準備する標準CLIがない【コード確認】
 
-箇所：[setup-catalog-operator](../../scripts/setup-catalog-operator.ts) 17–28行・48–60行、[catalog_operators](../../drizzle/0009_catalog_ownership.sql) 1–4行。
+箇所：当時の `scripts/setup-catalog-operator.ts` 17–28行・48–60行、[catalog_operators](../../drizzle/0009_catalog_ownership.sql) 1–4行。
 
 既存CLIはquiz_game_catalogという単一ロールと単一ownerの対応を固定している。別ownerでcatalog:setupしても、既存資格情報の認可失敗かOWNER_MISMATCHとなる。
 
@@ -355,7 +355,7 @@ HTTP側でCookieを削除してもサーバー側の資格は残り、すでに�
 
 ### R08 / P2 / 権限の再読み込み後も古いチェック状態が残り、取消済み権限を再付与し得る【コード確認】
 
-箇所：[InstanceGrants](../../src/client/features/organization/InstanceGrants.tsx) 23行・42–49行、[setInstanceGrants](../../src/worker/organization/database.ts) 238–246行。
+箇所：当時の `InstanceGrants.tsx` 23行・42–49行、[setInstanceGrants](../../src/worker/organization/database.ts) 238–246行。
 
 権限のチェック状態を更新するのはユーザー選択を変えたときだけ。別の管理者・タブが権限を取り消した後で一覧を再読み込みしても、選択中ユーザーのチェックは古いまま。
 
@@ -365,7 +365,7 @@ HTTP側でCookieを削除してもサーバー側の資格は残り、すでに�
 
 ### R09 / P2 / 管理画面で権限付与先を本人と照合しづらい【コード確認】
 
-箇所：[InstanceGrants](../../src/client/features/organization/InstanceGrants.tsx) 53–58行、[overview](../../src/worker/organization/database.ts) 94–98行。
+箇所：当時の `InstanceGrants.tsx` 53–58行、[overview](../../src/worker/organization/database.ts) 94–98行。
 
 選択肢には64桁のactorIdだけが並び、表示名や本人確認用の手掛かりがない。一般ユーザー側の画面にも自分のactorIdを確認する導線がないため、通常の画面操作だけでは「この人に付与する」を照合しづらい。
 

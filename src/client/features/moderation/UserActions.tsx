@@ -1,4 +1,5 @@
 import type { ModeratedUser } from '../../../shared/moderation';
+import { useApp } from '../../app/context';
 import Button from '../../components/Button';
 import IconButton from '../../components/IconButton';
 import Modal from '../../components/Modal';
@@ -18,6 +19,11 @@ export default function UserActions({
 }) {
   const model = useUserActions(instanceId, user.actorId, saved),
     close = () => model.setOpen('');
+  const { organization } = useApp();
+  const scopes =
+    organization.data?.instances.filter(
+      (instance) => administrator || instance.permissions.includes('users'),
+    ) ?? [];
   return (
     <div className="flex items-center gap-1">
       <IconButton
@@ -47,21 +53,38 @@ export default function UserActions({
       {model.data && (
         <>
           <SanctionEditor
-            data={model.data}
+            key={`sanction:${model.scope}`}
+            data={{
+              ...model.data,
+              sanctions: model.data.sanctions.filter(
+                (sanction) =>
+                  sanction.instanceId === null || sanction.instanceId === model.scope,
+              ),
+            }}
             loadError={model.error}
             loading={model.busy}
             reload={model.load}
-            instanceId={instanceId}
+            instanceId={model.scope}
+            scopes={scopes}
+            changeScope={(value) => {
+              if (value || administrator) void model.changeScope(value);
+            }}
             saved={model.refresh}
             open={model.open === 'sanction'}
             onClose={close}
           />
           <UserPermissions
-            user={user}
-            instanceId={instanceId}
+            key={`permissions:${model.scope}`}
+            user={model.data.target ?? user}
+            instanceId={model.scope}
+            scopes={scopes}
+            changeScope={(value) => void model.changeScope(value)}
             open={model.open === 'permissions'}
             onClose={close}
             saved={model.refresh}
+            loading={model.busy}
+            loadError={model.error}
+            reload={model.load}
           />
         </>
       )}

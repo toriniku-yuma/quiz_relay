@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
+import { participationTarget } from '../../shared/participation';
 import MenuToggle from '../components/MenuToggle';
 import { publicPlayEntry } from '../features/auth/publicEntry';
 import type { Auth } from '../features/auth/useAuth';
+import { foreignPlayPath } from '../features/federation/redirect';
+import { useExternalInstances } from '../features/federation/useExternalInstances';
+import { useForeignLogin } from '../features/federation/useForeignLogin';
+import { useForeignParticipation } from '../features/federation/useForeignParticipation';
 import { useOrganization } from '../features/organization/useOrganization';
 import NotificationBell from '../features/questions/NotificationBell';
 import { useGuest } from '../features/rooms/useGuest';
@@ -14,8 +19,10 @@ import Navigation from './AppNavigation';
 import { AppContext, type MatchStatus } from './context';
 import { gameHref, handleNavigation, navigate, useLocation } from './navigation';
 import {
+  AUTHORIZE_PATH,
   CASUAL_PATH,
   DEBUG_PATH,
+  FOREIGN_PATH,
   GAME_PATH,
   HISTORY_PATH,
   LOCAL_GAME_PATH,
@@ -26,8 +33,25 @@ import { useMobileMenu } from './useMobileMenu';
 
 export default function Application({ auth }: { auth: Auth }) {
   const organization = useOrganization(!!auth.user);
+  const externalInstances = useExternalInstances(
+    auth.user ? organization.data?.account?.actorId : undefined,
+  );
   const url = useLocation();
-  const guest = useGuest(auth.ready && !auth.user && publicPlayEntry(url));
+  const foreignParticipation = useForeignParticipation(auth.ready && !auth.user);
+  const foreignLogin = useForeignLogin(
+    auth.ready,
+    !!auth.user,
+    url,
+    foreignParticipation,
+  );
+  const guest = useGuest(
+    auth.ready &&
+      !auth.user &&
+      foreignLogin.checked &&
+      !foreignLogin.data &&
+      !foreignLogin.busy &&
+      publicPlayEntry(url),
+  );
   const [matchStatus, setMatchStatus] = useState<MatchStatus | null>(null);
 
   const content = useRef<HTMLDivElement>(null);
@@ -48,10 +72,28 @@ export default function Application({ auth }: { auth: Auth }) {
       ? matchStatus
       : null;
   const needsProfile =
-    !!organization.data?.account && !organization.data.account.displayName && !active;
+    !!auth.user &&
+    !!organization.data?.account &&
+    !organization.data.account.displayName &&
+    !active &&
+    ![FOREIGN_PATH, AUTHORIZE_PATH].includes(path);
   const activeName =
     organization.data?.instances.find((instance) => instance.id === active?.instanceId)
-      ?.name ?? '参加中のインスタンス';
+      ?.name ??
+    foreignLogin.data?.instances.find((instance) => instance.id === active?.instanceId)
+      ?.name ??
+    '参加中のインスタンス';
+  async function logout() {
+    if (await foreignLogin.logout()) {
+      if (auth.user) await auth.logout();
+    }
+  }
+  useEffect(() => {
+    if (url.pathname !== FOREIGN_PATH) return;
+    const target = participationTarget(url) ?? foreignParticipation.recoveryTarget;
+    if (target) navigate(`${foreignPlayPath(target.mode)}${url.search}`, true);
+    else navigate(GAME_PATH, true);
+  }, [url, foreignParticipation.recoveryTarget]);
 
   useEffect(() => {
     if (
@@ -82,7 +124,18 @@ export default function Application({ auth }: { auth: Auth }) {
 
   return (
     <AppContext.Provider
-      value={{ auth, organization, url, matchStatus, setMatchStatus, guest }}
+      value={{
+        auth,
+        organization,
+        url,
+        matchStatus,
+        setMatchStatus,
+        guest,
+        externalInstances,
+        foreignLogin,
+        foreignParticipation,
+        logout,
+      }}
     >
       <a
         href="#page-content"
@@ -122,6 +175,12 @@ export default function Application({ auth }: { auth: Auth }) {
             {auth.message}
           </p>
         )}
+        {foreignLogin.error && (
+          <p role="alert" className="mx-4 my-4 border border-accent p-3">
+            {foreignLogin.error}
+          </p>
+        )}
+        <div id="clerk-captcha" className="mx-4" />
         <div ref={content} id="page-content" tabIndex={-1}>
           <div data-page hidden={path !== GAME_PATH || needsProfile}>
             <MatchPage />
@@ -137,25 +196,26 @@ export default function Application({ auth }: { auth: Auth }) {
               <ProfilePage />
             </div>
           )}
-          {![GAME_PATH, ROOMS_PATH, CASUAL_PATH].includes(path) && !needsProfile && (
-            <div data-page>
-              {(path === DEBUG_PATH || path === LOCAL_GAME_PATH) &&
-              !organization.data?.account?.administrator ? (
-                <main className="p-8">
-                  <h1 tabIndex={-1} className="text-2xl font-bold outline-none">
-                    開発ツール
-                  </h1>
-                  <p className="mt-4">
-                    {!auth.ready || (auth.user && !organization.data)
-                      ? '権限を確認しています。'
-                      : 'この画面は組織管理者のみ利用できます。'}
-                  </p>
-                </main>
-              ) : (
-                <Page />
-              )}
-            </div>
-          )}
+          {![GAME_PATH, ROOMS_PATH, CASUAL_PATH, FOREIGN_PATH].includes(path) &&
+            !needsProfile && (
+              <div data-page>
+                {(path === DEBUG_PATH || path === LOCAL_GAME_PATH) &&
+                !organization.data?.account?.administrator ? (
+                  <main className="p-8">
+                    <h1 tabIndex={-1} className="text-2xl font-bold outline-none">
+                      開発ツール
+                    </h1>
+                    <p className="mt-4">
+                      {!auth.ready || (auth.user && !organization.data)
+                        ? '権限を確認しています。'
+                        : 'この画面は組織管理者のみ利用できます。'}
+                    </p>
+                  </main>
+                ) : (
+                  <Page />
+                )}
+              </div>
+            )}
         </div>
       </div>
       <dialog

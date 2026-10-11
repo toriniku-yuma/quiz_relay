@@ -11,7 +11,19 @@ export function questionListState(search: string) {
   const size = Number(params.get('size') ?? 10);
   const status = params.get('status') ?? '';
   const category = params.get('category') ?? '';
+  const source = params.get('source') ?? '';
   return {
+    shared: (['all', 'local', 'shared', 'excluded'].includes(params.get('shared') ?? '')
+      ? params.get('shared')
+      : 'all') as QuestionListQuery['shared'],
+    sourceInstanceId: /^[0-9a-f-]{36}$/i.test(source) ? source : '',
+    peerOrigin: params.get('origin') ?? '',
+    sourceCategory:
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        params.get('sourceCategory') ?? '',
+      )
+        ? (params.get('sourceCategory') ?? '')
+        : '',
     sort: questionSortKeys.includes(
       params.get('sort') as (typeof questionSortKeys)[number],
     )
@@ -54,6 +66,12 @@ export function questionListHref(
   if (state.query) params.set('q', state.query);
   if (state.status && page !== 'pending') params.set('status', state.status);
   if (state.category) params.set('category', state.category);
+  if (state.shared && state.shared !== 'all') params.set('shared', state.shared);
+  if (state.sourceCategory) params.set('sourceCategory', state.sourceCategory);
+  if (state.sourceInstanceId) {
+    params.set('source', state.sourceInstanceId);
+    if (state.peerOrigin) params.set('origin', state.peerOrigin);
+  }
   return `${questionPages[page].path}?${params}`;
 }
 export function questionReturnHref(search: string, instance: string) {

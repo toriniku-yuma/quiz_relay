@@ -20,6 +20,13 @@ export type Question = {
   difficulty?: number;
   seriesId?: string;
   generation?: string;
+  sharedSource?: {
+    authorId: string;
+    peerOrigin: string;
+    instanceId: string;
+    questionId: string;
+    seriesId: string;
+  };
 };
 
 export const answerReadings = (question: Question) =>

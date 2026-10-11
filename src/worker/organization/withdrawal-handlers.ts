@@ -1,10 +1,10 @@
 import { eq } from 'drizzle-orm';
 import type { Handler } from 'hono';
-import type { AuthEnv } from '../auth/handlers';
-import { accountWithdrawals } from '../db/schema';
-import { OrganizationError, validId } from './access';
-import { organizationDatabase } from './database';
-import { withdrawAccount } from './withdrawal';
+import type { AuthEnv } from '../auth/handlers.ts';
+import { accountWithdrawals } from '../db/schema.ts';
+import { OrganizationError, validId } from './access.ts';
+import { organizationDatabase } from './database.ts';
+import { withdrawAccount } from './withdrawal.ts';
 
 export const accountWithdrawal: Handler<AuthEnv> = async (context) => {
   const input = await context.req.json<Record<string, unknown>>().catch(() => null);

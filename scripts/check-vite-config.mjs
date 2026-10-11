@@ -10,16 +10,27 @@ import {
 import { dirname, resolve } from 'node:path';
 import { localOperationsConfig } from './local-operations-config.ts';
 
+// Operator tools run native Node TypeScript, without Vite's module resolver.
+await import('../src/worker/scheduled.ts');
+
 // These are source settings only; checks never deploy or register cloud triggers.
 const appWorker = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
 const erasureWorker = JSON.parse(readFileSync('wrangler.erasure.jsonc', 'utf8'));
+const qaWorker = JSON.parse(
+  readFileSync('config/federation/wrangler.game.jsonc', 'utf8'),
+);
+for (const worker of [appWorker, qaWorker])
+  assert.deepEqual(worker.assets.run_worker_first, ['/api/*', '/federation/v1/*']);
 assert.deepEqual(appWorker.services, [
   { binding: 'ACCOUNT_ERASURE', service: erasureWorker.name },
 ]);
 assert.equal(erasureWorker.workers_dev, false);
 assert.equal(erasureWorker.preview_urls, false);
 assert.deepEqual(erasureWorker.routes, []);
-assert.deepEqual(erasureWorker.triggers.crons, ['* * * * *']);
+assert.equal(erasureWorker.triggers, undefined);
+assert.deepEqual(appWorker.triggers.crons, ['* * * * *']);
+assert.deepEqual(erasureWorker.d1_databases, appWorker.d1_databases);
+assert.ok(appWorker.d1_databases.some((binding) => binding.binding === 'GAME_D1'));
 for (const binding of erasureWorker.durable_objects.bindings)
   assert.equal(binding.script_name, appWorker.name);
 
@@ -31,7 +42,7 @@ const vite = readFileSync('vite.config.ts', 'utf8')
 let reads = 0;
 let operationsReads = 0;
 let pluginOptions;
-let operations = { SUPABASE_SECRET_KEY: 'test-secret' };
+let operations = { CLERK_SECRET_KEY: 'test-secret' };
 
 const config = new Function(
   'existsSync',
@@ -73,10 +84,10 @@ assert.throws(() => config({ command: 'serve' }), /ENOENT/);
 assert.equal(operationsReads, 1);
 assert.equal(pluginOptions.auxiliaryWorkers[0].devOnly, true);
 assert.equal(
-  pluginOptions.auxiliaryWorkers[0].config.vars.SUPABASE_SECRET_KEY,
+  pluginOptions.auxiliaryWorkers[0].config.vars.CLERK_SECRET_KEY,
   'test-secret',
 );
-assert.equal(pluginOptions.config.vars.SUPABASE_SECRET_KEY, undefined);
+assert.equal(pluginOptions.config.vars.CLERK_SECRET_KEY, undefined);
 assert.equal(pluginOptions.config.services[0].binding, 'ACCOUNT_ERASURE');
 operations = undefined;
 assert.throws(() => config({ command: 'serve' }), /ENOENT/);
@@ -91,13 +102,14 @@ try {
   process.chdir(fixture);
   assert.equal(localOperationsConfig({}), undefined);
   const runtime = {
-    ORGANIZATION_DATABASE_URL:
-      'postgres://quiz_organization:test@127.0.0.1:55432/quiz_relay_dev?sslmode=disable',
-    SUPABASE_URL: 'https://auth.example.com',
+    AUTH_PROVIDER: 'clerk',
+    CLERK_PUBLISHABLE_KEY: 'public-fixture',
+    CLERK_SECRET_KEY: 'secret-fixture',
+    GAME_CONFIG_PROFILE: 'local',
   };
   writeFileSync(
     '.env.erasure-local',
-    'ERASURE_DATABASE_URL=postgres://quiz_erasure:test@127.0.0.1:55432/quiz_relay_dev?sslmode=disable\nSUPABASE_URL=https://auth.example.com\nSUPABASE_SECRET_KEY=test-key\n',
+    'AUTH_PROVIDER=clerk\nCLERK_PUBLISHABLE_KEY=public-fixture\nCLERK_SECRET_KEY=secret-fixture\n',
   );
   assert.throws(() => localOperationsConfig(runtime), /ENOENT/);
   const rooms = '.wrangler/state/v3/do/quiz-relay-probe-GameRoom';
@@ -110,30 +122,22 @@ try {
     'a'.repeat(64),
     'b'.repeat(64),
   ]);
+  assert.equal(localOperationsConfig(runtime).GAME_CONFIG_PROFILE, 'local');
   for (const patch of [
-    { SUPABASE_URL: 'https://other.example.com' },
-    {
-      ORGANIZATION_DATABASE_URL: runtime.ORGANIZATION_DATABASE_URL.replace(
-        '55432',
-        '5432',
-      ),
-    },
-    {
-      ORGANIZATION_DATABASE_URL: runtime.ORGANIZATION_DATABASE_URL.replace(
-        'postgres:',
-        'https:',
-      ),
-    },
+    { AUTH_PROVIDER: 'supabase' },
+    { CLERK_PUBLISHABLE_KEY: 'other-app' },
+    { CLERK_SECRET_KEY: 'other-secret' },
   ])
     assert.throws(
       () => localOperationsConfig({ ...runtime, ...patch }),
       /LOCAL_ERASURE_CONFIGURATION_MISMATCH/,
     );
+  const clerkRuntime = runtime;
   writeFileSync(`${rooms}/unknown.sqlite`, '');
-  assert.throws(() => localOperationsConfig(runtime), /UNKNOWN_LOCAL_ROOM_FILE/);
+  assert.throws(() => localOperationsConfig(clerkRuntime), /UNKNOWN_LOCAL_ROOM_FILE/);
   unlinkSync(`${rooms}/unknown.sqlite`);
   writeFileSync(`${rooms}/${'c'.repeat(64)}.sqlite-wal`, '');
-  assert.throws(() => localOperationsConfig(runtime), /ORPHANED_LOCAL_ROOM_STATE/);
+  assert.throws(() => localOperationsConfig(clerkRuntime), /ORPHANED_LOCAL_ROOM_STATE/);
 } finally {
   process.chdir(originalDirectory);
   // This exact temporary directory was created above inside the workspace.
@@ -142,5 +146,5 @@ try {
 }
 
 console.log(
-  'PASS: private erasure binding/Cron source settings; build excludes dev secrets; local erasure checks DB/Auth and complete room inventory',
+  'PASS: private erasure binding/Cron source settings; build excludes dev secrets; local erasure checks Clerk/D1 configuration and complete room inventory',
 );

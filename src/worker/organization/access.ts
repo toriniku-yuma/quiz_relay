@@ -4,13 +4,15 @@ import {
   normalizeOrganizationName,
 } from '../../shared/organization.ts';
 import { contentHash } from '../catalog/hash.ts';
-import type { Env } from '../env';
+import type { Env } from '../env.ts';
 
 export class OrganizationError extends Error {
   target?: string;
+  retryAt?: number;
+  peerStatus?: number;
   readonly code: string;
-  readonly status: 400 | 401 | 403 | 404 | 409 | 429 | 503;
-  constructor(code: string, status: 400 | 401 | 403 | 404 | 409 | 429 | 503 = 403) {
+  readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 429 | 503;
+  constructor(code: string, status: 400 | 401 | 403 | 404 | 409 | 413 | 429 | 503 = 403) {
     super(code);
     this.code = code;
     this.status = status;
@@ -49,11 +51,7 @@ export function validId(value: unknown): string {
 export function organizationEnabled(env: Env) {
   if (env.ORGANIZATION_ENABLED === 'true') return true;
   if (env.ORGANIZATION_ENABLED === 'false') return false;
-  if (
-    env.ORGANIZATION_ENABLED !== undefined ||
-    env.ORGANIZATION_DATABASE_URL ||
-    env.ORGANIZATION_HYPERDRIVE
-  )
+  if (env.ORGANIZATION_ENABLED !== undefined)
     throw new OrganizationError('ORGANIZATION_CONFIG_INVALID', 503);
   return false;
 }

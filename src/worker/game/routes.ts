@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { API_PATHS, GAME_PREFIX } from '../../shared/api-paths';
-import type { Env } from '../env';
-import { authorizeLocalGame } from './authorize';
-import { connectGame, joinGame, rejectLargeGameBody } from './handlers';
+import { API_PATHS, GAME_PREFIX } from '../../shared/api-paths.ts';
+import type { Env } from '../env.ts';
+import { authorizeLocalGame } from './authorize.ts';
+import { connectGame, joinGame, rejectLargeGameBody } from './handlers.ts';
 
 const game = new Hono<{ Bindings: Env }>();
 

@@ -1,11 +1,8 @@
-import { eq } from 'drizzle-orm';
 import type { Handler } from 'hono';
-import type { AuthEnv } from '../auth/handlers';
-import { connectDatabase } from '../db/connection';
-import { matchResults } from '../db/schema';
-import { organizationDatabase } from '../organization/database';
-import { QuestionError, questionMutation, questionOverview } from './database';
-import { verifiedReportedQuestion } from './reports';
+import type { AuthEnv } from '../auth/handlers.ts';
+import { organizationDatabase } from '../organization/database.ts';
+import { QuestionError, questionMutation, questionOverview } from './database.ts';
+import { verifiedReportedQuestion } from './reports.ts';
 
 export const questionsHandler: Handler<AuthEnv> = async (context) => {
   const { db, close } = organizationDatabase(context.env);
@@ -22,26 +19,6 @@ export const questionsHandler: Handler<AuthEnv> = async (context) => {
         instanceId,
         body.list,
         body.view,
-        async (owner) => {
-          const binding = context.env.GAME_HYPERDRIVE,
-            address = binding?.connectionString ?? context.env.GAME_DATABASE_URL;
-          if (!address) throw new QuestionError('RESULTS_UNAVAILABLE');
-          const reader = connectDatabase(
-            address,
-            context.env.DATABASE_CA_CERT,
-            !!binding,
-          );
-          try {
-            return (
-              await reader.db
-                .select({ payload: matchResults.payload })
-                .from(matchResults)
-                .where(eq(matchResults.owner, owner))
-            ).map((result) => result.payload);
-          } finally {
-            await reader.close();
-          }
-        },
       );
       return context.json(overview);
     }

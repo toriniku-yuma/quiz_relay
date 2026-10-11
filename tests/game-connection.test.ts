@@ -49,6 +49,26 @@ function start() {
   return { ...callbacks, stop };
 }
 
+it('keeps a confirmed result after the finished session closes without retrying', () => {
+  const callbacks = {
+    sync: () => 'sync',
+    opened: vi.fn(),
+    message: () => true,
+    status: vi.fn(),
+    error: vi.fn(),
+    finished: () => true,
+  };
+  const stop = connectGameSocket(new URL('wss://local.test/api/game/socket'), callbacks);
+  FakeSocket.instances[0].open();
+  FakeSocket.instances[0].close();
+  vi.advanceTimersByTime(30000);
+  expect(FakeSocket.instances).toHaveLength(1);
+  expect(callbacks.status).toHaveBeenLastCalledWith('closed');
+  expect(callbacks.error).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  stop();
+});
+
 it('retries fast failures for thirty seconds, then stops and clears timers', () => {
   const connection = start();
   for (let i = 0; i < 20; i++) {

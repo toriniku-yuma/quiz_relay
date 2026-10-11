@@ -1,11 +1,11 @@
 import type { Handler } from 'hono';
-import { resultsQuery } from '../../shared/results';
-import type { AuthEnv } from '../auth/handlers';
-import { connectDatabase } from '../db/connection';
-import { organizationDatabase } from '../organization/database';
-import { rankingExclusions } from '../organization/moderation';
-import { currentProfileNames } from '../organization/profile';
-import { readResults } from './read';
+import { resultsQuery } from '../../shared/results.ts';
+import type { AuthEnv } from '../auth/handlers.ts';
+import { connectD1 } from '../db/d1.ts';
+import { organizationDatabase } from '../organization/database.ts';
+import { rankingExclusions } from '../organization/moderation.ts';
+import { currentProfileNames } from '../organization/profile.ts';
+import { readResults } from './read.ts';
 
 export const resultsOverview: Handler<AuthEnv> = async (context) => {
   let query: ReturnType<typeof resultsQuery>;
@@ -15,10 +15,8 @@ export const resultsOverview: Handler<AuthEnv> = async (context) => {
   } catch {
     return context.json({ code: 'INVALID_SETUP' }, 400);
   }
-  const binding = context.env.GAME_HYPERDRIVE;
-  const url = binding?.connectionString ?? context.env.GAME_DATABASE_URL;
-  if (!url) return context.json({ code: 'RESULTS_UNAVAILABLE' }, 503);
-  const { db, close } = connectDatabase(url, context.env.DATABASE_CA_CERT, !!binding);
+  if (!context.env.GAME_D1) return context.json({ code: 'RESULTS_UNAVAILABLE' }, 503);
+  const db = connectD1(context.env.GAME_D1);
   try {
     let excludedActors: string[] = [];
     if (context.get('instanceId')) {
@@ -59,7 +57,5 @@ export const resultsOverview: Handler<AuthEnv> = async (context) => {
     return context.json(result);
   } catch {
     return context.json({ code: 'RESULTS_UNAVAILABLE' }, 503);
-  } finally {
-    await close();
   }
 };

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
-import { API_PATHS, PROBE_PREFIX } from '../../shared/api-paths';
-import type { Env } from '../env';
-import { authorizeProbe } from './authorize';
+import { API_PATHS, PROBE_PREFIX } from '../../shared/api-paths.ts';
+import type { Env } from '../env.ts';
+import { authorizeProbe } from './authorize.ts';
 import {
   checkDatabase,
   checkEgress,
@@ -11,7 +11,7 @@ import {
   getStatus,
   incrementDurableObject,
   openSocket,
-} from './handlers';
+} from './handlers.ts';
 
 const app = new Hono<{ Bindings: Env }>();
 

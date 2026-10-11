@@ -48,7 +48,8 @@ export default function QuestionClassification({
           !row ||
           seen.has(row.id) ||
           !data.categories.some(
-            (category) => category.active && category.id === item.categoryId,
+            (category) =>
+              category.active && !category.importOnly && category.id === item.categoryId,
           )
         )
           throw new Error('不明・重複した問題IDまたは無効なカテゴリIDがあります。');
@@ -85,7 +86,7 @@ export default function QuestionClassification({
                       categoryId: row.input.categoryId,
                     })),
                     categories: data.categories
-                      .filter((item) => item.active)
+                      .filter((item) => item.active && !item.importOnly)
                       .map(({ id, name }) => ({ id, name })),
                   },
                   null,

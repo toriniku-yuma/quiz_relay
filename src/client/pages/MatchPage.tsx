@@ -4,12 +4,13 @@ import { GAME_PATH } from '../app/paths';
 import Button from '../components/Button';
 import PageHeader from '../components/PageHeader';
 import LoginForm from '../features/auth/LoginForm';
+import ForeignPlay from '../features/federation/ForeignPlay';
 import OrganizationGateway from '../features/organization/OrganizationGateway';
 import MatchingRanking from '../features/results/MatchingRanking';
 import GuestInstances from '../features/rooms/GuestInstances';
 
 export default function MatchPage() {
-  const { auth, organization, url } = useApp();
+  const { auth, organization, url, foreignLogin } = useApp();
   const selected = organization.data?.instances.find(
     (instance) => instance.id === url.searchParams.get('instance'),
   );
@@ -20,7 +21,7 @@ export default function MatchPage() {
     view === 'delete'
       ? 'インスタンスの完全削除'
       : view === 'organization'
-        ? '組織設定・アカウント一覧'
+        ? '組織設定'
         : view === 'settings'
           ? 'インスタンス設定'
           : view === 'closure'
@@ -34,14 +35,21 @@ export default function MatchPage() {
   return (
     <main className="mx-auto max-w-4xl px-4 pt-6 pb-10 sm:px-8 sm:pt-10 sm:pb-16">
       <PageHeader
-        title={auth.user ? title : '早押しクイズ'}
-        description={selected?.name ?? 'インスタンスを選んで、対戦に参加しましょう。'}
+        title={auth.user ? title : foreignLogin?.data ? 'ランクマッチ' : '早押しクイズ'}
+        description={
+          view === 'organization'
+            ? '組織名とインスタンスの一覧・作成を管理します。'
+            : (selected?.name ?? 'インスタンスを選んで、対戦に参加しましょう。')
+        }
       />
       {auth.user && matching && (selected || organization.data?.enabled === false) && (
         <MatchingRanking instanceId={selected?.id ?? ''} />
       )}
-      {!auth.ready ? (
+      {!auth.ready ||
+      (!auth.user && foreignLogin && (!foreignLogin.checked || foreignLogin.busy)) ? (
         <p role="status">ログイン状態を確認しています。</p>
+      ) : !auth.user && foreignLogin?.data ? (
+        <ForeignPlay mode="ranked" />
       ) : !auth.user &&
         (url.searchParams.get('guest') === '1' ||
           (url.searchParams.has('instance') && !view)) ? (

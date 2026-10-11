@@ -39,7 +39,7 @@ export default function QuestionCategoryRequest({
         >
           <option value="">選択してください</option>
           {data.categories
-            .filter((item) => item.active)
+            .filter((item) => item.active && !item.importOnly)
             .map((item) => (
               <option key={item.id} value={item.id}>
                 {item.name}

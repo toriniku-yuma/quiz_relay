@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { activeSanction } from '../../shared/moderation.ts';
 import {
   type InstancePermission,
@@ -6,6 +6,7 @@ import {
   permissionRevision,
 } from '../../shared/organization.ts';
 import { contentHash } from '../catalog/hash.ts';
+import { changeD1 } from '../db/d1.ts';
 import {
   organizationAccounts as accounts,
   sanctionAppeals as appeals,
@@ -38,18 +39,14 @@ export async function moderationWorkflow(
 ) {
   const operationId = validId(input.operationId),
     hash = await contentHash(input);
-  return db.transaction(async (tx) => {
+  return changeD1(db, async (writes) => {
+    const tx = db;
     const initial = await organizationIdentity(tx, subject);
     const scopes = await tx
       .select()
       .from(instances)
       .where(eq(instances.organizationId, initial.organization.id))
       .orderBy(asc(instances.id));
-    // All account/permission mutations share this lock order with sanctions and profile edits.
-    for (const scope of scopes)
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${scope.id}`},0))`,
-      );
     const { organization, account } = await organizationIdentity(tx, subject);
     const [previous] = await tx
       .select()
@@ -77,17 +74,19 @@ export async function moderationWorkflow(
       )
         fail('REPORT_NOT_ALLOWED', 403);
       await targetUser(tx, organization.id, actorId);
-      await tx.insert(reports).values({
-        id: operationId,
-        organizationId: organization.id,
-        instanceId,
-        actorId,
-        reporterId: account.actorId,
-        resultId: validId(input.resultId),
-        reason: reasonOf(input.reason),
-      });
+      writes.push(
+        tx.insert(reports).values({
+          id: operationId,
+          organizationId: organization.id,
+          instanceId,
+          actorId,
+          reporterId: account.actorId,
+          resultId: validId(input.resultId),
+          reason: reasonOf(input.reason),
+        }),
+      );
     } else if (action === 'resolveReports') {
-      const instanceId = validId(input.instanceId);
+      const instanceId = input.instanceId === null ? null : validId(input.instanceId);
       await context(tx, subject, instanceId);
       if (!Array.isArray(input.ids) || !input.ids.length || input.ids.length > 100)
         fail('INVALID_REPORT');
@@ -97,22 +96,26 @@ export async function moderationWorkflow(
         .from(reports)
         .where(
           and(
-            inArray(reports.id, ids),
+            sql`${reports.id} in (select value from json_each(${JSON.stringify(ids)}))`,
             eq(reports.organizationId, organization.id),
-            eq(reports.instanceId, instanceId),
+            instanceId ? eq(reports.instanceId, instanceId) : undefined,
             eq(reports.actorId, String(input.actorId)),
             isNull(reports.resolvedAt),
           ),
         );
       if (rows.length !== new Set(ids).size) fail('EDIT_CONFLICT', 409);
-      await tx
-        .update(reports)
-        .set({
-          resolvedAt: now,
-          operatorId: account.actorId,
-          resolution: reasonOf(input.reason),
-        })
-        .where(inArray(reports.id, ids));
+      writes.push(
+        tx
+          .update(reports)
+          .set({
+            resolvedAt: now,
+            operatorId: account.actorId,
+            resolution: reasonOf(input.reason),
+          })
+          .where(
+            sql`${reports.id} in (select value from json_each(${JSON.stringify(ids)}))`,
+          ),
+      );
     } else if (action === 'appeal') {
       const [sanction] = await tx
         .select()
@@ -131,16 +134,18 @@ export async function moderationWorkflow(
         .from(appeals)
         .where(and(eq(appeals.sanctionId, sanction.id), isNull(appeals.resolvedAt)));
       if (open) fail('APPEAL_PENDING', 409);
-      await tx.insert(appeals).values({
-        id: operationId,
-        organizationId: organization.id,
-        actorId: account.actorId,
-        sanctionId: sanction.id,
-        sanctionRevision: sanction.revision,
-        reason: reasonOf(input.reason),
-      });
+      writes.push(
+        tx.insert(appeals).values({
+          id: operationId,
+          organizationId: organization.id,
+          actorId: account.actorId,
+          sanctionId: sanction.id,
+          sanctionRevision: sanction.revision,
+          reason: reasonOf(input.reason),
+        }),
+      );
     } else if (action === 'decideAppeal') {
-      const instanceId = validId(input.instanceId);
+      const instanceId = input.instanceId === null ? null : validId(input.instanceId);
       const ctx = await context(tx, subject, instanceId);
       const [appeal] = await tx
         .select()
@@ -158,9 +163,13 @@ export async function moderationWorkflow(
         .where(eq(sanctions.id, appeal.sanctionId));
       if (
         !sanction ||
-        (sanction.instanceId !== null && sanction.instanceId !== instanceId)
+        (instanceId !== null &&
+          sanction.instanceId !== null &&
+          sanction.instanceId !== instanceId)
       )
         fail('MODERATION_REQUIRED', 403);
+      if (sanction.instanceId === null && !ctx.account.administrator)
+        fail('ADMIN_REQUIRED', 403);
       if (
         !(await canAct(
           tx,
@@ -181,30 +190,34 @@ export async function moderationWorkflow(
           revision: sanction.revision + 1,
           reason,
         };
-        await tx.update(sanctions).set(after).where(eq(sanctions.id, sanction.id));
-        await tx.insert(events).values({
-          id: operationId,
-          organizationId: organization.id,
-          instanceId: sanction.instanceId,
-          actorId: appeal.actorId,
-          operatorId: account.actorId,
-          action: 'revoke',
-          reason,
-          requestHash: hash,
-          before: sanction,
-          after,
-        });
+        writes.push(tx.update(sanctions).set(after).where(eq(sanctions.id, sanction.id)));
+        writes.push(
+          tx.insert(events).values({
+            id: operationId,
+            organizationId: organization.id,
+            instanceId: sanction.instanceId,
+            actorId: appeal.actorId,
+            operatorId: account.actorId,
+            action: 'revoke',
+            reason,
+            requestHash: hash,
+            before: sanction,
+            after,
+          }),
+        );
       }
-      await tx
-        .update(appeals)
-        .set({
-          readAt: null,
-          resolvedAt: now,
-          resolution: reason,
-          decision: decision as 'maintain' | 'revoke',
-          operatorId: account.actorId,
-        })
-        .where(eq(appeals.id, appeal.id));
+      writes.push(
+        tx
+          .update(appeals)
+          .set({
+            readAt: null,
+            resolvedAt: now,
+            resolution: reason,
+            decision: decision as 'maintain' | 'revoke',
+            operatorId: account.actorId,
+          })
+          .where(eq(appeals.id, appeal.id)),
+      );
     } else if (action === 'permissions') {
       if (!account.administrator) fail('ADMIN_REQUIRED', 403);
       const id = validId(input.instanceId),
@@ -228,27 +241,33 @@ export async function moderationWorkflow(
         input.expected !== permissionRevision(previous.map((grant) => grant.permission))
       )
         fail('EDIT_CONFLICT', 409);
-      await tx
-        .delete(grants)
-        .where(and(eq(grants.instanceId, id), eq(grants.actorId, actorId)));
+      writes.push(
+        tx
+          .delete(grants)
+          .where(and(eq(grants.instanceId, id), eq(grants.actorId, actorId))),
+      );
       const permissions = input.permissions as InstancePermission[];
       if (permissions.length)
-        await tx
-          .insert(grants)
-          .values(
-            permissions.map((permission) => ({ instanceId: id, actorId, permission })),
-          );
-      await tx.insert(organizationEvents).values({
-        id: operationId,
-        actorId: account.actorId,
-        instanceId: id,
-        action: 'grants',
-        details: {
-          target: actorId,
-          before: previous.map((grant) => grant.permission),
-          after: permissions,
-        },
-      });
+        writes.push(
+          tx
+            .insert(grants)
+            .values(
+              permissions.map((permission) => ({ instanceId: id, actorId, permission })),
+            ),
+        );
+      writes.push(
+        tx.insert(organizationEvents).values({
+          id: operationId,
+          actorId: account.actorId,
+          instanceId: id,
+          action: 'grants',
+          details: {
+            target: actorId,
+            before: previous.map((grant) => grant.permission),
+            after: permissions,
+          },
+        }),
+      );
     } else if (action === 'inviteAdmin') {
       if (!account.administrator) fail('ADMIN_REQUIRED', 403);
       const target = await targetUser(tx, organization.id, String(input.actorId));
@@ -266,18 +285,20 @@ export async function moderationWorkflow(
             eq(transfers.organizationId, organization.id),
             eq(transfers.state, 'pending'),
             eq(transfers.targetId, target.actorId),
-            sql`${transfers.expiresAt}>now()`,
+            sql`${transfers.expiresAt}>${now}`,
           ),
         );
       if (open) fail('TRANSFER_PENDING', 409);
-      await tx.insert(transfers).values({
-        id: operationId,
-        organizationId: organization.id,
-        senderId: account.actorId,
-        targetId: target.actorId,
-        keepSender: input.keepSender as boolean,
-        expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
-      });
+      writes.push(
+        tx.insert(transfers).values({
+          id: operationId,
+          organizationId: organization.id,
+          senderId: account.actorId,
+          targetId: target.actorId,
+          keepSender: input.keepSender as boolean,
+          expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+        }),
+      );
     } else if (action === 'acceptAdmin' || action === 'cancelAdmin') {
       const [invite] = await tx
         .select()
@@ -297,29 +318,37 @@ export async function moderationWorkflow(
           fail('INVITATION_INVALID', 403);
         const sender = await targetUser(tx, organization.id, invite.senderId);
         if (!sender.administrator) fail('INVITATION_INVALID', 409);
-        await tx
-          .update(accounts)
-          .set({ administrator: true })
-          .where(eq(accounts.actorId, account.actorId));
-        if (!invite.keepSender)
-          await tx
+        writes.push(
+          tx
             .update(accounts)
-            .set({ administrator: false })
-            .where(eq(accounts.actorId, sender.actorId));
+            .set({ administrator: true })
+            .where(eq(accounts.actorId, account.actorId)),
+        );
+        if (!invite.keepSender)
+          writes.push(
+            tx
+              .update(accounts)
+              .set({ administrator: false })
+              .where(eq(accounts.actorId, sender.actorId)),
+          );
       } else if (invite.senderId !== account.actorId && !account.administrator)
         fail('ADMIN_REQUIRED', 403);
-      await tx
-        .update(transfers)
-        .set({ state: action === 'acceptAdmin' ? 'accepted' : 'cancelled' })
-        .where(eq(transfers.id, invite.id));
+      writes.push(
+        tx
+          .update(transfers)
+          .set({ state: action === 'acceptAdmin' ? 'accepted' : 'cancelled' })
+          .where(eq(transfers.id, invite.id)),
+      );
     } else fail('INVALID_ACTION');
-    await tx.insert(requests).values({
-      id: operationId,
-      organizationId: organization.id,
-      operatorId: account.actorId,
-      requestHash: hash,
-      details: input,
-    });
+    writes.push(
+      tx.insert(requests).values({
+        id: operationId,
+        organizationId: organization.id,
+        operatorId: account.actorId,
+        requestHash: hash,
+        details: input,
+      }),
+    );
     return { ok: true };
   });
 }

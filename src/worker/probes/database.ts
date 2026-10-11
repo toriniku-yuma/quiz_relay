@@ -1,50 +1,39 @@
-import { eq, inArray } from 'drizzle-orm';
-import { connectDatabase } from '../db/connection.ts';
+import { eq, inArray, sql } from 'drizzle-orm';
+import { changeD1, connectD1 } from '../db/d1.ts';
 import { probeRuns } from '../db/schema.ts';
 
-export async function probeDatabase(url: string, ca?: string, viaHyperdrive = false) {
-  const { db, close, tls } = connectDatabase(url, ca, viaHyperdrive);
-  const id = crypto.randomUUID();
-  const rolledBackId = crypto.randomUUID();
-  const rollback = new Error('probe rollback');
+export async function probeDatabase(binding: D1Database) {
+  const db = connectD1(binding),
+    id = crypto.randomUUID(),
+    rolledBackId = crypto.randomUUID();
   try {
-    await db.transaction(async (tx) => {
-      await tx.insert(probeRuns).values({ id });
-      const rows = await tx
-        .select({ id: probeRuns.id })
-        .from(probeRuns)
-        .where(eq(probeRuns.id, id));
-      if (rows.length !== 1) throw new Error('transaction visibility');
+    await changeD1(db, async (writes) => {
+      writes.push(db.insert(probeRuns).values({ id }));
     });
+    let rolledBack = false;
     try {
-      await db.transaction(async (tx) => {
-        await tx.insert(probeRuns).values({ id: rolledBackId });
-        throw rollback;
+      await changeD1(db, async (writes) => {
+        writes.push(
+          db.insert(probeRuns).values({ id: rolledBackId }),
+          sql`select raise_invalid_probe_statement()`,
+        );
       });
-    } catch (error) {
-      if (error !== rollback) throw error;
+    } catch {
+      rolledBack = true;
     }
-    const committed = await db
-      .select({ id: probeRuns.id })
-      .from(probeRuns)
-      .where(eq(probeRuns.id, id));
-    const reverted = await db
-      .select({ id: probeRuns.id })
-      .from(probeRuns)
-      .where(eq(probeRuns.id, rolledBackId));
-    if (committed.length !== 1 || reverted.length !== 0)
-      throw new Error('transaction persistence');
+    const committed = await db.select().from(probeRuns).where(eq(probeRuns.id, id)),
+      reverted = await db.select().from(probeRuns).where(eq(probeRuns.id, rolledBackId));
+    if (!rolledBack || committed.length !== 1 || reverted.length !== 0)
+      throw new Error('D1_BATCH_PERSISTENCE');
     return {
       committed: true,
       rolledBack: true,
-      preparedStatements: false,
-      tls,
+      preparedStatements: true,
+      database: 'd1' as const,
     };
   } finally {
-    try {
-      await db.delete(probeRuns).where(inArray(probeRuns.id, [id, rolledBackId]));
-    } finally {
-      await close();
-    }
+    await changeD1(db, async (writes) => {
+      writes.push(db.delete(probeRuns).where(inArray(probeRuns.id, [id, rolledBackId])));
+    });
   }
 }

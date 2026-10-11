@@ -22,7 +22,7 @@ export default function MatchLobby({
   targetInstanceId?: string;
   onStatus?: (status: MatchStatus) => void;
 }) {
-  const { organization, url } = useApp();
+  const { organization, url, logout } = useApp();
   const match = useMatchmaking(
     auth.user?.id ?? '',
     instanceId,
@@ -193,7 +193,7 @@ export default function MatchLobby({
         onClick={async () => {
           setLogoutError('');
           try {
-            await auth.logout();
+            await (logout ?? auth.logout)();
           } catch {
             setLogoutError(
               '退出を確認できませんでした。通信を確認して再度お試しください。',

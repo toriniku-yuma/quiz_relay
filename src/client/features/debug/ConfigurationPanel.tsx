@@ -68,9 +68,7 @@ export default function ConfigurationPanel({
               </div>
             )}
           </dl>
-          <p className="text-sm">
-            名前はログインアカウントの表示名（未登録ならメールアドレス）です。管理者権限は組織DBの設定で確認しています。
-          </p>
+          <p className="text-sm">管理者権限は組織DBの設定で確認しています。</p>
           {organization?.setup && (
             <p role="status">
               {organization.setup.eligible

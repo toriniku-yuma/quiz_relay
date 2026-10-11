@@ -10,6 +10,7 @@ import Button from '../../components/Button';
 import Checkbox from '../../components/Checkbox';
 import Modal from '../../components/Modal';
 import TextField from '../../components/TextField';
+import UserScopeSelect from './UserScopeSelect';
 import { useActiveSanctions } from './useActiveSanctions';
 import { useSanctionEditor } from './useModeration';
 export default function SanctionEditor({
@@ -22,9 +23,13 @@ export default function SanctionEditor({
   open,
   onClose,
   batch,
+  scopes,
+  changeScope,
 }: {
   data: ModerationOverview;
   batch?: ModeratedUser[];
+  scopes?: { id: string; name: string }[];
+  changeScope?: (value: string | null) => void;
   loadError?: string;
   loading?: boolean;
   reload?: () => Promise<boolean>;
@@ -45,6 +50,15 @@ export default function SanctionEditor({
       onClose={onClose}
       busy={model.busy}
     >
+      {scopes && changeScope && (
+        <UserScopeSelect
+          value={instanceId}
+          instances={scopes}
+          onChange={changeScope}
+          allowOrganization={data.administrator === true}
+          disabled={model.busy || model.uncertain || loading || !!loadError}
+        />
+      )}
       {loadError && (
         <div>
           <p role="alert">保存後の最新情報を取得できませんでした。{loadError}</p>
@@ -83,19 +97,34 @@ export default function SanctionEditor({
                 className="flex flex-wrap items-center gap-3 border border-line p-3"
               >
                 <p>
-                  {row.instanceId === null ? '組織全体' : 'このインスタンス'}：
-                  {sanctionLabels[row.kind]} /{' '}
+                  {row.instanceId === null
+                    ? '組織全体'
+                    : (scopes?.find((scope) => scope.id === row.instanceId)?.name ??
+                      'このインスタンス')}
+                  ：{sanctionLabels[row.kind]} /{' '}
                   {row.expiresAt ? new Date(row.expiresAt).toLocaleString() : '期限なし'}{' '}
                   / {row.reason}
                 </p>
                 <Button
-                  disabled={model.busy || model.uncertain || loading || !!loadError}
+                  disabled={
+                    model.busy ||
+                    model.uncertain ||
+                    loading ||
+                    !!loadError ||
+                    (row.instanceId === null && !data.administrator)
+                  }
                   onClick={() => model.edit(row)}
                 >
                   変更
                 </Button>
                 <Button
-                  disabled={model.busy || model.uncertain || loading || !!loadError}
+                  disabled={
+                    model.busy ||
+                    model.uncertain ||
+                    loading ||
+                    !!loadError ||
+                    (row.instanceId === null && !data.administrator)
+                  }
                   onClick={() => model.edit(row, true)}
                 >
                   処分を取り消す
@@ -133,7 +162,8 @@ export default function SanctionEditor({
                   {Object.entries(sanctionLabels)
                     .filter(
                       ([kind]) =>
-                        (model.before?.instanceId !== null &&
+                        (instanceId !== null &&
+                          model.before?.instanceId !== null &&
                           model.before?.kind !== 'ban') ||
                         kind === 'ban',
                     )
@@ -144,7 +174,7 @@ export default function SanctionEditor({
                     ))}
                 </select>
               </label>
-              {model.kind === 'ban' && (
+              {model.kind === 'ban' && instanceId !== null && data.administrator && (
                 <label>
                   <Checkbox
                     checked={model.organizationWide}

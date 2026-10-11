@@ -1,18 +1,28 @@
-import { useSyncExternalStore } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { questionPages } from '../features/questions/pages';
 import {
+  AUTHORIZE_PATH,
   CASUAL_PATH,
   DEBUG_PATH,
+  EXTERNAL_PATH,
+  FEDERATION_PATH,
+  FOREIGN_PATH,
   GAME_PATH,
   HISTORY_PATH,
   LOCAL_GAME_PATH,
   PROFILE_PATH,
+  QUESTION_SHARING_PATH,
   RANKING_PATH,
   ROOMS_PATH,
   USERS_PATH,
 } from './paths';
 
 const paths: readonly string[] = [
+  FEDERATION_PATH,
+  EXTERNAL_PATH,
+  FOREIGN_PATH,
+  AUTHORIZE_PATH,
+  QUESTION_SHARING_PATH,
   HISTORY_PATH,
   RANKING_PATH,
   CASUAL_PATH,
@@ -37,6 +47,13 @@ export function gameHref(instanceId = '', view = '') {
   if (view) query.set('view', view);
   return `${GAME_PATH}${query.size ? `?${query}` : ''}`;
 }
+export function externalInstanceHref(
+  peerOrigin: string,
+  instanceId: string,
+  sourceInstanceId = '',
+) {
+  return `${EXTERNAL_PATH}?${new URLSearchParams({ peer: peerOrigin, instance: instanceId, ...(sourceInstanceId ? { source: sourceInstanceId } : {}) })}`;
+}
 
 export function navigate(href: string, replace = false) {
   if (replace) history.replaceState(null, '', href);
@@ -50,7 +67,8 @@ function subscribe(listener: () => void) {
 }
 
 export function useLocation() {
-  return new URL(useSyncExternalStore(subscribe, () => location.href));
+  const href = useSyncExternalStore(subscribe, () => location.href);
+  return useMemo(() => new URL(href), [href]);
 }
 
 export function handleNavigation(event: MouseEvent) {

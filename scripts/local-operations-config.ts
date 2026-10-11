@@ -6,24 +6,14 @@ import { parseEnv } from 'node:util';
 export function localOperationsConfig(runtime: Record<string, string | undefined>) {
   if (!existsSync('.env.erasure-local')) return;
   const values = parseEnv(readFileSync('.env.erasure-local', 'utf8'));
-  const database = new URL(values.ERASURE_DATABASE_URL ?? '');
-  const application = new URL(runtime.ORGANIZATION_DATABASE_URL ?? '');
-  const key = values.SUPABASE_SECRET_KEY || values.SUPABASE_SERVICE_ROLE_KEY;
-  if (
-    !['postgres:', 'postgresql:'].includes(database.protocol) ||
-    !['postgres:', 'postgresql:'].includes(application.protocol) ||
-    database.hostname !== '127.0.0.1' ||
-    database.port !== '55432' ||
-    database.pathname !== '/quiz_relay_dev' ||
-    database.username !== 'quiz_erasure' ||
-    database.search !== '?sslmode=disable' ||
-    application.hostname !== database.hostname ||
-    application.port !== database.port ||
-    application.pathname !== database.pathname ||
-    values.SUPABASE_URL !== runtime.SUPABASE_URL ||
-    !key
-  )
-    throw new Error('LOCAL_ERASURE_CONFIGURATION_MISMATCH');
+  const matchingAuth =
+    runtime.AUTH_PROVIDER === 'clerk' &&
+    values.AUTH_PROVIDER === 'clerk' &&
+    Boolean(values.CLERK_SECRET_KEY) &&
+    Boolean(values.CLERK_PUBLISHABLE_KEY) &&
+    values.CLERK_SECRET_KEY === runtime.CLERK_SECRET_KEY &&
+    values.CLERK_PUBLISHABLE_KEY === runtime.CLERK_PUBLISHABLE_KEY;
+  if (!matchingAuth) throw new Error('LOCAL_ERASURE_CONFIGURATION_MISMATCH');
   const directory = resolve('.wrangler/state/v3/do/quiz-relay-probe-GameRoom');
   // Missing persistence is not evidence that a legacy namespace is empty.
   const files = readdirSync(directory);
@@ -37,10 +27,22 @@ export function localOperationsConfig(runtime: Record<string, string | undefined
     if (!/^[a-f0-9]{64}\.sqlite$/.test(name)) throw new Error('UNKNOWN_LOCAL_ROOM_FILE');
     return [name.slice(0, -7)];
   });
+  const authentication: Record<string, string> = {
+    AUTH_PROVIDER: 'clerk',
+    CLERK_SECRET_KEY: values.CLERK_SECRET_KEY ?? '',
+    CLERK_PUBLISHABLE_KEY: values.CLERK_PUBLISHABLE_KEY ?? '',
+    ...(values.CLERK_JWT_KEY ? { CLERK_JWT_KEY: values.CLERK_JWT_KEY } : {}),
+  };
   return {
-    ERASURE_DATABASE_URL: database.toString(),
-    SUPABASE_URL: new URL(values.SUPABASE_URL ?? '').toString().replace(/\/$/, ''),
-    SUPABASE_SECRET_KEY: key,
+    ...authentication,
+    GAME_CONFIG_PROFILE: runtime.GAME_CONFIG_PROFILE ?? 'default',
     LOCAL_ROOM_INVENTORY: JSON.stringify(ids.sort()),
+    ...(runtime.FEDERATION_ORIGIN && runtime.SIGNING_KID && runtime.SIGNING_PRIVATE_KEY
+      ? {
+          FEDERATION_ORIGIN: runtime.FEDERATION_ORIGIN,
+          SIGNING_KID: runtime.SIGNING_KID,
+          SIGNING_PRIVATE_KEY: runtime.SIGNING_PRIVATE_KEY,
+        }
+      : {}),
   };
 }

@@ -21,12 +21,7 @@ export default defineConfig(({ command }) => {
         persistState: { path: '.wrangler/state' },
         config:
           command === 'build'
-            ? {
-                hyperdrive: [
-                  { binding: 'HYPERDRIVE', id: '49ed9c4348e1429d8f04cc6a47755e21' },
-                  { binding: 'GAME_HYPERDRIVE', id: '4e4a5dbafb8540a1aa13241013dc90c6' },
-                ],
-              }
+            ? {}
             : {
                 vars: { LOCAL_GAME_ENABLED: 'true' },
                 services: operations

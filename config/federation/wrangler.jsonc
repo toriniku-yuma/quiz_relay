@@ -1,0 +1,66 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "quiz-relay-federation-test",
+  "main": "../../scripts/federation-worker.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "env": {
+    "a": {
+      "name": "quiz-relay-federation-a-test",
+      "vars": {
+        "TEST_NODE": "A",
+        "PROBES_ENABLED": "true",
+        "AUTH_PROVIDER": "clerk",
+        "GAME_OWNER": "https://quiz-relay-federation-a-test.quiz-relay.workers.dev",
+        "PEER_ORIGIN": "https://quiz-relay-federation-b-test.quiz-relay.workers.dev",
+        "SIGNING_KID": "federation-test-a-v1",
+        "PEER_KID": "federation-test-b-v1"
+      },
+      "d1_databases": [
+        {
+          "binding": "GAME_D1",
+          "database_name": "quiz-relay-federation-a-test",
+          "database_id": "45f1cecf-0ffd-4b49-b668-553baba1ce55",
+          "migrations_dir": "../../drizzle-d1"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "API_LIMITER",
+          "namespace_id": "716329411",
+          "simple": { "limit": 60, "period": 60 }
+        }
+      ]
+    },
+    "b": {
+      "name": "quiz-relay-federation-b-test",
+      "vars": {
+        "TEST_NODE": "B",
+        "PROBES_ENABLED": "true",
+        "AUTH_PROVIDER": "clerk",
+        "GAME_OWNER": "https://quiz-relay-federation-b-test.quiz-relay.workers.dev",
+        "PEER_ORIGIN": "https://quiz-relay-federation-a-test.quiz-relay.workers.dev",
+        "SIGNING_KID": "federation-test-b-v1",
+        "PEER_KID": "federation-test-a-v1"
+      },
+      "d1_databases": [
+        {
+          "binding": "GAME_D1",
+          "database_name": "quiz-relay-federation-b-test",
+          "database_id": "7ce4e9a2-1e52-48b9-a643-42642735db9d",
+          "migrations_dir": "../../drizzle-d1"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "API_LIMITER",
+          "namespace_id": "716329412",
+          "simple": { "limit": 60, "period": 60 }
+        }
+      ]
+    }
+  }
+}

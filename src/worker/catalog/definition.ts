@@ -188,6 +188,12 @@ export function validateQuestion(
   }
   const answer = item.answer.normalize('NFKC').trim();
   if (
+    item.authorName !== undefined &&
+    !text(item.authorName, 80) &&
+    normalizeDisplayName(item.authorName) === undefined
+  )
+    throw new Error('INVALID_QUESTION');
+  if (
     item.readings !== undefined &&
     (!Array.isArray(item.readings) ||
       item.readings.length < 1 ||
@@ -198,6 +204,23 @@ export function validateQuestion(
   )
     throw new Error('INVALID_CHOICES');
   if (!original && item.displayAnswer !== undefined && !text(item.displayAnswer, 80))
+    throw new Error('INVALID_QUESTION');
+  if (
+    item.sharedSource !== undefined &&
+    (!record(item.sharedSource) ||
+      Object.keys(item.sharedSource).sort().join(',') !==
+        'authorId,instanceId,peerOrigin,questionId,seriesId' ||
+      typeof item.sharedSource.authorId !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(item.sharedSource.authorId) ||
+      !text(item.sharedSource.peerOrigin, 256) ||
+      !['instanceId', 'questionId', 'seriesId'].every(
+        (key) =>
+          typeof (item.sharedSource as Record<string, unknown>)[key] === 'string' &&
+          /^[a-f0-9-]{36}$/.test(
+            String((item.sharedSource as Record<string, unknown>)[key]),
+          ),
+      ))
+  )
     throw new Error('INVALID_QUESTION');
   if (
     item.traps !== undefined &&
@@ -245,10 +268,14 @@ export function validateQuestion(
     ...(typeof item.difficulty === 'number' ? { difficulty: item.difficulty } : {}),
     ...(typeof item.seriesId === 'string' ? { seriesId: item.seriesId } : {}),
     ...(typeof item.generation === 'string' ? { generation: item.generation } : {}),
+    ...(item.sharedSource
+      ? { sharedSource: item.sharedSource as FixedQuestion['sharedSource'] }
+      : {}),
     explanation: item.explanation as string,
     distractors,
     source: item.source as string,
     permission: item.permission,
     demoAllowed: true,
+    ...(typeof item.authorName === 'string' ? { authorName: item.authorName } : {}),
   };
 }

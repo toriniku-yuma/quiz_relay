@@ -1,5 +1,5 @@
-import { and, asc, eq, max, sql } from 'drizzle-orm';
-import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
+import { and, asc, eq, max } from 'drizzle-orm';
+import { changeD1, type Database } from '../db/d1.ts';
 import {
   questionAvailability as a,
   matchmakingSettings as active,
@@ -14,19 +14,17 @@ import { validateDefinition } from './definition.ts';
 import { contentHash } from './hash.ts';
 
 export async function publishMatchConfig(
-  db: PostgresJsDatabase,
+  db: Database,
   input: unknown,
   profile: string,
+  authorize?: () => Promise<void>,
 ) {
   const config = validateMatchConfig(input);
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(profile)) throw new Error('INVALID_CONFIG_PROFILE');
   const hash = await contentHash(config.rules);
-  return db.transaction(async (tx) => {
-    // PostgreSQL-specific transaction lock; values remain bound parameters.
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${config.owner}, 0))`,
-    );
-    const rows = await tx
+  return changeD1(db, async (writes) => {
+    await authorize?.();
+    const rows = await db
       .select({ manifestHash: s.manifestHash, question: q.payload, availability: a })
       .from(s)
       .innerJoin(
@@ -64,7 +62,7 @@ export async function publishMatchConfig(
       questions: rows.map((row) => row.question),
     });
     const ruleScope = and(eq(r.owner, config.owner), eq(r.rulesetId, config.rulesetId));
-    const [existingRule] = await tx
+    const [existingRule] = await db
       .select({ version: r.version })
       .from(r)
       .where(and(ruleScope, eq(r.rulesHash, hash)))
@@ -72,24 +70,26 @@ export async function publishMatchConfig(
       .limit(1);
     let ruleVersion = existingRule?.version;
     if (!ruleVersion) {
-      const [latest] = await tx
+      const [latest] = await db
         .select({ version: max(r.version) })
         .from(r)
         .where(ruleScope);
       ruleVersion = (latest.version ?? 0) + 1;
-      await tx.insert(r).values({
-        owner: config.owner,
-        rulesetId: config.rulesetId,
-        version: ruleVersion,
-        rulesHash: hash,
-        config: config.rules,
-      });
+      writes.push(
+        db.insert(r).values({
+          owner: config.owner,
+          rulesetId: config.rulesetId,
+          version: ruleVersion,
+          rulesHash: hash,
+          config: config.rules,
+        }),
+      );
     }
     const competitionScope = and(
       eq(c.owner, config.owner),
       eq(c.competitionId, config.competitionId),
     );
-    const [existingCompetition] = await tx
+    const [existingCompetition] = await db
       .select({ version: c.version })
       .from(c)
       .where(
@@ -106,34 +106,38 @@ export async function publishMatchConfig(
       .limit(1);
     let version = existingCompetition?.version;
     if (!version) {
-      const [latest] = await tx
+      const [latest] = await db
         .select({ version: max(c.version) })
         .from(c)
         .where(competitionScope);
       version = (latest.version ?? 0) + 1;
-      await tx.insert(c).values({
-        owner: config.owner,
-        competitionId: config.competitionId,
-        version,
-        playersPerMatch: config.playersPerMatch,
-        rulesetId: config.rulesetId,
-        rulesetVersion: ruleVersion,
-        setId: config.questionSet.id,
-        setVersion: config.questionSet.version,
-      });
+      writes.push(
+        db.insert(c).values({
+          owner: config.owner,
+          competitionId: config.competitionId,
+          version,
+          playersPerMatch: config.playersPerMatch,
+          rulesetId: config.rulesetId,
+          rulesetVersion: ruleVersion,
+          setId: config.questionSet.id,
+          setVersion: config.questionSet.version,
+        }),
+      );
     }
-    await tx
-      .insert(active)
-      .values({
-        owner: config.owner,
-        profile,
-        competitionId: config.competitionId,
-        competitionVersion: version,
-      })
-      .onConflictDoUpdate({
-        target: [active.owner, active.profile],
-        set: { competitionId: config.competitionId, competitionVersion: version },
-      });
+    writes.push(
+      db
+        .insert(active)
+        .values({
+          owner: config.owner,
+          profile,
+          competitionId: config.competitionId,
+          competitionVersion: version,
+        })
+        .onConflictDoUpdate({
+          target: [active.owner, active.profile],
+          set: { competitionId: config.competitionId, competitionVersion: version },
+        }),
+    );
     return {
       profile,
       competitionId: config.competitionId,

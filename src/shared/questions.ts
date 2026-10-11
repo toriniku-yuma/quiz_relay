@@ -187,6 +187,13 @@ export const statusLabels: Record<SubmissionStatus, string> = {
   ended: '審査終了',
 };
 export type Submission = {
+  shared?: {
+    expired: boolean;
+    excluded?: boolean;
+    peerOrigin?: string;
+    sourceInstanceId?: string;
+    sourceCategory?: { id: string; name: string };
+  };
   provenance?: { author: string; instance: string } | null;
   deletedAt?: string | null;
   reviewHold?: boolean;
@@ -236,6 +243,13 @@ export const defaultQuestionSettings: QuestionSettings = {
   categoryReportThreshold: 5,
 };
 export type QuestionOverview = {
+  sharedSourceCategories?: {
+    peerOrigin: string;
+    instanceId: string;
+    id: string;
+    name: string;
+  }[];
+  sharedSources?: { peerOrigin: string; instanceId: string; name: string }[];
   reportedOriginals?: Record<
     string,
     { text: string; displayAnswer?: string; answer: string; explanation: string }
@@ -284,7 +298,13 @@ export type QuestionOverview = {
   settings: QuestionSettings;
   settingsRevision: number;
   submissions: Submission[];
-  categories: { id: string; name: string; active: boolean; revision: number }[];
+  categories: {
+    id: string;
+    name: string;
+    active: boolean;
+    importOnly?: boolean;
+    revision: number;
+  }[];
   tags: { name: string; aliases: string[] }[];
   authors: {
     actorId: string;
@@ -324,6 +344,10 @@ export type QuestionListQuery = {
   query: string;
   status: string;
   category: string;
+  shared?: 'all' | 'local' | 'shared' | 'excluded';
+  sourceInstanceId?: string;
+  peerOrigin?: string;
+  sourceCategory?: string;
 };
 
 export function canSubmitQuestion(

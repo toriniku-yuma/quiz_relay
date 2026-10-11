@@ -1,0 +1,1 @@
+ALTER TABLE `quiz_game_question_submissions` ADD `search_text` text DEFAULT '' NOT NULL;

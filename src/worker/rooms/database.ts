@@ -4,7 +4,9 @@ import type { BroughtQuestion, RoomSettings } from '../../shared/rooms.ts';
 import { validateBroughtSet } from '../../shared/rooms.ts';
 import type { FixedQuestion, MatchDefinition } from '../catalog/definition.ts';
 import { contentHash } from '../catalog/hash.ts';
+import { changeD1, readD1 } from '../db/d1.ts';
 import {
+  federationQuestionLinks,
   guestSessions,
   instanceDeletions,
   instances,
@@ -20,6 +22,7 @@ import {
   roomDirectory,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
+import { sharedQuestionAvailableSQL } from '../federation/question-access.ts';
 import { dummyCharacters } from '../game/questions.ts';
 import { rules } from '../game/rules.ts';
 import type { InstanceScope } from '../matchmaking/Matchmaker.ts';
@@ -71,10 +74,8 @@ export async function createGuest(
     if (!/^[0-9a-f]{64}$/.test(token)) throw new OrganizationError('GUEST_REQUIRED', 403);
     const actorId = await contentHash(token);
     const expiresAt = new Date(Date.now() + guestLifetime).toISOString();
-    await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`guest:${actorId}`},0))`,
-      );
+    await changeD1(db, async (writes) => {
+      const tx = db;
       const [previous] = await tx
         .select()
         .from(moderationRequests)
@@ -84,20 +85,29 @@ export async function createGuest(
           throw new OrganizationError('OPERATION_CONFLICT', 409);
         return;
       }
-      await tx
-        .insert(guestSessions)
-        .values({ actorId, organizationId: organization.id, name: normalized, expiresAt })
-        .onConflictDoUpdate({
-          target: guestSessions.actorId,
-          set: { name: normalized, expiresAt },
-        });
-      await tx.insert(moderationRequests).values({
-        id: operationId,
-        organizationId: organization.id,
-        operatorId: actorId,
-        requestHash: hash,
-        details: { action: 'guestName' },
-      });
+      writes.push(
+        tx
+          .insert(guestSessions)
+          .values({
+            actorId,
+            organizationId: organization.id,
+            name: normalized,
+            expiresAt,
+          })
+          .onConflictDoUpdate({
+            target: guestSessions.actorId,
+            set: { name: normalized, expiresAt },
+          }),
+      );
+      writes.push(
+        tx.insert(moderationRequests).values({
+          id: operationId,
+          organizationId: organization.id,
+          operatorId: actorId,
+          requestHash: hash,
+          details: { action: 'guestName' },
+        }),
+      );
     });
     return { token, actorId, name: normalized };
   } finally {
@@ -224,10 +234,8 @@ export async function previewInstance(env: Env, instanceId: string, subject?: st
 export async function ensureCasualCatalog(env: Env, instanceId: string) {
   const { db, close } = organizationDatabase(env);
   try {
-    await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${instanceId}`},0))`,
-      );
+    await changeD1(db, async (writes) => {
+      const tx = db;
       const [instance] = await tx
         .select()
         .from(instances)
@@ -243,9 +251,6 @@ export async function ensureCasualCatalog(env: Env, instanceId: string) {
         ).length
       )
         throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
-      await tx.execute(
-        sql`select set_config('quiz.organization_id',${instance.organizationId},true)`,
-      );
       const [active] = await tx
         .select()
         .from(matchmakingSettings)
@@ -258,6 +263,7 @@ export async function ensureCasualCatalog(env: Env, instanceId: string) {
       if (active) return;
       await publishQuestionCatalog(
         tx,
+        writes,
         instanceId,
         instance.owner,
         env.GAME_CONFIG_PROFILE,
@@ -296,14 +302,8 @@ export async function mutatePersonalSet(
     hash = await contentHash(input);
   const { db, close } = organizationDatabase(env);
   try {
-    return await db.transaction(async (tx) => {
-      const initial = await organizationIdentity(tx, subject);
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`profile:${initial.organization.id}`},0))`,
-      );
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`personal:${id}`},0))`,
-      );
+    return await changeD1(db, async (writes) => {
+      const tx = db;
       const { account, organization } = await organizationIdentity(tx, subject);
       const [previous] = await tx
         .select()
@@ -326,34 +326,40 @@ export async function mutatePersonalSet(
       if (input.action === 'save') {
         const questions = validateBroughtSet(input.questions),
           name = validName(input.name);
-        await tx
-          .insert(personalQuestionSets)
-          .values({
-            id,
-            organizationId: organization.id,
-            authorId: account.actorId,
-            questions,
-            name,
-          })
-          .onConflictDoUpdate({
-            target: personalQuestionSets.id,
-            set: {
-              name,
+        writes.push(
+          tx
+            .insert(personalQuestionSets)
+            .values({
+              id,
+              organizationId: organization.id,
+              authorId: account.actorId,
               questions,
-              revision: (current?.revision ?? 0) + 1,
-              updatedAt: new Date().toISOString(),
-            },
-          });
+              name,
+            })
+            .onConflictDoUpdate({
+              target: personalQuestionSets.id,
+              set: {
+                name,
+                questions,
+                revision: (current?.revision ?? 0) + 1,
+                updatedAt: new Date().toISOString(),
+              },
+            }),
+        );
       } else if (input.action === 'delete' && current)
-        await tx.delete(personalQuestionSets).where(eq(personalQuestionSets.id, id));
+        writes.push(
+          tx.delete(personalQuestionSets).where(eq(personalQuestionSets.id, id)),
+        );
       else throw new OrganizationError('INVALID_OPERATION', 400);
-      await tx.insert(moderationRequests).values({
-        id: operationId,
-        organizationId: organization.id,
-        operatorId: account.actorId,
-        requestHash: hash,
-        details: { action: 'personalSet', setId: id },
-      });
+      writes.push(
+        tx.insert(moderationRequests).values({
+          id: operationId,
+          organizationId: organization.id,
+          operatorId: account.actorId,
+          requestHash: hash,
+          details: { action: 'personalSet', setId: id },
+        }),
+      );
       return { ok: true, id };
     });
   } finally {
@@ -377,18 +383,40 @@ export async function roomIds(env: Env, instanceId: string) {
     await close();
   }
 }
+export async function roomSharedSources(env: Env, instanceId: string) {
+  const { db, close } = organizationDatabase(env);
+  try {
+    const rows = await db
+      .select({
+        origin: federationQuestionLinks.peerOrigin,
+        id: federationQuestionLinks.sourceInstanceId,
+        name: sql<string>`coalesce(json_extract(${questionSubmissions.provenance},'$.instance'),'共有元')`,
+      })
+      .from(federationQuestionLinks)
+      .innerJoin(
+        questionSubmissions,
+        eq(questionSubmissions.id, federationQuestionLinks.submissionId),
+      )
+      .where(eq(federationQuestionLinks.instanceId, instanceId))
+      .groupBy(
+        federationQuestionLinks.peerOrigin,
+        federationQuestionLinks.sourceInstanceId,
+      );
+    return rows.map((row) => ({ key: `${row.origin}|${row.id}`, name: row.name }));
+  } finally {
+    await close();
+  }
+}
 export async function roomOptions(env: Env, instanceId: string) {
   const { db, close } = organizationDatabase(env);
   try {
-    return await db.transaction(async (tx) => {
+    return await readD1(db, async () => {
+      const tx = db;
       const [instance] = await tx
         .select()
         .from(instances)
         .where(eq(instances.id, instanceId));
       if (!instance) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
-      await tx.execute(
-        sql`select set_config('quiz.organization_id',${instance.organizationId},true)`,
-      );
       return tx
         .select()
         .from(questionCategories)
@@ -407,13 +435,28 @@ export async function publishRoom(
 ) {
   const { db, close } = organizationDatabase(env);
   try {
-    await db
-      .insert(roomDirectory)
-      .values({ id, instanceId, public: publicRoom, closed })
-      .onConflictDoUpdate({
-        target: roomDirectory.id,
-        set: { public: publicRoom, closed },
-      });
+    await changeD1(db, async (writes) => {
+      const [instance] = await db
+        .select()
+        .from(instances)
+        .where(eq(instances.id, instanceId));
+      if (!instance) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
+      const [existing] = await db
+        .select()
+        .from(roomDirectory)
+        .where(eq(roomDirectory.id, id));
+      if (existing && existing.instanceId !== instanceId)
+        throw new OrganizationError('OPERATION_CONFLICT', 409);
+      writes.push(
+        db
+          .insert(roomDirectory)
+          .values({ id, instanceId, public: publicRoom, closed })
+          .onConflictDoUpdate({
+            target: roomDirectory.id,
+            set: { public: publicRoom, closed },
+          }),
+      );
+    });
   } finally {
     await close();
   }
@@ -440,19 +483,14 @@ export async function roomDefinition(
   } else {
     const { db, close } = organizationDatabase(env);
     try {
-      questions = await db.transaction(async (tx) => {
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${scope.id}`},0))`,
-        );
+      questions = await readD1(db, async () => {
+        const tx = db;
         const [instance] = await tx
           .select()
           .from(instances)
           .where(and(eq(instances.id, scope.id), eq(instances.owner, scope.owner)));
         if (!instance || instance.state === 'archived')
           throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
-        await tx.execute(
-          sql`select set_config('quiz.organization_id',${instance.organizationId},true)`,
-        );
         const [configuration] = await tx
           .select()
           .from(questionSettings)
@@ -467,10 +505,7 @@ export async function roomDefinition(
             questionVersions,
             and(
               eq(questionVersions.owner, scope.owner),
-              eq(
-                questionVersions.questionId,
-                sql`${questionSubmissions.publishedId}::text`,
-              ),
+              eq(questionVersions.questionId, sql`${questionSubmissions.publishedId}`),
             ),
           )
           .innerJoin(
@@ -484,17 +519,25 @@ export async function roomDefinition(
             and(
               eq(questionSubmissions.instanceId, scope.id),
               sql`${questionAvailability.retiredAt} IS NULL`,
+              sharedQuestionAvailableSQL(
+                questionVersions.owner,
+                questionVersions.questionId,
+              ),
             ),
           );
         return rows
           .map((catalogEntry) => ({
             ...catalogEntry.q,
-            ...(configuration?.config.showAuthor
+            ...(configuration?.config.showAuthor && catalogEntry.authorName
               ? { authorName: catalogEntry.authorName }
               : {}),
           }))
           .filter(
             (question) =>
+              (!question.sharedSource ||
+                (settings.sharedSources ?? []).includes(
+                  `${question.sharedSource.peerOrigin}|${question.sharedSource.instanceId}`,
+                )) &&
               (settings.categories.length === 0 ||
                 settings.categories.includes(question.categoryId ?? '')) &&
               settings.difficulties.includes(question.difficulty ?? 0),
@@ -554,10 +597,8 @@ export async function saveCasualSettings(
     throw new OrganizationError('INVALID_SETUP', 400);
   const { db, close } = organizationDatabase(env);
   try {
-    return await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${id}`},0))`,
-      );
+    return await changeD1(db, async (writes) => {
+      const tx = db;
       const identity = await resolveInstance(tx, subject, id, true);
       if (!identity.account.administrator) throw new OrganizationError('ADMIN_REQUIRED');
       const [previous] = await tx
@@ -586,38 +627,41 @@ export async function saveCasualSettings(
         identity.instance.state === 'archived'
       )
         throw new OrganizationError('EDIT_CONFLICT', 409);
-      await tx
-        .update(instances)
-        .set({
-          casualConfig: config,
-          operationRevision: identity.instance.operationRevision + 1,
-        })
-        .where(eq(instances.id, id));
-      await tx.execute(
-        sql`select set_config('quiz.organization_id',${identity.organization.id},true)`,
+      writes.push(
+        tx
+          .update(instances)
+          .set({
+            casualConfig: config,
+            operationRevision: identity.instance.operationRevision + 1,
+          })
+          .where(eq(instances.id, id)),
       );
       await publishQuestionCatalog(
         tx,
+        writes,
         id,
         identity.instance.owner,
         env.GAME_CONFIG_PROFILE,
         input.rankedPlayers as number | undefined,
+        { casualConfig: config },
       );
-      await tx.insert(moderationRequests).values({
-        id: operationId,
-        organizationId: identity.organization.id,
-        operatorId: identity.account.actorId,
-        requestHash: hash,
-        details: {
-          id,
-          action: 'casualConfig',
-          before: identity.instance.casualConfig,
-          after: config,
-          ...(input.rankedPlayers !== undefined
-            ? { rankedPlayers: input.rankedPlayers }
-            : {}),
-        },
-      });
+      writes.push(
+        tx.insert(moderationRequests).values({
+          id: operationId,
+          organizationId: identity.organization.id,
+          operatorId: identity.account.actorId,
+          requestHash: hash,
+          details: {
+            id,
+            action: 'casualConfig',
+            before: identity.instance.casualConfig,
+            after: config,
+            ...(input.rankedPlayers !== undefined
+              ? { rankedPlayers: input.rankedPlayers }
+              : {}),
+          },
+        }),
+      );
       return { ok: true };
     });
   } finally {

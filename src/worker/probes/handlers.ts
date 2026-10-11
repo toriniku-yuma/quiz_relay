@@ -1,8 +1,9 @@
 import type { Handler } from 'hono';
-import type { Env } from '../env';
-import { peerRequest, rejectRedirect } from '../federation/egress';
-import { INBOX_PATH, signatureProbe } from '../federation/signatures';
-import { probeDatabase } from './database';
+import { authConfig } from '../auth/config.ts';
+import type { Env } from '../env.ts';
+import { peerRequest, rejectRedirect } from '../federation/egress.ts';
+import { INBOX_PATH, signatureProbe } from '../federation/signatures.ts';
+import { probeDatabase } from './database.ts';
 
 // Fixed, public self-target only. Never forwards incoming credentials or URLs.
 export const checkEgress: Handler<{ Bindings: Env }> = async (context) => {
@@ -26,10 +27,8 @@ export const checkEgress: Handler<{ Bindings: Env }> = async (context) => {
 
 export const getStatus: Handler<{ Bindings: Env }> = (context) =>
   context.json({
-    databaseConfigured: Boolean(context.env.HYPERDRIVE || context.env.DATABASE_URL),
-    authConfigured: Boolean(
-      context.env.SUPABASE_URL && context.env.SUPABASE_PUBLISHABLE_KEY,
-    ),
+    databaseConfigured: Boolean(context.env.GAME_D1),
+    authConfigured: Boolean(authConfig(context.env)),
   });
 
 export const getDurableObject: Handler<{ Bindings: Env }> = async (context) =>
@@ -46,24 +45,14 @@ export const checkSignature: Handler<{ Bindings: Env }> = async (context) =>
   context.json(await signatureProbe());
 
 export const checkDatabase: Handler<{ Bindings: Env }> = async (context) => {
-  if (context.env.HYPERDRIVE)
-    return context.json(
-      await probeDatabase(context.env.HYPERDRIVE.connectionString, undefined, true),
-    );
-  if (!context.env.DATABASE_URL)
-    return context.json({ code: 'DATABASE_NOT_CONFIGURED' }, 503);
+  if (!context.env.GAME_D1) return context.json({ code: 'DATABASE_NOT_CONFIGURED' }, 503);
 
-  return context.json(
-    await probeDatabase(context.env.DATABASE_URL, context.env.DATABASE_CA_CERT),
-  );
+  return context.json(await probeDatabase(context.env.GAME_D1));
 };
 
 export const getAuthConfig: Handler<{ Bindings: Env }> = (context) => {
-  if (!context.env.SUPABASE_URL || !context.env.SUPABASE_PUBLISHABLE_KEY)
-    return context.json({ code: 'AUTH_NOT_CONFIGURED' }, 503);
+  const config = authConfig(context.env);
+  if (!config) return context.json({ code: 'AUTH_NOT_CONFIGURED' }, 503);
 
-  return context.json({
-    url: context.env.SUPABASE_URL,
-    publishableKey: context.env.SUPABASE_PUBLISHABLE_KEY,
-  });
+  return context.json(config);
 };

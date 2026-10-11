@@ -26,6 +26,7 @@ const messages: Record<string, string> = {
   REVIEW_FORBIDDEN: '審査権限がないか、自分の問題です。自己承認は管理者だけが行えます。',
   REASON_REQUIRED: '理由を入力してください。',
   CATEGORY_REQUIRED: '有効なカテゴリを選んでください。',
+  CATEGORY_IMPORT_ONLY: '取り込み専用カテゴリには投稿できません。',
   AUTHOR_REQUEST_UNAVAILABLE: '申請中・資格取得済み、または再申請の待機期間中です。',
   INSTANCE_PREPARING: 'このインスタンスは準備中です。',
   INSTANCE_ARCHIVED: 'アーカイブ済みです。問題のエクスポートを利用できます。',
@@ -87,6 +88,10 @@ export function useQuestions(
       pageSize: list.pageSize,
       band: list.band,
       players: list.players,
+      shared: list.shared,
+      sourceInstanceId: list.sourceInstanceId,
+      peerOrigin: list.peerOrigin,
+      sourceCategory: list.sourceCategory,
     },
   });
   const [loadedRequest, setLoadedRequest] = useState('');

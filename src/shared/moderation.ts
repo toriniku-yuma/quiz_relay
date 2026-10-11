@@ -1,6 +1,6 @@
-import type { InstancePermission } from './organization';
-import type { Pagination } from './pagination';
-import type { ResultsOverview } from './results';
+import type { InstancePermission } from './organization.ts';
+import type { Pagination } from './pagination.ts';
+import type { ResultsOverview } from './results.ts';
 
 export const restrictionLabels = {
   ranked: 'ランク',
@@ -113,6 +113,7 @@ export function parseSanction(
 
 export type UserReport = {
   id: string;
+  instanceId?: string;
   actorId: string;
   reporterId: string;
   reporterName: string;

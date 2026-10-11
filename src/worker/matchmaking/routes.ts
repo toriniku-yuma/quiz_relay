@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { API_PATHS, MATCH_PREFIX } from '../../shared/api-paths';
+import { API_PATHS, MATCH_PREFIX } from '../../shared/api-paths.ts';
 import {
   type AuthEnv,
   authenticate,
+  authIdentity,
   publicAuthConfig,
   sameOrigin,
-} from '../auth/handlers';
-import { existingInstanceContext, instanceContext } from '../organization/handlers';
+} from '../auth/handlers.ts';
+import { existingInstanceContext, instanceContext } from '../organization/handlers.ts';
 import {
   cancelMatch,
   enterMatch,
@@ -15,10 +16,11 @@ import {
   matchConfig,
   matchSocket,
   oversizedMatch,
-} from './handlers';
+} from './handlers.ts';
 
 const matchmaking = new Hono<AuthEnv>();
 matchmaking.get(API_PATHS.publicAuthConfig, publicAuthConfig);
+matchmaking.get(API_PATHS.authIdentity, authenticate, authIdentity);
 matchmaking.use(`${MATCH_PREFIX}/*`, sameOrigin);
 matchmaking.use(
   `${MATCH_PREFIX}/*`,

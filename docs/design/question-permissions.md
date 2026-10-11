@@ -1,5 +1,7 @@
 # 作問機能のDB権限
 
+以下はD1移行前のPostgreSQLの権限設計です。現在のDB接続・認可・検証は[DB管理](../guides/database.md)・[セキュリティ](security.md)・[移行検証](../development/testing.md#d1-clerk)を参照してください。旧ロールや旧スクリプトによる権限設定を、現在の通常環境へ適用しません。
+
 サーバー専用ロール `quiz_organization` が、認証済みユーザーをAPIで認可した後、対象インスタンスのデータを操作します。ブラウザー用の `anon`・`authenticated`・`PUBLIC` には権限を追加しません。
 
 ## 既存カタログ（承認済み）
@@ -30,4 +32,4 @@ RLS は認証から得た組織IDをトランザクション内に設定し、�
 
 ローカル環境の再現は `node scripts/setup-question-local.ts`。既存DBをpg_dumpでバックアップしてからマイグレーションとローカル権限を適用する。秘密値は出力しない。
 
-難易度の定期処理は `QUESTION_DIFFICULTY_ENABLED=true` の明示設定がない限りDBへ接続しない。今回Cronトリガー・本番環境変数・クラウドデプロイは追加していない。隔離DBの実行検証では、同じ処理本体を `scripts/question-local-difficulty.ts` から呼ぶ。
+移行前の難易度の定期処理は `QUESTION_DIFFICULTY_ENABLED=true` の明示設定がない限りDBへ接続しない構成でした。現在のD1での定期処理は[運用手順](../guides/operations.md)を参照してください。

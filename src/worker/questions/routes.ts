@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { API_PATHS } from '../../shared/api-paths';
-import { type AuthEnv, authenticate, sameOrigin } from '../auth/handlers';
-import { questionsHandler } from './handlers';
+import { API_PATHS } from '../../shared/api-paths.ts';
+import { type AuthEnv, authenticate, sameOrigin } from '../auth/handlers.ts';
+import { questionsHandler } from './handlers.ts';
 
 const questions = new Hono<AuthEnv>();
 questions.use('/api/questions/*', sameOrigin);

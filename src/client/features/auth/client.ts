@@ -1,16 +1,24 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 import { API_PATHS } from '../../../shared/api-paths';
+import { type AuthConfig, readAuthConfig } from '../../../shared/auth';
+import { participationId } from '../../../shared/participation';
 import { navigate } from '../../app/navigation';
-import { GAME_PATH, PROFILE_PATH, ROOMS_PATH } from '../../app/paths';
+import {
+  AUTHORIZE_PATH,
+  CASUAL_PATH,
+  GAME_PATH,
+  PROFILE_PATH,
+  ROOMS_PATH,
+} from '../../app/paths';
 import { probeRequest } from '../debug/api';
 import { readWithdrawalReceipt } from '../profile/withdrawalReceipt';
-
-type AuthConfig = { url: string; publishableKey: string };
+import { safeAuthReturn } from './callback';
+import { type AuthClient, createClerkAuth } from './clerk';
 
 const storageKey = 'probe-auth-config';
 
 let activeConfig: AuthConfig | undefined;
-let auth: SupabaseClient | undefined;
+let auth: AuthClient | undefined;
 let restored = false;
 
 export function canAuthenticate() {
@@ -18,6 +26,7 @@ export function canAuthenticate() {
 }
 
 function createAuth(config: AuthConfig) {
+  if (config.provider === 'clerk') return createClerkAuth(config.publishableKey);
   return createClient(config.url, config.publishableKey, {
     auth: { flowType: 'pkce', storage: localStorage, detectSessionInUrl: true },
   });
@@ -31,20 +40,18 @@ export function getAuth() {
       const saved = localStorage.getItem(storageKey);
 
       if (saved) {
-        const config = JSON.parse(saved);
-
-        if (
-          typeof config?.url !== 'string' ||
-          typeof config?.publishableKey !== 'string'
-        ) {
-          throw new Error('INVALID_AUTH_CONFIG');
-        }
+        const config = readAuthConfig(JSON.parse(saved));
+        if (!config) throw new Error('INVALID_AUTH_CONFIG');
 
         activeConfig = config;
         auth = createAuth(config);
       }
     } catch {
-      localStorage.removeItem(storageKey);
+      try {
+        localStorage.removeItem(storageKey);
+      } catch {
+        /* Browser storage is optional. */
+      }
     }
   }
 
@@ -64,29 +71,19 @@ export async function setupAuth(token?: string) {
         if (!response.ok) throw new Error('AUTH_NOT_CONFIGURED');
         return response.json();
       });
-  if (
-    !config ||
-    typeof config !== 'object' ||
-    !('url' in config) ||
-    !('publishableKey' in config) ||
-    typeof config.url !== 'string' ||
-    typeof config.publishableKey !== 'string'
-  ) {
-    throw new Error('AUTH_NOT_CONFIGURED');
-  }
-
-  const nextConfig = { url: config.url, publishableKey: config.publishableKey };
-  if (
-    !auth ||
-    activeConfig?.url !== nextConfig.url ||
-    activeConfig?.publishableKey !== nextConfig.publishableKey
-  ) {
+  const nextConfig = readAuthConfig(config);
+  if (!nextConfig) throw new Error('AUTH_NOT_CONFIGURED');
+  if (!auth || JSON.stringify(activeConfig) !== JSON.stringify(nextConfig)) {
     await auth?.auth.dispose();
     auth = createAuth(nextConfig);
     activeConfig = nextConfig;
   }
 
-  localStorage.setItem(storageKey, JSON.stringify(nextConfig));
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(nextConfig));
+  } catch {
+    /* The live auth client can work without saved configuration. */
+  }
 
   return auth;
 }
@@ -97,15 +94,14 @@ export async function checkIdentity() {
     return {
       authenticated: false,
       message:
-        'ログイン開始時の情報がありません。メールを送信した同じブラウザー・同じURLで開いてください。別端末やメールアプリ内のブラウザーでは引き継げません。',
+        'ログイン開始時の情報がありません。このブラウザーでGoogleログインを開始してください。',
     };
 
   const { error: initializationError } = await auth.auth.initialize();
   if (initializationError)
     return {
       authenticated: false,
-      message:
-        'ログインリンクを確認できませんでした。この画面からメールを再送して、最新のリンクを送信時と同じブラウザーで開いてください。',
+      message: 'ログインを確認できませんでした。Googleログインをやり直してください。',
       code: initializationError.code,
     };
 
@@ -113,54 +109,30 @@ export async function checkIdentity() {
   if (error || !data.user)
     return {
       authenticated: false,
-      message:
-        'ログイン状態を確認できませんでした。メールを再送して、最新のリンクを送信時と同じブラウザーで開いてください。',
+      message: 'ログイン状態を確認できませんでした。Googleログインをやり直してください。',
       code: error?.code,
     };
 
   return { authenticated: true, message: 'ログイン・本人確認に成功しました。' };
 }
 
-export async function sendLoginEmail(token: string | undefined, email: string) {
-  const client = await setupAuth(token);
-  localStorage.setItem(
-    'quiz-relay-auth-return',
-    token
-      ? '/debug/'
-      : location.pathname === ROOMS_PATH &&
-          new URL(location.href).searchParams.has('room')
-        ? `${location.pathname}${location.search}`
-        : '/game/',
-  );
-
-  // Keep the registered root callback; the entry redirect preserves code/hash.
-  const { error } = await client.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: `${location.origin}/` },
-  });
-  if (error) throw error;
-
-  return {
-    sent: true,
-    message:
-      '最新のメールリンクを送信時と同じブラウザーで開いてください。連続して再送しないでください。',
-  };
-}
-
 export async function signInWithGoogle(token?: string) {
   const client = await setupAuth(token);
-  localStorage.setItem(
-    'quiz-relay-auth-return',
-    token
-      ? '/debug/'
-      : location.pathname === ROOMS_PATH &&
-          new URL(location.href).searchParams.has('room')
-        ? `${location.pathname}${location.search}`
-        : '/game/',
-  );
+  const destination = token
+    ? '/debug/'
+    : location.pathname === AUTHORIZE_PATH
+      ? (safeAuthReturn(`${location.pathname}${location.search}`) ?? GAME_PATH)
+      : (safeAuthReturn(`${location.pathname}${location.search}`) ?? GAME_PATH);
+  try {
+    localStorage.setItem('quiz-relay-auth-return', destination);
+  } catch {
+    /* Clerk also carries the validated return path through its redirect. */
+  }
   const { error } = await client.auth.signInWithOAuth({
     provider: 'google',
-    options: { redirectTo: `${location.origin}/` },
+    options: {
+      redirectTo: `${location.origin}${activeConfig?.provider === 'clerk' ? destination : '/'}`,
+    },
   });
   if (error) throw error;
 
@@ -179,6 +151,14 @@ export function redirectSignedOut(subject?: string) {
 }
 
 export async function signOut() {
+  const current = new URL(location.href),
+    destination = new URL(
+      [CASUAL_PATH, ROOMS_PATH].includes(current.pathname) ? current.pathname : GAME_PATH,
+      current.origin,
+    );
+  destination.searchParams.set('guest', '1');
+  const instanceId = current.searchParams.get('instance');
+  if (participationId(instanceId)) destination.searchParams.set('instance', instanceId);
   const client = getAuth();
   if (client) {
     const { data, error } = await client.auth.getSession();
@@ -196,13 +176,14 @@ export async function signOut() {
       if (!revoked.ok) throw new Error('GAME_LOGOUT_FAILED');
     }
   }
-  const response = await client?.auth.signOut();
+  const response = await client?.auth.signOut({ scope: 'local' });
   if (response?.error) {
     const session = await client?.auth.getSession();
-    if (session && !session.error && !session.data.session) navigate(GAME_PATH, true);
+    if (session && !session.error && !session.data.session)
+      navigate(`${destination.pathname}${destination.search}`, true);
     throw response.error;
   }
 
-  navigate(GAME_PATH, true);
+  navigate(`${destination.pathname}${destination.search}`, true);
   return { signedOut: true };
 }

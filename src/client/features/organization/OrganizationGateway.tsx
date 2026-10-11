@@ -9,7 +9,7 @@ import InstanceDeletion from './InstanceDeletion';
 import OrganizationPanel from './OrganizationPanel';
 
 export default function OrganizationGateway() {
-  const { auth, organization, url, setMatchStatus } = useApp();
+  const { auth, organization, url, setMatchStatus, externalInstances } = useApp();
   const instanceId = url.searchParams.get('instance') ?? '';
   const view = url.searchParams.get('view') ?? '';
   const selected = organization.data?.instances.find(
@@ -83,8 +83,12 @@ export default function OrganizationGateway() {
           management
           instanceId={selected.id}
         />
-      ) : view === 'organization' && organization.data?.account?.administrator ? (
-        <OrganizationPanel organization={organization} management />
+      ) : view === 'organization' ? (
+        organization.data?.account?.administrator ? (
+          <OrganizationPanel organization={organization} management />
+        ) : (
+          <p>組織管理者が設定できます。</p>
+        )
       ) : !available ? (
         <>
           {instanceId && organization.data && !selected && (
@@ -95,7 +99,10 @@ export default function OrganizationGateway() {
           {selected?.state === 'preparing' && (
             <p className="my-3">このインスタンスは準備中です。</p>
           )}
-          <OrganizationPanel organization={organization} />
+          <OrganizationPanel
+            organization={organization}
+            externalInstances={externalInstances}
+          />
         </>
       ) : (
         view &&

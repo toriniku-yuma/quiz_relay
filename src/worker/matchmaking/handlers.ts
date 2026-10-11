@@ -1,10 +1,10 @@
 import type { Context, Handler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
-import type { AuthEnv } from '../auth/handlers';
-import { loadMatchDefinition } from '../catalog/database';
-import { OrganizationError, organizationEnabled } from '../organization/access';
-import { organizationDatabase, organizationIdentity } from '../organization/database';
-import { requireUnrestricted } from '../organization/moderation';
+import type { AuthEnv } from '../auth/handlers.ts';
+import { loadMatchDefinition } from '../catalog/database.ts';
+import { OrganizationError, organizationEnabled } from '../organization/access.ts';
+import { organizationDatabase, organizationIdentity } from '../organization/database.ts';
+import { requireUnrestricted } from '../organization/moderation.ts';
 
 const roomId = (value: unknown): value is string =>
   typeof value === 'string' &&

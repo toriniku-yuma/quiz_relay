@@ -6,7 +6,8 @@ import {
   type OrganizationOverview,
   permissionRevision,
 } from '../../shared/organization.ts';
-import { connectDatabase } from '../db/connection.ts';
+import { contentHash } from '../catalog/hash.ts';
+import { changeD1, connectD1, type Database, readD1 } from '../db/d1.ts';
 import {
   accountInstanceSelections,
   organizationAccounts as accounts,
@@ -16,12 +17,14 @@ import {
   instanceDeletions,
   instances,
   matchmakingSettings,
+  moderationRequests,
   moderationSanctions,
   organizationEvents,
   organizations,
   questionSubmissions,
 } from '../db/schema.ts';
-import type { Env } from '../env';
+import type { Env } from '../env.ts';
+import { federationAllowedActors } from '../federation/admission.ts';
 import {
   actorForSubject,
   canViewInstance,
@@ -33,24 +36,18 @@ import {
 } from './access.ts';
 
 export function organizationDatabase(env: Env) {
-  const binding = env.ORGANIZATION_HYPERDRIVE;
-  const url = binding?.connectionString ?? env.ORGANIZATION_DATABASE_URL;
-  if (!url) throw new OrganizationError('ORGANIZATION_UNAVAILABLE', 503);
-  return connectDatabase(url, env.DATABASE_CA_CERT, !!binding);
+  if (!env.GAME_D1) throw new OrganizationError('ORGANIZATION_UNAVAILABLE', 503);
+  return { db: connectD1(env.GAME_D1), close: async () => {} };
 }
-type Database = Pick<
-  ReturnType<typeof organizationDatabase>['db'],
-  'select' | 'insert' | 'update' | 'delete' | 'transaction'
->;
 
-async function audit(
+function audit(
   db: Database,
   actorId: string,
   action: typeof organizationEvents.$inferInsert.action,
   instanceId: string | null,
   details: Record<string, unknown> = {},
 ) {
-  await db
+  return db
     .insert(organizationEvents)
     .values({ id: crypto.randomUUID(), actorId, action, instanceId, details });
 }
@@ -71,10 +68,14 @@ export async function organizationIdentity(
       and(eq(accounts.organizationId, organization.id), eq(accounts.subject, subject)),
     );
   if (!account) {
-    await db
-      .insert(accounts)
-      .values({ organizationId: organization.id, subject, actorId })
-      .onConflictDoNothing();
+    await changeD1(db, async (writes) => {
+      writes.push(
+        db
+          .insert(accounts)
+          .values({ organizationId: organization.id, subject, actorId })
+          .onConflictDoNothing(),
+      );
+    });
     [account] = await db
       .select()
       .from(accounts)
@@ -89,7 +90,7 @@ export async function organizationIdentity(
   return { organization, account };
 }
 
-export async function overview(
+async function readOverview(
   db: Database,
   subject: string,
   initialSubject?: string,
@@ -109,15 +110,10 @@ export async function overview(
       instances: [],
     };
   const { organization, account } = await organizationIdentity(db, subject, existing);
-  const authored = await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select set_config('quiz.organization_id', ${organization.id}, true)`,
-    );
-    return tx
-      .selectDistinct({ id: questionSubmissions.instanceId })
-      .from(questionSubmissions)
-      .where(eq(questionSubmissions.authorId, account.actorId));
-  });
+  const authored = await db
+    .selectDistinct({ id: questionSubmissions.instanceId })
+    .from(questionSubmissions)
+    .where(eq(questionSubmissions.authorId, account.actorId));
   const all = await db
     .select()
     .from(instances)
@@ -131,10 +127,7 @@ export async function overview(
               authored.length
                 ? and(
                     eq(instances.state, 'archived'),
-                    inArray(
-                      instances.id,
-                      authored.map((row) => row.id),
-                    ),
+                    sql`${instances.id} in (select value from json_each(${JSON.stringify(authored.map((row) => row.id))}))`,
                   )
                 : undefined,
               exists(
@@ -152,31 +145,23 @@ export async function overview(
       ),
     );
   const playerCounts = all.length
-    ? await db.transaction(async (tx) => {
-        await tx.execute(
-          sql`select set_config('quiz.organization_id', ${organization.id}, true)`,
-        );
-        return tx
-          .select({ owner: competitions.owner, players: competitions.playersPerMatch })
-          .from(matchmakingSettings)
-          .innerJoin(
-            competitions,
-            and(
-              eq(competitions.owner, matchmakingSettings.owner),
-              eq(competitions.competitionId, matchmakingSettings.competitionId),
-              eq(competitions.version, matchmakingSettings.competitionVersion),
-            ),
-          )
-          .where(
-            and(
-              inArray(
-                matchmakingSettings.owner,
-                all.map((instance) => instance.owner),
-              ),
-              eq(matchmakingSettings.profile, profile),
-            ),
-          );
-      })
+    ? await db
+        .select({ owner: competitions.owner, players: competitions.playersPerMatch })
+        .from(matchmakingSettings)
+        .innerJoin(
+          competitions,
+          and(
+            eq(competitions.owner, matchmakingSettings.owner),
+            eq(competitions.competitionId, matchmakingSettings.competitionId),
+            eq(competitions.version, matchmakingSettings.competitionVersion),
+          ),
+        )
+        .where(
+          and(
+            sql`${matchmakingSettings.owner} in (select value from json_each(${JSON.stringify(all.map((instance) => instance.owner))}))`,
+            eq(matchmakingSettings.profile, profile),
+          ),
+        )
     : [];
   const permissions = await db
     .select()
@@ -268,6 +253,18 @@ export async function overview(
   };
 }
 
+export async function overview(
+  db: Database,
+  subject: string,
+  initialSubject?: string,
+  accountCursor?: string,
+  profile = 'default',
+): Promise<OrganizationOverview> {
+  return readD1(db, () =>
+    readOverview(db, subject, initialSubject, accountCursor, profile),
+  );
+}
+
 export async function setupOrganization(
   db: Database,
   env: Env,
@@ -275,35 +272,29 @@ export async function setupOrganization(
   input: Record<string, unknown>,
 ) {
   requireInstaller(subject, env.INITIAL_ADMIN_SUBJECT);
-  const name = validName(input.name);
-  const instanceName = validName(input.instanceName);
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(716329410)`);
-    const [existing] = await tx.select().from(organizations);
-    if (existing) throw new OrganizationError('ALREADY_CONFIGURED', 409);
-    const id = crypto.randomUUID();
+  const name = validName(input.name),
+    instanceName = validName(input.instanceName);
+  return changeD1(db, async (writes) => {
+    if ((await db.select().from(organizations)).length)
+      throw new OrganizationError('ALREADY_CONFIGURED', 409);
+    const id = crypto.randomUUID(),
+      instanceId = crypto.randomUUID();
     const identityNamespace = `urn:uuid:${id}`;
     const actorId = await actorForSubject(identityNamespace, subject);
-    await tx.insert(organizations).values({ id, name, identityNamespace });
-    await tx.insert(accounts).values({
-      organizationId: id,
-      subject,
-      actorId,
-      administrator: true,
-    });
-    // First-time setup is for a new installation. Existing deployments use the rehearsed migration procedure.
-    const instanceId = crypto.randomUUID();
-    await tx.insert(instances).values({
-      id: instanceId,
-      organizationId: id,
-      owner: `urn:uuid:${instanceId}`,
-      name: instanceName,
-      roomInventoryComplete: true,
-    });
-    await audit(tx, actorId, 'setup', instanceId, {
-      name,
-      instanceName,
-    });
+    writes.push(
+      db.insert(organizations).values({ id, name, identityNamespace }),
+      db
+        .insert(accounts)
+        .values({ organizationId: id, subject, actorId, administrator: true }),
+      db.insert(instances).values({
+        id: instanceId,
+        organizationId: id,
+        owner: `urn:uuid:${instanceId}`,
+        name: instanceName,
+        roomInventoryComplete: true,
+      }),
+      audit(db, actorId, 'setup', instanceId, { name, instanceName }),
+    );
   });
 }
 
@@ -312,30 +303,30 @@ export async function addInstance(
   subject: string,
   input: Record<string, unknown>,
 ) {
-  const { organization, account } = await organizationIdentity(db, subject);
-  requireAdministrator(account);
-  const id = validId(input.id);
-  const name = validName(input.name);
-  await db.transaction(async (tx) => {
-    const inserted = await tx
-      .insert(instances)
-      .values({
+  const id = validId(input.id),
+    name = validName(input.name);
+  await changeD1(db, async (writes) => {
+    const { organization, account } = await organizationIdentity(db, subject);
+    requireAdministrator(account);
+    const [existing] = await db.select().from(instances).where(eq(instances.id, id));
+    if (existing) {
+      if (
+        existing.organizationId !== organization.id ||
+        existing.owner !== `urn:uuid:${id}`
+      )
+        throw new OrganizationError('INSTANCE_CONFLICT', 409);
+      return;
+    }
+    writes.push(
+      db.insert(instances).values({
         id,
         organizationId: organization.id,
         owner: `urn:uuid:${id}`,
         name,
         roomInventoryComplete: true,
-      })
-      .onConflictDoNothing()
-      .returning({ id: instances.id });
-    const [instance] = await tx.select().from(instances).where(eq(instances.id, id));
-    if (
-      !instance ||
-      instance.organizationId !== organization.id ||
-      instance.owner !== `urn:uuid:${id}`
-    )
-      throw new OrganizationError('INSTANCE_CONFLICT', 409);
-    if (inserted.length) await audit(tx, account.actorId, 'add', id, { name });
+      }),
+      audit(db, account.actorId, 'add', id, { name }),
+    );
   });
 }
 
@@ -344,29 +335,27 @@ export async function publishInstance(
   subject: string,
   input: Record<string, unknown>,
 ) {
-  await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${validId(input.id)}`}, 0))`,
-    );
-    const { organization, account } = await organizationIdentity(tx, subject);
+  const id = validId(input.id);
+  await changeD1(db, async (writes) => {
+    const { organization, account } = await organizationIdentity(db, subject);
     requireAdministrator(account);
-    const rows = await tx
-      .update(instances)
-      .set({
-        state: 'published',
-        pauseReason: null,
-        operationRevision: sql`${instances.operationRevision} + 1`,
-      })
-      .where(
-        and(
-          eq(instances.id, validId(input.id)),
-          eq(instances.organizationId, organization.id),
-          sql`${instances.state} <> 'archived'`,
-        ),
-      )
-      .returning({ id: instances.id });
-    if (!rows.length) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
-    await audit(tx, account.actorId, 'publish', validId(input.id), {});
+    const [instance] = await db
+      .select()
+      .from(instances)
+      .where(and(eq(instances.id, id), eq(instances.organizationId, organization.id)));
+    if (!instance || instance.state === 'archived')
+      throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
+    writes.push(
+      db
+        .update(instances)
+        .set({
+          state: 'published',
+          pauseReason: null,
+          operationRevision: instance.operationRevision + 1,
+        })
+        .where(eq(instances.id, id)),
+      audit(db, account.actorId, 'publish', id, {}),
+    );
   });
 }
 
@@ -410,30 +399,26 @@ export async function setInstanceSelection(
   const id = validId(input.id);
   if (typeof input.added !== 'boolean')
     throw new OrganizationError('INVALID_OPERATION', 400);
-  await db.transaction(async (tx) => {
+  await changeD1(db, async (writes) => {
     const { account } = input.added
-      ? await resolveInstance(tx, subject, id)
-      : await organizationIdentity(tx, subject);
-    const [current] = await tx
-      .select()
-      .from(accounts)
-      .where(eq(accounts.actorId, account.actorId))
-      .for('update');
-    if (current.withdrawnAt) throw new OrganizationError('ACCOUNT_WITHDRAWN', 403);
-    if (input.added)
-      await tx
-        .insert(accountInstanceSelections)
-        .values({ actorId: account.actorId, instanceId: id })
-        .onConflictDoNothing();
-    else
-      await tx
-        .delete(accountInstanceSelections)
-        .where(
-          and(
-            eq(accountInstanceSelections.actorId, account.actorId),
-            eq(accountInstanceSelections.instanceId, id),
-          ),
-        );
+      ? await resolveInstance(db, subject, id)
+      : await organizationIdentity(db, subject);
+    if (account.withdrawnAt) throw new OrganizationError('ACCOUNT_WITHDRAWN', 403);
+    writes.push(
+      input.added
+        ? db
+            .insert(accountInstanceSelections)
+            .values({ actorId: account.actorId, instanceId: id })
+            .onConflictDoNothing()
+        : db
+            .delete(accountInstanceSelections)
+            .where(
+              and(
+                eq(accountInstanceSelections.actorId, account.actorId),
+                eq(accountInstanceSelections.instanceId, id),
+              ),
+            ),
+    );
   });
   return { ok: true };
 }
@@ -443,8 +428,6 @@ export async function setInstanceGrants(
   subject: string,
   input: Record<string, unknown>,
 ) {
-  const { organization, account } = await organizationIdentity(db, subject);
-  requireAdministrator(account);
   const id = validId(input.id);
   if (
     typeof input.actorId !== 'string' ||
@@ -457,20 +440,16 @@ export async function setInstanceGrants(
     new Set(input.permissions).size !== input.permissions.length
   )
     throw new OrganizationError('INVALID_PERMISSION', 400);
-  const actorId = input.actorId;
-  const permissions = input.permissions as InstancePermission[];
-  await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${id}`}, 0))`,
-    );
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${id + actorId}, 0))`,
-    );
-    const [instance] = await tx
+  const actorId = input.actorId,
+    permissions = input.permissions as InstancePermission[];
+  await changeD1(db, async (writes) => {
+    const { organization, account } = await organizationIdentity(db, subject);
+    requireAdministrator(account);
+    const [instance] = await db
       .select()
       .from(instances)
       .where(and(eq(instances.id, id), eq(instances.organizationId, organization.id)));
-    const [target] = await tx
+    const [target] = await db
       .select()
       .from(accounts)
       .where(
@@ -478,27 +457,55 @@ export async function setInstanceGrants(
       );
     if (!instance || !target) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
     if (target.withdrawnAt) throw new OrganizationError('ACCOUNT_WITHDRAWN', 409);
-    requireAdministrator((await organizationIdentity(tx, subject)).account);
-    const previous = await tx
+    const previous = await db
       .select({ permission: grants.permission })
       .from(grants)
       .where(and(eq(grants.instanceId, id), eq(grants.actorId, actorId)));
     if (input.expected !== permissionRevision(previous.map((row) => row.permission)))
       throw new OrganizationError('EDIT_CONFLICT', 409);
-    await tx
-      .delete(grants)
-      .where(and(eq(grants.instanceId, id), eq(grants.actorId, actorId)));
+    writes.push(
+      db
+        .delete(grants)
+        .where(and(eq(grants.instanceId, id), eq(grants.actorId, actorId))),
+    );
     if (permissions.length)
-      await tx
-        .insert(grants)
-        .values(
-          permissions.map((permission) => ({ instanceId: id, actorId, permission })),
-        );
-    await audit(tx, account.actorId, 'grants', id, {
-      target: actorId,
-      before: previous.map((row) => row.permission),
-      after: permissions,
-    });
+      writes.push(
+        db
+          .insert(grants)
+          .values(
+            permissions.map((permission) => ({ instanceId: id, actorId, permission })),
+          ),
+      );
+    writes.push(
+      audit(db, account.actorId, 'grants', id, {
+        target: actorId,
+        before: previous.map((row) => row.permission),
+        after: permissions,
+      }),
+    );
+  });
+}
+
+export async function renameOrganization(
+  db: Database,
+  subject: string,
+  input: Record<string, unknown>,
+) {
+  const expected = validName(input.expectedName),
+    name = validName(input.name);
+  await changeD1(db, async (writes) => {
+    const { organization, account } = await organizationIdentity(db, subject);
+    requireAdministrator(account);
+    // Retrying a saved request must not create another audit entry.
+    if (organization.name === name) return;
+    if (organization.name !== expected) throw new OrganizationError('EDIT_CONFLICT', 409);
+    writes.push(
+      db
+        .update(organizations)
+        .set({ name, federationRevision: organization.federationRevision + 1 })
+        .where(eq(organizations.id, organization.id)),
+      audit(db, account.actorId, 'rename', null, { before: expected, after: name }),
+    );
   });
 }
 
@@ -507,39 +514,36 @@ export async function renameInstance(
   subject: string,
   input: Record<string, unknown>,
 ) {
-  const { organization, account } = await organizationIdentity(db, subject);
-  requireAdministrator(account);
-  const expected = validName(input.expectedName);
-  const id = validId(input.id);
-  await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${id}`}, 0))`,
-    );
+  const expected = validName(input.expectedName),
+    id = validId(input.id),
+    name = validName(input.name);
+  await changeD1(db, async (writes) => {
+    const { organization, account } = await organizationIdentity(db, subject);
+    requireAdministrator(account);
     if (
       (
-        await tx
+        await db
           .select()
           .from(instanceDeletions)
           .where(eq(instanceDeletions.instanceId, id))
       ).length
     )
       throw new OrganizationError('INSTANCE_DELETING', 409);
-    const rows = await tx
-      .update(instances)
-      .set({ name: validName(input.name) })
+    const [instance] = await db
+      .select()
+      .from(instances)
       .where(
         and(
-          eq(instances.id, validId(input.id)),
+          eq(instances.id, id),
           eq(instances.name, expected),
           eq(instances.organizationId, organization.id),
         ),
-      )
-      .returning({ id: instances.id });
-    if (!rows.length) throw new OrganizationError('EDIT_CONFLICT', 409);
-    await audit(tx, account.actorId, 'rename', validId(input.id), {
-      before: expected,
-      after: validName(input.name),
-    });
+      );
+    if (!instance) throw new OrganizationError('EDIT_CONFLICT', 409);
+    writes.push(
+      db.update(instances).set({ name }).where(eq(instances.id, id)),
+      audit(db, account.actorId, 'rename', id, { before: expected, after: name }),
+    );
   });
 }
 
@@ -579,11 +583,107 @@ export async function accountPermissions(
   };
 }
 
+export async function changeInstanceOperation(
+  db: Database,
+  subject: string,
+  input: Record<string, unknown>,
+) {
+  const id = validId(input.id),
+    operationId = validId(input.operationId);
+  const action = String(input.action);
+  if (
+    ![
+      'publish',
+      'prepare',
+      'stopRanked',
+      'resumeRanked',
+      'stopCasual',
+      'resumeCasual',
+      'archive',
+      'restore',
+    ].includes(action) ||
+    !Number.isSafeInteger(input.revision) ||
+    Number(input.revision) < 0
+  )
+    throw new OrganizationError('INVALID_OPERATION', 400);
+  const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+  if (
+    ['prepare', 'stopRanked', 'stopCasual'].includes(action) &&
+    (!reason || reason.length > 1000)
+  )
+    throw new OrganizationError('REASON_REQUIRED', 400);
+  const hash = await contentHash(input);
+  return changeD1(db, async (writes) => {
+    const { organization, account } = await organizationIdentity(db, subject);
+    requireAdministrator(account);
+    const [previous] = await db
+      .select()
+      .from(moderationRequests)
+      .where(eq(moderationRequests.id, operationId));
+    if (previous) {
+      if (previous.operatorId !== account.actorId || previous.requestHash !== hash)
+        throw new OrganizationError('OPERATION_CONFLICT', 409);
+      return { organizationId: organization.id };
+    }
+    const [instance] = await db
+      .select()
+      .from(instances)
+      .where(and(eq(instances.id, id), eq(instances.organizationId, organization.id)));
+    if (!instance) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
+    if (
+      (
+        await db
+          .select()
+          .from(instanceDeletions)
+          .where(eq(instanceDeletions.instanceId, id))
+      ).length
+    )
+      throw new OrganizationError('INSTANCE_DELETING', 409);
+    if (
+      (action === 'restore'
+        ? instance.state !== 'archived'
+        : instance.state === 'archived') ||
+      instance.operationRevision !== input.revision
+    )
+      throw new OrganizationError('EDIT_CONFLICT', 409);
+    writes.push(
+      db
+        .update(instances)
+        .set({
+          operationRevision: instance.operationRevision + 1,
+          ...(action === 'archive' ? { state: 'archived' as const } : {}),
+          ...(action === 'restore' ? { state: 'preparing' as const } : {}),
+          ...(action === 'publish'
+            ? { state: 'published' as const, pauseReason: null }
+            : {}),
+          ...(action === 'prepare'
+            ? { state: 'preparing' as const, pauseReason: reason }
+            : {}),
+          ...(action === 'stopRanked' ? { rankedPauseReason: reason } : {}),
+          ...(action === 'resumeRanked' ? { rankedPauseReason: null } : {}),
+          ...(action === 'stopCasual' ? { casualPauseReason: reason } : {}),
+          ...(action === 'resumeCasual' ? { casualPauseReason: null } : {}),
+        })
+        .where(eq(instances.id, id)),
+      db.insert(moderationRequests).values({
+        id: operationId,
+        organizationId: organization.id,
+        operatorId: account.actorId,
+        requestHash: hash,
+        details: input,
+      }),
+    );
+    return { organizationId: organization.id };
+  });
+}
+
 // Called with server-owned room scope and participant IDs, never browser-supplied actor IDs.
 export async function allowedInstanceActors(
   env: Env,
   scope: { id: string; owner: string; mode?: 'casual' | 'room' },
   actors: string[],
+  matchId?: string,
+  pendingActors: string[] = [],
 ): Promise<string[]> {
   if (!actors.length) return [];
   const { db, close } = organizationDatabase(env);
@@ -633,14 +733,21 @@ export async function allowedInstanceActors(
           ),
         ),
       );
-    const allowed = rows
-      .map((row) => row.actorId)
-      .filter(
-        (id) =>
-          !restrictions.some(
-            (row) => row.actorId === id && blocks(row, scope.mode ? 'casual' : 'ranked'),
-          ),
-      );
+    const allowed = await federationAllowedActors(
+      db,
+      scope,
+      rows
+        .map((row) => row.actorId)
+        .filter(
+          (id) =>
+            !restrictions.some(
+              (row) =>
+                row.actorId === id && blocks(row, scope.mode ? 'casual' : 'ranked'),
+            ),
+        ),
+      matchId,
+      pendingActors,
+    );
     if (!scope.mode) return allowed;
     const [instance] = await db
       .select()

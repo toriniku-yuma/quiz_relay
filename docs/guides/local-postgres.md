@@ -2,12 +2,12 @@
 
 [ドキュメント一覧](../README.md)
 
-通常の起動は pnpm dev。初回準備と停止方法は「起動・停止」を確認してください。
+この文書はD1移行前のPostgreSQL構成を説明します。現在の通常起動とDB管理は[起動と接続](setup.md)・[DB管理](database.md)を参照してください。旧DBは移行元として保持し、以下の旧アプリ接続・Auth・書込み手順は現在の通常環境へ適用しません。
 
 <a id="local-postgres-001"></a>
 ## ローカル開発用PostgreSQL
 
-通常のローカル起動はPC内のPostgreSQLを使用する。Supabaseのプロジェクト・DB・Authユーザー・OAuth設定は保持し、クラウド初期化は取りやめた。
+移行前のローカル起動はPC内のPostgreSQLを使用していました。Supabaseのプロジェクト・DB・Authユーザー・OAuth設定は保持しています。
 
 Docker・Windowsサービス登録は不要。
 
@@ -56,8 +56,6 @@ ViteをCtrl+Cで終了してもPostgreSQLは動作を継続する。作業終了
 
 既存の5173番サーバーは勝手に停止しない。起動済みなら利用者側で止めて `pnpm dev` で再起動する。.dev.vars変更前のプロセスに古い接続が残る可能性がある。
 
-今回のHTTP検証は5174番の別プロセスで行い、検証後にそのプロセスだけ停止した。
-
 <a id="local-postgres-007"></a>
 ## 空環境での初回設定
 
@@ -66,7 +64,7 @@ ViteをCtrl+Cで終了してもPostgreSQLは動作を継続する。作業終了
 
   自動で特定の既存ユーザーを管理者に選ばない。
 - 初回設定で組織と最初のインスタンスを作る。問題と出題設定は未登録のため、DB準備だけで通常対戦が始まる状態ではない。
-- SupabaseのAuth callbackは既存登録済みのoriginを利用する。今回URLの追加登録やログインユーザーの作成・削除は行っていない。
+- SupabaseのAuth callbackは登録済みのoriginを利用する。
 
 <a id="local-postgres-008"></a>
 ## ローカルDBに対するCLI操作

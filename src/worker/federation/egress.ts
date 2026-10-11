@@ -1,6 +1,18 @@
-import { INBOX_PATH, origin } from './signatures';
+import { INBOX_PATH, origin } from './signatures.ts';
 
-const paths = new Set([INBOX_PATH, '/federation/v1/question-set-export']);
+const paths = new Set([
+  INBOX_PATH,
+  '/federation/v1/key',
+  '/federation/v1/question-set-export',
+  '/federation/v1/metadata',
+  '/federation/v1/questions/sync',
+  '/federation/v1/results/review',
+  '/api/v1/participation/reservations',
+  '/federation/v1/participation/validate',
+  '/federation/v1/participation/release',
+  '/federation/v1/participation/status',
+  '/federation/v1/participation/logout',
+]);
 
 // Initial egress profile: exact approved workers.dev origins only; no custom DNS.
 export function peerRequest(

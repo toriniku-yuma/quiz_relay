@@ -19,7 +19,17 @@ const mocks = vi.hoisted(() => ({ load: vi.fn(), user: vi.fn() }));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({ auth: { getUser: mocks.user } }),
+  createClient: () => ({
+    auth: {
+      getUser: mocks.user,
+      getClaims: async () => ({
+        data: {
+          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
+        },
+        error: null,
+      }),
+    },
+  }),
 }));
 vi.mock('../src/worker/organization/database', () => ({
   allowedInstanceActors: async (_env: unknown, _scope: unknown, actors: string[]) =>

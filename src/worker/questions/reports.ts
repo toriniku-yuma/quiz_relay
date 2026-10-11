@@ -1,9 +1,11 @@
-import { and, eq, sql } from 'drizzle-orm';
-import { connectDatabase } from '../db/connection.ts';
+import { and, eq } from 'drizzle-orm';
+import { readD1 } from '../db/d1.ts';
 import { matchResults, resultPlayers } from '../db/schema.ts';
-import type { Env } from '../env';
+import type { Env } from '../env.ts';
 import { OrganizationError } from '../organization/access.ts';
 import { organizationDatabase, resolveInstance } from '../organization/database.ts';
+import { privateResultSQL } from '../results/privacy.ts';
+import type { ResultRecord } from '../results/record.ts';
 
 export async function verifiedReportedQuestion(
   env: Env,
@@ -18,23 +20,14 @@ export async function verifiedReportedQuestion(
     typeof questionId !== 'string'
   )
     throw new OrganizationError('INVALID_REPORT', 400);
-  const organization = organizationDatabase(env);
-  let identity: Awaited<ReturnType<typeof resolveInstance>>;
-  try {
-    identity = await resolveInstance(organization.db, subject, instanceId, true);
-  } finally {
-    await organization.close();
-  }
-  const binding = env.GAME_HYPERDRIVE;
-  const address = binding?.connectionString ?? env.GAME_DATABASE_URL;
-  if (!address) throw new OrganizationError('RESULTS_UNAVAILABLE', 503);
-  const { db, close } = connectDatabase(address, env.DATABASE_CA_CERT, !!binding);
-  try {
+  const { db } = organizationDatabase(env);
+  return readD1(db, async () => {
+    const identity = await resolveInstance(db, subject, instanceId, true);
     const [row] = await db
       .select({
-        payload: sql<
-          typeof matchResults.$inferSelect.payload
-        >`quiz_game.private_result(${matchResults.payload})`,
+        payload: privateResultSQL(matchResults.payload).mapWith(
+          (value) => JSON.parse(value) as ResultRecord,
+        ),
       })
       .from(matchResults)
       .innerJoin(resultPlayers, eq(resultPlayers.resultId, matchResults.resultId))
@@ -46,11 +39,9 @@ export async function verifiedReportedQuestion(
         ),
       );
     const question = row?.payload.completedQuestions?.find(
-      (candidateQuestion) => candidateQuestion.id === questionId,
+      (question) => question.id === questionId,
     );
     if (!question) throw new OrganizationError('QUESTION_NOT_FOUND', 404);
     return question;
-  } finally {
-    await close();
-  }
+  });
 }

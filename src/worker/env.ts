@@ -1,32 +1,33 @@
-import type { GameRoom } from './game/GameRoom';
-import type { Matchmaker } from './matchmaking/Matchmaker';
-import type { Probe } from './probes/Probe';
+import type { GameRoom } from './game/GameRoom.ts';
+import type { Matchmaker } from './matchmaking/Matchmaker.ts';
+import type { Probe } from './probes/Probe.ts';
 
 export interface Env {
+  GAME_D1?: D1Database;
   ACCOUNT_ERASURE?: Fetcher;
   API_LIMITER?: RateLimit;
+  FEDERATION_LIMITER?: RateLimit;
   PROBE: DurableObjectNamespace<Probe>;
   MATCHMAKER: DurableObjectNamespace<Matchmaker>;
   GAME_OWNER: string;
   ORGANIZATION_ENABLED?: string;
   QUESTION_DIFFICULTY_ENABLED?: string;
-  ORGANIZATION_DATABASE_URL?: string;
-  ORGANIZATION_HYPERDRIVE?: Hyperdrive;
   INITIAL_ADMIN_SUBJECT?: string;
   GAME_CONFIG_PROFILE: string;
   GAME_ROOM: DurableObjectNamespace<GameRoom>;
   LOCAL_GAME_ENABLED?: string;
   ASSETS: Fetcher;
   PROBES_ENABLED: string;
+  ROOM_LIFECYCLE_LOGS?: string;
   PROBE_TOKEN?: string;
   PROBE_ORIGIN?: string;
-  HYPERDRIVE?: Hyperdrive;
-  GAME_HYPERDRIVE?: Hyperdrive;
-  GAME_DATABASE_URL?: string;
-  RESULT_DATABASE_URL?: string;
-  RESULT_HYPERDRIVE?: Hyperdrive;
-  DATABASE_URL?: string;
-  DATABASE_CA_CERT?: string;
   SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
+  AUTH_PROVIDER?: 'supabase' | 'clerk';
+  CLERK_PUBLISHABLE_KEY?: string;
+  CLERK_SECRET_KEY?: string;
+  CLERK_JWT_KEY?: string;
+  FEDERATION_ORIGIN?: string;
+  SIGNING_KID?: string;
+  SIGNING_PRIVATE_KEY?: string;
 }

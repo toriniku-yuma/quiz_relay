@@ -2,18 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ApiPath } from '../../../shared/api-paths';
 import { DEBUG_PATH } from '../../app/paths';
 import { hasAuthCallback } from '../auth/callback';
-import {
-  checkIdentity,
-  getAuth,
-  sendLoginEmail,
-  signInWithGoogle,
-  signOut,
-} from '../auth/client';
+import { checkIdentity, getAuth, signInWithGoogle, signOut } from '../auth/client';
 import { formatProbeError, probeRequest } from './api';
 
 export function useDebug() {
   const [token, setToken] = useState('');
-  const [email, setEmail] = useState('');
   const [result, setResult] = useState<unknown>('未実行');
   const [busy, setBusy] = useState(false);
 
@@ -37,7 +30,8 @@ export function useDebug() {
       try {
         return await checkIdentity();
       } finally {
-        if (returned) history.replaceState(null, '', DEBUG_PATH);
+        if (returned && new URL(location.href).searchParams.get('clerk-callback') !== '1')
+          history.replaceState(null, '', DEBUG_PATH);
       }
     });
   }, [run]);
@@ -45,13 +39,10 @@ export function useDebug() {
   return {
     token,
     setToken,
-    email,
-    setEmail,
     result,
     busy,
     request: (path: ApiPath, method = 'GET') =>
       run(() => probeRequest(token, path, method)),
-    sendEmail: () => run(() => sendLoginEmail(token, email)),
     googleLogin: () => run(() => signInWithGoogle(token)),
     checkIdentity: () => run(checkIdentity),
     signOut: () => run(signOut),

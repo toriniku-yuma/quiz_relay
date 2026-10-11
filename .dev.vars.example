@@ -1,12 +1,13 @@
 # Copy to .dev.vars. Generate a private random token; never commit it.
-# Windows local DB: pnpm db:local:setup configures role URLs without changing Supabase Auth.
-# See docs/guides/local-postgres.md. Cloud/admin credentials stay outside Worker bindings.
+# D1 is bound in wrangler.jsonc. Apply its migrations locally before starting Vite.
 PROBES_ENABLED=true
 PROBE_TOKEN=
-# Supavisor transaction pooler / dedicated quiz_probe login / TLS required
-DATABASE_URL=
-SUPABASE_URL=
-SUPABASE_PUBLISHABLE_KEY=
+# Free Clerk Development application, Google only. See docs/guides/setup.md.
+AUTH_PROVIDER=clerk
+CLERK_PUBLISHABLE_KEY=
+CLERK_SECRET_KEY=
+# Optional PEM public key for networkless session signature verification.
+CLERK_JWT_KEY=
 
 # Optional browser origin for direct HTTPS or Tailscale Serve; empty for local-only development.
 PROBE_ORIGIN=
@@ -15,20 +16,8 @@ PROBE_ORIGIN=
 DEV_TLS_CERT=
 DEV_TLS_KEY=
 
-# Supabase CA PEM for Node DB probes (use quoted PEM with escaped newlines).
-DATABASE_CA_CERT=
-# Local Miniflare trusts this CA at startup; download from Supabase Database Settings.
-# NODE_EXTRA_CA_CERTS=.wrangler/supabase-ca.crt
-
-# Dedicated game reader and active settings profile. Version numbers are managed in DB.
-GAME_DATABASE_URL=
+# Active settings profile. Version numbers are managed in D1.
 GAME_CONFIG_PROFILE=local
 
-# Result writer only: quiz_game_results, never migration/admin credentials.
-RESULT_DATABASE_URL=
-
-# Organization foundation: enable only after migrations and cutover verification.
-ORGANIZATION_ENABLED=false
-# Dedicated quiz_organization connection; never reuse migration/catalog credentials.
-ORGANIZATION_DATABASE_URL=
+ORGANIZATION_ENABLED=true
 INITIAL_ADMIN_SUBJECT=

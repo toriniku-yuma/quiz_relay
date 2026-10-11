@@ -23,9 +23,15 @@ import type { PersonalSet } from './PersonalSets';
 export default function RoomEditor({
   instanceId,
   room,
+  request = playRequest,
+  onSaved,
+  foreign = false,
 }: {
   instanceId: string;
   room?: RoomView;
+  request?: typeof playRequest;
+  onSaved?: (id: string) => void;
+  foreign?: boolean;
 }) {
   const { auth } = useApp();
   const editing = !!room,
@@ -38,6 +44,7 @@ export default function RoomEditor({
     [changed, setChanged] = useState(false),
     [sets, setSets] = useState<PersonalSet[]>([]),
     [categories, setCategories] = useState<{ id: string; name: string }[]>([]),
+    [sharedSources, setSharedSources] = useState<{ key: string; name: string }[]>([]),
     [config, setConfig] = useState<CasualSettings | null>(null),
     [error, setError] = useState('');
   const [revision] = useState(room?.revision);
@@ -49,25 +56,27 @@ export default function RoomEditor({
     (request) => {
       setSaveRevision(Number(request.revision) + 1);
     },
-    playRequest,
+    request,
   );
-  const send = (path: string, body: object) => playRequest(path, body, instanceId);
+  const send = (path: string, body: object) => request(path, body, instanceId);
   const mutation = useMutation(
     room ? API_PATHS.roomMutate : API_PATHS.roomCreate,
-    () => navigate(`${ROOMS_PATH}?instance=${instanceId}&room=${id}`),
+    () =>
+      onSaved ? onSaved(id) : navigate(`${ROOMS_PATH}?instance=${instanceId}&room=${id}`),
     send,
   );
   const locked = mutation.busy || mutation.uncertain || saveSet.busy || saveSet.uncertain;
   useEffect(() => {
     let active = true;
-    void playRequest<{ categories: typeof categories; config: CasualSettings }>(
-      API_PATHS.roomOptions,
-      {},
-      instanceId,
-    )
+    void request<{
+      categories: typeof categories;
+      sharedSources: typeof sharedSources;
+      config: CasualSettings;
+    }>(API_PATHS.roomOptions, {}, instanceId)
       .then((response) => {
         if (active) {
           setCategories(response.categories);
+          setSharedSources(response.sharedSources);
           setConfig(response.config);
           if (!editing)
             setSettings((currentSettings) => ({
@@ -79,16 +88,16 @@ export default function RoomEditor({
       .catch((caughtError) => {
         if (active) setError(caughtError.message);
       });
-    if (auth.user)
-      void playRequest<{ sets: PersonalSet[] }>(API_PATHS.personalSets)
+    if (auth.user || foreign)
+      void request<{ sets: PersonalSet[] }>(API_PATHS.personalSets)
         .then((response) => {
           if (active) setSets(response.sets);
         })
         .catch((caughtError) => {
           if (active) setError(caughtError.message);
         });
-    if (auth.user && roomId)
-      void playRequest<{ questions: BroughtQuestion[] }>(
+    if ((auth.user || foreign) && roomId)
+      void request<{ questions: BroughtQuestion[] }>(
         API_PATHS.roomOriginals,
         { room: roomId },
         instanceId,
@@ -100,7 +109,7 @@ export default function RoomEditor({
     return () => {
       active = false;
     };
-  }, [instanceId, auth.user, editing, roomId]);
+  }, [instanceId, auth.user, editing, roomId, foreign, request]);
   return (
     <Panel title={room ? '部屋の設定を変更' : '部屋を作る'}>
       <form
@@ -252,6 +261,32 @@ export default function RoomEditor({
           {settings.source === 'normal' ? (
             <>
               <p>カテゴリを選ばない場合はすべてを使います。</p>
+              {sharedSources.length > 0 && (
+                <fieldset className="grid gap-3">
+                  <legend>使用する共有元</legend>
+                  <p className="text-sm">
+                    選んだ共有元の利用可能な問題を加えます。共有停止・取得失敗中の問題は使いません。
+                  </p>
+                  {sharedSources.map((source) => (
+                    <label key={source.key} className="flex gap-2">
+                      <Checkbox
+                        checked={(settings.sharedSources ?? []).includes(source.key)}
+                        onChange={(event) =>
+                          setSettings({
+                            ...settings,
+                            sharedSources: event.target.checked
+                              ? [...(settings.sharedSources ?? []), source.key]
+                              : (settings.sharedSources ?? []).filter(
+                                  (key) => key !== source.key,
+                                ),
+                          })
+                        }
+                      />
+                      {source.name}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
               <div className="flex flex-wrap gap-4">
                 {categories.map((category) => (
                   <label key={category.id} className="flex gap-2">
@@ -291,7 +326,7 @@ export default function RoomEditor({
                 ))}
               </div>
             </>
-          ) : auth.user ? (
+          ) : auth.user || foreign ? (
             <>
               <label>
                 自分の保存済みセット

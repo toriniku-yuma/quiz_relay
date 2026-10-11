@@ -20,7 +20,7 @@ JSONを編集し、設定反映CLIで新しい固定版を作ります。開始�
 | `config/matchmaking.local.json` | ローカル検証用の同じ項目。現在2人 | `local` プロファイルへ反映 |
 | `config/runtime.json` | WebSocket監視・再接続、待機・予約・セッション期限、ルーム数・接続数・操作回数・イベント保持の運用値 | 開発サーバー再起動。本番ビルドは再ビルド・配置 |
 | `wrangler.jsonc` / `.dev.vars` | 開催元 `GAME_OWNER`、参照する `GAME_CONFIG_PROFILE`、binding・環境別接続 | 環境に応じて再起動・配置 |
-| `.env.supabase-admin` | 設定writer・migration管理者のDB接続。Git管理外 | CLI専用 |
+| `.dev.vars` | Clerk・初回管理者・ローカルCLIの管理者subject。Git管理外 | 環境設定 |
 
 秘密はconfig配下へ入れない。問題本文・正解も含めず、既存DBの問題セットID・版を参照する。初期投入問題の `supabase/seeds/mock-hiragana.json` は別用途で、アプリへ同梱しない。
 
@@ -38,14 +38,14 @@ pnpm config:apply:local
 用途別コマンドはpackage.jsonへ登録済みで、ファイル名・プロファイル・`--apply` の指定を省略できる。いずれも実際にDBへ反映する。標準設定は次で反映する。
 
 ```powershell
-pnpm config:apply:default
+pnpm config:apply config/matchmaking.json default --apply
 ```
 
 プレビューは `pnpm config:apply config/matchmaking.local.json local` を使う。JSON検証と設定内容のJSON表示だけで、ネットワークアクセス・DB変更はしない。
 
 別ファイル・別プロファイルには汎用の `pnpm config:apply <config.json> <profile> [--apply]` を使う。DB内の問題との整合性検証は `--apply` 時に行う。
 
-CLIは `.env.supabase-admin` の `GAME_CONFIG_DATABASE_URL` で専用writerとしてDrizzle経由で接続する。CAは `.dev.vars` の設定を使う。
+CLIは通常開発環境と同じローカルD1へDrizzleで接続します。CATALOG_SUBJECTまたはINITIAL_ADMIN_SUBJECTと対象ownerの組織管理者を確認します。
 
 この環境では登録済み。別プロジェクトの接続・権限は[DB管理](database.md)を参照。成功時はプロファイル・大会ID・版・人数だけを表示する。
 
@@ -84,18 +84,18 @@ runtimeの値も正の整数として読み込み時に検証し、heartbeat間�
 
 反映コマンドはJSONと既存問題のhash・候補を検証し、変更があればルール版・大会版を追加する。同じ内容の版があれば再利用する。
 
-開催元単位のDBロックとトランザクションで版の割当と `quiz_game.matchmaking_settings` の参照切替をまとめる。過去のルール・大会・問題は更新しない。
+revisionの競合検査とD1のatomic batchで版の割当と `quiz_game_matchmaking_settings` の参照切替をまとめます。過去のルール・大会・問題は更新しない。
 
 新規参加は有効プロファイルをDBから読み、待機列を大会版ごとに分ける。待機中・進行中の試合は保存済み版を維持し、開始直前はその版の問題停止状態などを再検証する。DBに有効設定がなければ参加を拒否し、同梱設定へフォールバックしない。
 
 将来の管理画面ではフォームから同じ構造のJSONを送り、同じ検証・版追加・有効参照切替を使える。管理画面と書込APIは今回未実装。
 
-アプリ用DBロールは読取専用のままで、CLI用のwriter・管理者接続をWorkerやブラウザーへ渡さない。
+ブラウザーへDB接続を渡しません。Workerの操作認可と、設置者用CLIの管理者・owner確認を適用します。
 
 <a id="configuration-006"></a>
 ## 形式の比較と初期導入
 
-JSONは追加パーサー不要で、CLI・将来のAPI・DBのJSONBで同じデータ構造を使えるため採用した。JSONCはコメントを置けるが読込パーサーが必要で、YAMLも今回の単純な数値・真偽値・参照に対して依存を増やす。
+JSONは追加パーサー不要で、CLI・API・DBのJSON列で同じデータ構造を使えるため採用した。JSONCはコメントを置けるが読込パーサーが必要で、YAMLも今回の単純な数値・真偽値・参照に対して依存を増やす。
 
 項目の説明はこの文書へ集約する。WranglerのJSONCはツール所定の形式として維持する。[ADR 0008](../history/decisions.md#0008-game-configuration-001)参照。
 
@@ -104,8 +104,12 @@ JSONは追加パーサー不要で、CLI・将来のAPI・DBのJSONBで同じデ
 ルールの必須項目・型・許容範囲を編集対象JSONから独立させた。標準JSONも読込時に検証し、必須項目の削除や未知キーを拒否する。人数・各ルールの設定値と許容範囲は変更していない。
 
 <a id="configuration-010"></a>
-## ローカルDB接続の分離
+## ローカルとクラウドの分離
 
-ローカル起動は[PostgreSQL開発環境](local-postgres.md#local-postgres-001)を使用する。Supabase Authは維持する。
+通常開発はローカルD1、認証はClerkのGoogleを使用します。上記CLIはローカルD1用です。クラウドの変更は専用設定と対象DBを確認して行い、旧PostgreSQL接続を通常アプリへ戻しません。詳細は[DB管理](database.md)を参照してください。
 
-既存の管理CLI用npmスクリプトはクラウド用.env.supabase-adminを読むため、ローカル操作では同文書の明示的な.env.postgres-local読込手順を使う。
+## 連携の初期値
+
+相手の接続先URLを管理画面で確認して承認します。公開鍵はURLから取得し、手入力しません。問題・結果の送出と受入は相手インスタンスごとに既定オフです。一括変更は確認した対象・revisionだけへ適用し、後から追加したインスタンスを自動許可しません。「共有問題」では共有元・全カテゴリ／選択カテゴリ・保存先を設定します。カテゴリ別の公開設定は設けません。取り込み専用カテゴリは複数作成でき、通常投稿を禁止します。難易度は簡単・普通・難しいの3区分で共通とし、通常同期で開催先の自動補正や固定値を戻しません。個別除外・解除は「全問題」の操作から行います。
+
+公開情報と問題共有は毎分更新し、成功から90秒以内だけ新規利用に使います。取得失敗は直ちに閉じ、進行中の固定内容を維持します。1回の同期・配送・清掃の件数上限と復旧は[運用手順](operations.md#連携の定期処理と障害復旧)を参照してください。

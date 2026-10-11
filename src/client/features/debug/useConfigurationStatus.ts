@@ -17,16 +17,10 @@ export async function loadConfigurationStatus(): Promise<ConfigurationStatus> {
   const { data, error } = await client.auth.getUser();
   if (error || !data.user)
     throw new Error('本人確認に失敗しました。ログインし直してください。');
-  const name = [
-    data.user.user_metadata?.full_name,
-    data.user.user_metadata?.name,
-    data.user.email,
-  ].find(
-    (value): value is string => typeof value === 'string' && value.trim().length > 0,
-  );
+  const organization = await organizationRequest(API_PATHS.organizationOverview);
   return {
-    name: name?.trim() ?? '表示名・メールアドレス未登録',
-    organization: await organizationRequest(API_PATHS.organizationOverview),
+    name: organization.account?.displayName?.trim() || 'ログイン済み',
+    organization,
   };
 }
 

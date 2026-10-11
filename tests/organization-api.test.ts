@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   resolve: vi.fn(),
   overview: vi.fn(),
   selection: vi.fn(),
+  renameOrganization: vi.fn(),
   read: vi.fn(),
   close: vi.fn(),
   enter: vi.fn(),
@@ -17,7 +18,17 @@ const mocks = vi.hoisted(() => ({
   excluded: vi.fn(),
 }));
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({ auth: { getUser: mocks.user } }),
+  createClient: () => ({
+    auth: {
+      getUser: mocks.user,
+      getClaims: async () => ({
+        data: {
+          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
+        },
+        error: null,
+      }),
+    },
+  }),
 }));
 vi.mock('../src/worker/organization/database', () => ({
   organizationDatabase: () => ({ db: {}, close: mocks.close }),
@@ -29,6 +40,7 @@ vi.mock('../src/worker/organization/database', () => ({
   publishInstance: vi.fn(),
   setInstanceGrants: vi.fn(),
   renameInstance: vi.fn(),
+  renameOrganization: mocks.renameOrganization,
   accountPermissions: vi.fn(),
 }));
 vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
@@ -37,8 +49,8 @@ vi.mock('../src/worker/organization/moderation', () => ({
   requireUnrestricted: mocks.restriction,
   rankingExclusions: mocks.excluded,
 }));
-vi.mock('../src/worker/db/connection', () => ({
-  connectDatabase: () => ({ db: {}, close: async () => {} }),
+vi.mock('../src/worker/db/d1', () => ({
+  connectD1: () => ({}),
 }));
 const runtime: Env = {
   ...(env as unknown as Env),
@@ -47,7 +59,6 @@ const runtime: Env = {
   GAME_OWNER: 'https://old.test',
   SUPABASE_URL: 'https://auth.test',
   SUPABASE_PUBLISHABLE_KEY: 'public',
-  GAME_DATABASE_URL: 'test',
 };
 const instanceId = crypto.randomUUID();
 const request = (path: string, headers: Record<string, string> = {}, body = '{}') =>
@@ -101,6 +112,17 @@ it('組織一覧は検証済みsubjectだけを使い、入力されたsubject�
     'local',
   );
   expect(response.headers.get('Cache-Control')).toBe('no-store');
+});
+it('組織名変更は組織専用の経路で認証済み本人へ委譲する', async () => {
+  const value = { name: '新しい組織', expectedName: '元の組織', subject: 'attacker' };
+  expect(
+    (await request('/api/organization/settings', {}, JSON.stringify(value))).status,
+  ).toBe(200);
+  expect(mocks.renameOrganization).toHaveBeenCalledExactlyOnceWith({}, 'verified', value);
+  expect(
+    (await request('/api/organization/settings', { Origin: 'https://other.test' }))
+      .status,
+  ).toBe(403);
 });
 it('組織管理経路もOrigin・本人認証・本文上限を要求する', async () => {
   expect(

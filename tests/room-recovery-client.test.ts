@@ -110,6 +110,34 @@ function game() {
   // biome-ignore lint/correctness/useHookAtTopLevel: 同じhookを再描画するハーネス。
   return useGame('formal', 'user-a', 'instance-a');
 }
+it.each(['HTTP', 'WebSocket'])('%sで閉鎖を確認した部屋は再接続しない', async (source) => {
+  const view = deferred<{ room: RoomView }>();
+  mocks.request.mockReturnValue(view.promise);
+  room().join('room-a', 'instance-a');
+  room();
+  mocks.effects[3]();
+  const callbacks = mocks.connect.mock.calls[0][1];
+  expect(callbacks.finished?.()).toBe(false);
+  const closed = { ...roomView('room-a'), closed: true, playing: false, matchRoom: null };
+  if (source === 'HTTP') {
+    view.resolve({ room: closed });
+    await settle();
+  } else callbacks.message(JSON.stringify({ type: 'lobby', room: closed }));
+  expect(callbacks.finished?.()).toBe(true);
+  expect(room().room?.closed).toBe(true);
+});
+it.each(['ROOM_CLOSED', 'ROOM_NOT_FOUND'])(
+  '終了した部屋の復帰情報を破棄する（%s）',
+  async (code) => {
+    mocks.request.mockRejectedValue({ code, message: '部屋は利用できません' });
+    room().join('room-a', 'instance-a');
+    room();
+    mocks.effects[3]();
+    await settle();
+    expect(room().active).toBeNull();
+    expect(sessionStorage.getItem('quiz-relay-room:user-a')).toBeNull();
+  },
+);
 it('Bへ入室直後の旧AのHTTP・ゲーム接続・切替通知で、新参加を消さない', async () => {
   const view = deferred<{ room: RoomView }>(),
     child = deferred<{ room: string }>();
@@ -176,13 +204,17 @@ function button(
     ? element.props
     : button(element.props?.children, label);
 }
-function lobby(session: ReturnType<typeof useRoom>) {
+function lobby(
+  session: ReturnType<typeof useRoom>,
+  foreign?: Parameters<typeof RoomLobby>[0]['foreign'],
+) {
   mocks.cursor = 0;
-  return RoomLobby({ session });
+  return RoomLobby({ session, foreign });
 }
 function lobbySession(waiting = false) {
   let current = 'room-a';
   const session = {
+    request: mocks.request,
     active: { id: 'room-a', instanceId: 'instance-room-a' },
     room: { ...roomView('room-a'), waiting },
     connection: 'open',
@@ -190,6 +222,7 @@ function lobbySession(waiting = false) {
     game: { leave: vi.fn(), snapshot: { result: { id: 'result-a' } } },
     exit: { submit: vi.fn(), busy: false, uncertain: false, error: '' },
     refresh: vi.fn().mockResolvedValue(undefined),
+    leave: vi.fn(),
     isCurrent: (id: unknown) => id === current,
   } as unknown as ReturnType<typeof useRoom>;
   return {
@@ -201,6 +234,47 @@ function lobbySession(waiting = false) {
     },
   };
 }
+it.each([false, true])(
+  '閉じた部屋からの退出は拒否されるAPIを使わない（外部:%s）',
+  (external) => {
+    const { session } = lobbySession();
+    session.room = {
+      ...roomView('room-a'),
+      closed: true,
+      playing: false,
+      matchRoom: null,
+    };
+    const onClosed = vi.fn();
+    const foreign = external
+      ? {
+          actorId: 'actor-a',
+          href: '/rooms/',
+          homeHistory: '/history/',
+          onEdit: vi.fn(),
+          onReturn: vi.fn(),
+          onClosed,
+        }
+      : undefined;
+    button(lobby(session, foreign), '部屋から退出')?.onClick();
+    expect(session.leave).toHaveBeenCalledOnce();
+    expect(session.exit.submit).not.toHaveBeenCalled();
+    expect(onClosed).toHaveBeenCalledTimes(external ? 1 : 0);
+  },
+);
+it('閉鎖が成功した部屋へ再取得せず、表示更新の失敗と扱わない', async () => {
+  const { session } = lobbySession();
+  mocks.request.mockResolvedValue({ ok: true });
+  vi.mocked(session.refresh).mockRejectedValue(new Error('ROOM_CLOSED'));
+  button(lobby(session), '部屋を閉じる')?.onClick();
+  await settle();
+  expect(mocks.request).toHaveBeenCalledWith(
+    API_PATHS.roomMutate,
+    expect.objectContaining({ action: 'close', room: 'room-a' }),
+    'instance-room-a',
+  );
+  expect(session.refresh).not.toHaveBeenCalled();
+  expect(JSON.stringify(lobby(session))).not.toContain('表示を更新できません');
+});
 it('途中入室で待機中の本人は、他人の対戦中も退出できる', () => {
   const { session } = lobbySession(true);
   session.game.snapshot = null;

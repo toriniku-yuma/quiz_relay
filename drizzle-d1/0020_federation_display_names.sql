@@ -1,0 +1,1 @@
+ALTER TABLE `quiz_federation_actors` ADD `display_name` text;

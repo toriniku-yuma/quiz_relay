@@ -1,14 +1,14 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { API_PATHS } from '../../shared/api-paths';
-import { type AuthEnv, authenticate, sameOrigin } from '../auth/handlers';
+import { API_PATHS } from '../../shared/api-paths.ts';
+import { type AuthEnv, authenticate, sameOrigin } from '../auth/handlers.ts';
 import {
   mutateOrganization,
   organizationFailure,
   organizationOverview,
-} from './handlers';
-import { manageUsers } from './moderation-handlers';
-import { accountWithdrawal, withdrawalStatus } from './withdrawal-handlers';
+} from './handlers.ts';
+import { manageUsers } from './moderation-handlers.ts';
+import { accountWithdrawal, withdrawalStatus } from './withdrawal-handlers.ts';
 
 const organization = new Hono<AuthEnv>();
 organization.use('/api/organization/*', sameOrigin);
@@ -34,6 +34,7 @@ organization.post(API_PATHS.moderationHistory, manageUsers);
 organization.post(API_PATHS.moderationMutate, manageUsers);
 organization.post(API_PATHS.moderationPersonal, manageUsers);
 organization.post(API_PATHS.organizationSetup, mutateOrganization);
+organization.post(API_PATHS.organizationSettings, mutateOrganization);
 organization.post(API_PATHS.organizationAdd, mutateOrganization);
 organization.post(API_PATHS.organizationInstanceSelection, mutateOrganization);
 organization.post(API_PATHS.organizationPublish, mutateOrganization);

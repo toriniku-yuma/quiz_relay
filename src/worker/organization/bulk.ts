@@ -1,26 +1,27 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import { activeSanction, sanctionRevision } from '../../shared/moderation.ts';
 import { contentHash } from '../catalog/hash.ts';
-import { moderationRequests } from '../db/schema.ts';
-import { OrganizationError, validId } from './access.ts';
+import { changeD1, type Database, rowsD1 } from '../db/d1.ts';
 import {
-  actorSanctions,
-  canAct,
-  context,
-  type Database,
-  mutateSanction,
-  targetUser,
-} from './moderation.ts';
+  instanceGrants,
+  moderationEvents,
+  moderationRequests,
+  moderationSanctions,
+  organizationAccounts,
+  sanctionAppeals,
+} from '../db/schema.ts';
+import { OrganizationError, validId } from './access.ts';
+import { context, sanctionChange } from './moderation.ts';
+
 export async function bulkSanctions(
   db: Database,
   subject: string,
   input: Record<string, unknown>,
 ) {
-  const operationId = validId(input.operationId),
-    instanceId = validId(input.instanceId),
-    hash = await contentHash(input);
+  const operationId = validId(input.operationId);
+  const instanceId = input.instanceId === null ? null : validId(input.instanceId);
   if (
-    (input.organizationWide === true && input.kind !== 'ban') ||
+    ((input.organizationWide === true || instanceId === null) && input.kind !== 'ban') ||
     !['add', 'revoke'].includes(String(input.batchAction)) ||
     !['ban', 'timeout', 'partial'].includes(String(input.kind)) ||
     !Array.isArray(input.targets) ||
@@ -29,86 +30,167 @@ export async function bulkSanctions(
   )
     throw new OrganizationError('INVALID_SANCTION', 400);
   const targets = input.targets as { actorId: string; expected: string }[];
+  if (
+    targets.some(
+      (target) =>
+        !target ||
+        typeof target.actorId !== 'string' ||
+        !/^[a-f0-9]{64}$/.test(target.actorId) ||
+        typeof target.expected !== 'string',
+    )
+  )
+    throw new OrganizationError('INVALID_ACCOUNT', 400);
   if (new Set(targets.map((target) => target.actorId)).size !== targets.length)
     throw new OrganizationError('INVALID_SANCTION', 400);
-  return db.transaction(async (tx) => {
-    const initial = await context(tx, subject, instanceId);
-    for (const scope of initial.scopes)
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${scope.id}`},0))`,
-      );
-    const ctx = await context(tx, subject, instanceId);
-    const [receipt] = await tx
+  const hash = await contentHash(input);
+  const selected = JSON.stringify(targets.map((target) => target.actorId));
+  return changeD1(db, async (writes) => {
+    const ctx = await context(db, subject, instanceId);
+    const sanctionScope = input.organizationWide === true ? null : instanceId;
+    if (sanctionScope === null && !ctx.account.administrator)
+      throw new OrganizationError('ADMIN_REQUIRED', 403);
+    const [receipt] = await db
       .select()
       .from(moderationRequests)
       .where(eq(moderationRequests.id, operationId));
     const results = targets.map((target) => ({
       actorId: target.actorId,
-      instanceIds:
-        input.organizationWide === true
-          ? ctx.scopes.map((instance) => instance.id)
-          : [instanceId],
+      instanceIds: sanctionScope
+        ? [sanctionScope]
+        : ctx.scopes.map((instance) => instance.id),
     }));
     if (receipt) {
       if (receipt.operatorId !== ctx.account.actorId || receipt.requestHash !== hash)
         throw new OrganizationError('OPERATION_CONFLICT', 409);
       return results;
     }
+    const accounts = await db
+      .select()
+      .from(organizationAccounts)
+      .where(
+        and(
+          eq(organizationAccounts.organizationId, ctx.organization.id),
+          sql`${organizationAccounts.actorId} in (select value from json_each(${selected}))`,
+        ),
+      );
+    const protectedActors = await db
+      .selectDistinct({ actorId: instanceGrants.actorId })
+      .from(instanceGrants)
+      .where(
+        sql`${instanceGrants.actorId} in (select value from json_each(${selected}))`,
+      );
+    const current = await db
+      .select()
+      .from(moderationSanctions)
+      .where(
+        and(
+          eq(moderationSanctions.organizationId, ctx.organization.id),
+          sql`${moderationSanctions.actorId} in (select value from json_each(${selected}))`,
+          instanceId
+            ? or(
+                eq(moderationSanctions.instanceId, instanceId),
+                isNull(moderationSanctions.instanceId),
+              )
+            : isNull(moderationSanctions.instanceId),
+        ),
+      );
+    const changes: (typeof moderationSanctions.$inferInsert)[] = [];
+    const events: (typeof moderationEvents.$inferInsert)[] = [];
+    const revoked: string[] = [];
     for (const item of targets) {
-      if (typeof item.actorId !== 'string' || !/^[a-f0-9]{64}$/.test(item.actorId))
-        throw new OrganizationError('INVALID_ACCOUNT', 400);
-      const target = await targetUser(tx, ctx.organization.id, item.actorId);
+      const target = accounts.find((account) => account.actorId === item.actorId);
       try {
-        if (!(await canAct(tx, ctx.account, target)))
+        if (!target) throw new OrganizationError('ACCOUNT_NOT_FOUND', 404);
+        if (target.withdrawnAt) throw new OrganizationError('ACCOUNT_WITHDRAWN', 409);
+        if (
+          target.actorId === ctx.account.actorId ||
+          (!ctx.account.administrator &&
+            (target.administrator ||
+              protectedActors.some((grant) => grant.actorId === target.actorId)))
+        )
           throw new OrganizationError('PROTECTED_ACCOUNT', 403);
-        const current = await actorSanctions(
-          tx,
-          ctx.organization.id,
-          item.actorId,
-          instanceId,
+        const sanctions = current.filter(
+          (sanction) => sanction.actorId === target.actorId,
         );
-        if (sanctionRevision(current) !== item.expected)
+        if (sanctionRevision(sanctions) !== item.expected)
           throw new OrganizationError('EDIT_CONFLICT', 409);
-        if (input.batchAction === 'add')
-          await mutateSanction(tx, subject, {
+        const previous =
+          input.batchAction === 'add'
+            ? [null]
+            : sanctions.filter(
+                (sanction) =>
+                  activeSanction(sanction) &&
+                  sanction.kind === input.kind &&
+                  sanction.instanceId === sanctionScope,
+              );
+        for (const before of previous) {
+          const id = crypto.randomUUID();
+          const action = input.batchAction === 'add' ? 'add' : 'revoke';
+          const request = {
             ...input,
             actorId: item.actorId,
-            action: 'add',
-            operationId: crypto.randomUUID(),
+            action,
+            operationId: id,
+            ...(before ? { id: before.id, revision: before.revision } : {}),
+          };
+          const after = sanctionChange(request, sanctionScope, item.actorId, id, before);
+          changes.push({ ...after, organizationId: ctx.organization.id });
+          events.push({
+            id,
+            organizationId: ctx.organization.id,
+            instanceId: sanctionScope,
+            actorId: item.actorId,
+            operatorId: ctx.account.actorId,
+            action,
+            reason: after.reason,
+            requestHash: await contentHash(request),
+            before,
+            after,
           });
-        else
-          for (const row of current.filter(
-            (sanction) =>
-              activeSanction(sanction) &&
-              sanction.kind === input.kind &&
-              sanction.instanceId ===
-                (input.organizationWide === true ? null : instanceId),
-          ))
-            await mutateSanction(tx, subject, {
-              ...input,
-              actorId: item.actorId,
-              action: 'revoke',
-              id: row.id,
-              revision: row.revision,
-              operationId: crypto.randomUUID(),
-            });
+          if (before?.kind === 'ban') revoked.push(before.id);
+        }
       } catch (error) {
         if (error instanceof OrganizationError)
-          error.target = target.displayName || '表示名未登録';
+          error.target = target?.displayName || '表示名未登録';
         throw error;
       }
     }
-    await tx.insert(moderationRequests).values({
-      id: operationId,
-      organizationId: ctx.organization.id,
-      operatorId: ctx.account.actorId,
-      requestHash: hash,
-      details: {
-        instanceId,
-        action: 'bulk-sanctions',
-        targets: targets.map((target) => target.actorId),
-      },
-    });
+    if (changes.length)
+      writes.push(
+        rowsD1(moderationSanctions, changes, true),
+        rowsD1(moderationEvents, events),
+      );
+    if (revoked.length)
+      writes.push(
+        db
+          .update(sanctionAppeals)
+          .set({
+            resolvedAt: new Date().toISOString(),
+            operatorId: ctx.account.actorId,
+            resolution: String(input.reason).trim(),
+            decision: 'revoke',
+            readAt: null,
+          })
+          .where(
+            and(
+              sql`${sanctionAppeals.sanctionId} in (select value from json_each(${JSON.stringify(revoked)}))`,
+              isNull(sanctionAppeals.resolvedAt),
+            ),
+          ),
+      );
+    writes.push(
+      db.insert(moderationRequests).values({
+        id: operationId,
+        organizationId: ctx.organization.id,
+        operatorId: ctx.account.actorId,
+        requestHash: hash,
+        details: {
+          instanceId,
+          action: 'bulk-sanctions',
+          targets: targets.map((target) => target.actorId),
+        },
+      }),
+    );
     return results;
   });
 }

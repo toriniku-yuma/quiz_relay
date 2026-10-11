@@ -68,7 +68,10 @@ export function useModeration() {
   const version = useRef(0);
   const history = useRef<{ target: string; before?: string }>({ target: '' });
   const target = JSON.stringify([auth.user?.id, instanceId, actorId]);
-  const enabled = !!instanceId && !!auth.user && !!organization.data?.account;
+  const enabled =
+    !!auth.user &&
+    !!organization.data?.account &&
+    (!!instanceId || organization.data.account.administrator);
   const refresh = useCallback(async () => {
     if (!enabled) return;
     const request = ++version.current;
@@ -177,7 +180,7 @@ export function useSanctionEditor(
   const [end, setEnd] = useState('');
   const [before, setBefore] = useState<Sanction | null>(null);
   const [revoke, setRevoke] = useState(false);
-  const [organizationWide, setOrganizationWide] = useState(false);
+  const [organizationWide, setOrganizationWide] = useState(instanceId === null);
   const [pending, setPending] = useState<Record<string, unknown> | null>(null);
   const [submitted, setSubmitted] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState('');
@@ -193,7 +196,7 @@ export function useSanctionEditor(
     if (submitted || busy) return;
     setMessage('');
     setBefore(row);
-    setOrganizationWide(row ? row.instanceId === null : false);
+    setOrganizationWide(row ? row.instanceId === null : instanceId === null);
     setRevoke(remove);
     setKind(row?.kind ?? '');
     setRestrictions(row?.restrictions ?? []);
@@ -267,7 +270,12 @@ export function useSanctionEditor(
           batchAction: revoke ? 'revoke' : 'add',
           targets: batch.map((user) => ({
             actorId: user.actorId,
-            expected: sanctionRevision(user.sanctions ?? []),
+            expected: sanctionRevision(
+              (user.sanctions ?? []).filter(
+                (sanction) =>
+                  sanction.instanceId === null || sanction.instanceId === instanceId,
+              ),
+            ),
           })),
         }
       : request;

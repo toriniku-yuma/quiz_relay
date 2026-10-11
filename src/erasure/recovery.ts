@@ -1,38 +1,43 @@
-import { eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
-import type { connectDatabase } from '../worker/db/connection.ts';
+import { eq, isNotNull, sql } from 'drizzle-orm';
+import { changeD1, type Database, readD1, rowBatchesD1 } from '../worker/db/d1.ts';
 import {
   accountInstanceSelections,
   accountWithdrawals,
+  federationFavorites,
   instanceDeletions,
+  instanceGrants,
   instances,
   organizationAccounts,
   organizations,
+  personalQuestionSets,
 } from '../worker/db/schema.ts';
 import { actorForSubject } from '../worker/organization/access.ts';
 
-type Database = Pick<ReturnType<typeof connectDatabase>['db'], 'select' | 'transaction'>;
 export async function exportPrivacyJournal(db: Database) {
-  const [organization] = await db.select().from(organizations);
-  if (!organization) throw new Error('ORGANIZATION_REQUIRED');
-  return {
-    version: 1 as const,
-    organizationId: organization.id,
-    namespace: organization.identityNamespace,
-    withdrawals: await db
-      .select({ job: accountWithdrawals, subject: organizationAccounts.subject })
-      .from(accountWithdrawals)
-      .innerJoin(
-        organizationAccounts,
-        eq(accountWithdrawals.actorId, organizationAccounts.actorId),
-      ),
-    deletions: await db
-      .select()
-      .from(instanceDeletions)
-      .where(isNotNull(instanceDeletions.deletedAt)),
-  };
+  return readD1(db, async () => {
+    const [organization] = await db.select().from(organizations);
+    if (!organization) throw new Error('ORGANIZATION_REQUIRED');
+    return {
+      version: 1 as const,
+      organizationId: organization.id,
+      namespace: organization.identityNamespace,
+      withdrawals: await db
+        .select({ job: accountWithdrawals, subject: organizationAccounts.subject })
+        .from(accountWithdrawals)
+        .innerJoin(
+          organizationAccounts,
+          eq(accountWithdrawals.actorId, organizationAccounts.actorId),
+        ),
+      deletions: await db
+        .select()
+        .from(instanceDeletions)
+        .where(isNotNull(instanceDeletions.deletedAt)),
+    };
+  });
 }
 type Journal = Awaited<ReturnType<typeof exportPrivacyJournal>>;
 
+// Offline recovery only. Keep this out of public routes and stop traffic before running it.
 export async function restorePrivacyJournal(db: Database, input: unknown) {
   const journal = input as Journal;
   if (
@@ -41,165 +46,187 @@ export async function restorePrivacyJournal(db: Database, input: unknown) {
     !Array.isArray(journal.deletions)
   )
     throw new Error('INVALID_PRIVACY_JOURNAL');
-  return db.transaction(async (tx) => {
-    const [organization] = await tx.select().from(organizations);
+  const actors = new Set<string>(),
+    operations = new Set<string>(),
+    owners = new Set<string>();
+  for (const { job, subject } of journal.withdrawals) {
+    if (
+      !job ||
+      job.organizationId !== journal.organizationId ||
+      typeof subject !== 'string' ||
+      !subject ||
+      job.actorId !== (await actorForSubject(journal.namespace, subject)) ||
+      !Number.isFinite(Date.parse(job.requestedAt)) ||
+      !/^[0-9a-f-]{36}$/.test(job.id) ||
+      actors.has(job.actorId) ||
+      operations.has(job.id)
+    )
+      throw new Error('INVALID_WITHDRAWAL_RECEIPT');
+    actors.add(job.actorId);
+    operations.add(job.id);
+  }
+  for (const job of journal.deletions) {
+    if (
+      !job ||
+      job.organizationId !== journal.organizationId ||
+      !job.deletedAt ||
+      !Number.isFinite(Date.parse(job.deletedAt)) ||
+      !Number.isFinite(Date.parse(job.requestedAt)) ||
+      !job.owner ||
+      !job.name ||
+      !/^[0-9a-f-]{36}$/.test(job.id) ||
+      !/^[0-9a-f-]{36}$/.test(job.instanceId) ||
+      owners.has(job.owner) ||
+      operations.has(job.id)
+    )
+      throw new Error('INVALID_DELETION_RECEIPT');
+    owners.add(job.owner);
+    operations.add(job.id);
+  }
+  return changeD1(db, async (writes) => {
+    const [organization] = await db.select().from(organizations);
     if (
       !organization ||
       organization.id !== journal.organizationId ||
       organization.identityNamespace !== journal.namespace
     )
       throw new Error('PRIVACY_JOURNAL_ORGANIZATION_MISMATCH');
-    // Recovery runs with traffic stopped and migration credentials, never through the app's DB role.
-    await tx
-      .update(instances)
-      .set({ state: 'preparing', roomInventoryComplete: false })
+    const accounts = await db
+      .select()
+      .from(organizationAccounts)
+      .where(eq(organizationAccounts.organizationId, organization.id));
+    const previousWithdrawals = await db.select().from(accountWithdrawals);
+    const previousDeletions = await db.select().from(instanceDeletions);
+    const scopes = await db
+      .select()
+      .from(instances)
       .where(eq(instances.organizationId, organization.id));
+    const accountRows: (typeof organizationAccounts.$inferInsert)[] = [];
+    const withdrawalRows: (typeof accountWithdrawals.$inferInsert)[] = [];
+    const deletionRows: (typeof instanceDeletions.$inferInsert)[] = [];
     for (const { job, subject } of journal.withdrawals) {
+      const account = accounts.find(
+        (row) => row.actorId === job.actorId || row.subject === subject,
+      );
       if (
-        job.organizationId !== organization.id ||
-        typeof subject !== 'string' ||
-        job.actorId !==
-          (await actorForSubject(organization.identityNamespace, subject)) ||
-        !Number.isFinite(Date.parse(job.requestedAt))
-      )
-        throw new Error('INVALID_WITHDRAWAL_RECEIPT');
-      await tx
-        .insert(organizationAccounts)
-        .values({
-          organizationId: organization.id,
-          subject,
-          actorId: job.actorId,
-          withdrawnAt: job.requestedAt,
-        })
-        .onConflictDoNothing();
-      const [account] = await tx
-        .select()
-        .from(organizationAccounts)
-        .where(eq(organizationAccounts.actorId, job.actorId));
-      if (
-        !account ||
-        account.subject !== subject ||
-        account.organizationId !== organization.id
+        account &&
+        (account.actorId !== job.actorId ||
+          account.subject !== subject ||
+          account.organizationId !== organization.id)
       )
         throw new Error('WITHDRAWAL_RECEIPT_CONFLICT');
-      if (!account.withdrawnAt)
-        await tx
-          .update(organizationAccounts)
-          .set({ withdrawnAt: job.requestedAt, displayName: null, administrator: false })
-          .where(eq(organizationAccounts.actorId, job.actorId));
-      const [previous] = await tx
-        .select()
-        .from(accountWithdrawals)
-        .where(
-          or(
-            eq(accountWithdrawals.actorId, job.actorId),
-            eq(accountWithdrawals.id, job.id),
-          ),
-        );
+      const previous = previousWithdrawals.find(
+        (row) => row.actorId === job.actorId || row.id === job.id,
+      );
       if (
         previous &&
         (previous.id !== job.id ||
           previous.actorId !== job.actorId ||
-          previous.organizationId !== organization.id)
+          previous.organizationId !== organization.id ||
+          previous.requestedAt !== job.requestedAt)
       )
         throw new Error('WITHDRAWAL_RECEIPT_CONFLICT');
-      await tx
-        .insert(accountWithdrawals)
-        .values({
-          id: job.id,
-          organizationId: organization.id,
-          actorId: job.actorId,
-          requestedAt: job.requestedAt,
-        })
-        .onConflictDoNothing();
-      await tx
-        .update(accountWithdrawals)
-        .set({
-          authDeletedAt: null,
-          erasedAt: null,
-          roomCursor: null,
-          lastAttemptAt: '1970-01-01T00:00:00Z',
-          retryAt: new Date().toISOString(),
-        })
-        .where(eq(accountWithdrawals.id, job.id));
+      accountRows.push({
+        ...account,
+        organizationId: organization.id,
+        subject,
+        actorId: job.actorId,
+        withdrawnAt: account?.withdrawnAt ?? job.requestedAt,
+        displayName: null,
+        administrator: false,
+      });
+      withdrawalRows.push({
+        ...previous,
+        id: job.id,
+        organizationId: organization.id,
+        actorId: job.actorId,
+        requestedAt: job.requestedAt,
+        authDeletedAt: null,
+        erasedAt: null,
+        auditErasedAt: null,
+        roomCursor: null,
+        lastAttemptAt: '1970-01-01T00:00:00.000Z',
+        retryAt: new Date().toISOString(),
+      });
     }
     for (const job of journal.deletions) {
-      if (
-        job.organizationId !== organization.id ||
-        !job.deletedAt ||
-        !Number.isFinite(Date.parse(job.deletedAt))
-      )
-        throw new Error('INVALID_DELETION_RECEIPT');
-      const [instance] = await tx
-        .select()
-        .from(instances)
-        .where(eq(instances.id, job.instanceId));
+      const instance = scopes.find(
+        (row) => row.id === job.instanceId || row.owner === job.owner,
+      );
       if (
         instance &&
-        (instance.owner !== job.owner || instance.organizationId !== organization.id)
+        (instance.id !== job.instanceId ||
+          instance.owner !== job.owner ||
+          instance.organizationId !== organization.id)
       )
         throw new Error('DELETION_RECEIPT_CONFLICT');
-      if (instance)
-        await tx
-          .update(instances)
-          .set({ state: 'archived', name: job.name })
-          .where(eq(instances.id, job.instanceId));
-      const [previous] = await tx
-        .select()
-        .from(instanceDeletions)
-        .where(
-          or(
-            eq(instanceDeletions.instanceId, job.instanceId),
-            eq(instanceDeletions.id, job.id),
-          ),
-        );
+      const previous = previousDeletions.find(
+        (row) =>
+          row.instanceId === job.instanceId ||
+          row.id === job.id ||
+          row.owner === job.owner,
+      );
       if (
         previous &&
         (previous.id !== job.id ||
           previous.instanceId !== job.instanceId ||
           previous.owner !== job.owner ||
-          previous.organizationId !== organization.id)
+          previous.organizationId !== organization.id ||
+          previous.name !== job.name ||
+          previous.operatorId !== job.operatorId ||
+          previous.requestedAt !== job.requestedAt ||
+          (previous.deletedAt && previous.deletedAt !== job.deletedAt))
       )
         throw new Error('DELETION_RECEIPT_CONFLICT');
-      await tx
-        .insert(instanceDeletions)
-        .values({
-          id: job.id,
-          instanceId: job.instanceId,
-          organizationId: job.organizationId,
-          owner: job.owner,
-          name: job.name,
-          operatorId: job.operatorId,
-          requestedAt: job.requestedAt,
-          deletedAt: job.deletedAt,
-        })
-        .onConflictDoNothing();
-      await tx
-        .update(instanceDeletions)
-        .set({
-          deletedAt: job.deletedAt,
-          acceptedAt: job.deletedAt,
-          checkCursor: null,
-          roomCursor: null,
-          inventoryPending: true,
-          lastAttemptAt: '1970-01-01T00:00:00Z',
-        })
-        .where(eq(instanceDeletions.id, job.id));
+      deletionRows.push({
+        ...previous,
+        id: job.id,
+        instanceId: job.instanceId,
+        organizationId: job.organizationId,
+        owner: job.owner,
+        name: job.name,
+        operatorId: job.operatorId,
+        requestedAt: job.requestedAt,
+        deletedAt: job.deletedAt,
+        acceptedAt: previous?.acceptedAt ?? job.acceptedAt ?? job.deletedAt,
+        checkCursor: null,
+        roomCursor: null,
+        inventoryPending: true,
+        lastAttemptAt: '1970-01-01T00:00:00.000Z',
+      });
     }
-    // Retired actors must never regain old author privileges through a restored grant.
-    await tx.execute(
-      sql`delete from quiz_game.instance_grants where actor_id in (select actor_id from quiz_game.organization_accounts where withdrawn_at is not null)`,
+    writes.push(
+      db
+        .update(instances)
+        .set({ state: 'preparing', roomInventoryComplete: false })
+        .where(eq(instances.organizationId, organization.id)),
     );
-    await tx
-      .delete(accountInstanceSelections)
-      .where(
-        inArray(
-          accountInstanceSelections.actorId,
-          tx
-            .select({ actorId: organizationAccounts.actorId })
-            .from(organizationAccounts)
-            .where(isNotNull(organizationAccounts.withdrawnAt)),
-        ),
+    if (accountRows.length)
+      writes.push(...rowBatchesD1(organizationAccounts, accountRows, true));
+    if (withdrawalRows.length)
+      writes.push(...rowBatchesD1(accountWithdrawals, withdrawalRows, true));
+    // Match deleted scope metadata before installing its irreversible deletion receipt.
+    for (const job of journal.deletions)
+      writes.push(
+        db
+          .update(instances)
+          .set({ state: 'archived', name: job.name })
+          .where(eq(instances.id, job.instanceId)),
       );
+    if (deletionRows.length)
+      writes.push(...rowBatchesD1(instanceDeletions, deletionRows, true));
+    const withdrawn = sql`select ${organizationAccounts.actorId} from ${organizationAccounts} where ${organizationAccounts.withdrawnAt} is not null`;
+    writes.push(
+      db.delete(instanceGrants).where(sql`${instanceGrants.actorId} in (${withdrawn})`),
+      db
+        .delete(federationFavorites)
+        .where(sql`${federationFavorites.actorId} in (${withdrawn})`),
+      db
+        .delete(accountInstanceSelections)
+        .where(sql`${accountInstanceSelections.actorId} in (${withdrawn})`),
+      db
+        .delete(personalQuestionSets)
+        .where(sql`${personalQuestionSets.authorId} in (${withdrawn})`),
+    );
   });
 }

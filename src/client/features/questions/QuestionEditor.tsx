@@ -149,7 +149,7 @@ export default function QuestionEditor({
               : '選択してください'}
           </option>
           {categories
-            .filter((category) => category.active)
+            .filter((category) => category.active && !category.importOnly)
             .map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
@@ -166,7 +166,7 @@ export default function QuestionEditor({
           }
           className="border border-line bg-input p-3"
         >
-          {['初級', '中級', '上級'].map((name, index) => (
+          {['簡単', '普通', '難しい'].map((name, index) => (
             <option key={name} value={index}>
               {name}
             </option>

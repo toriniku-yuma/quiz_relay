@@ -6,7 +6,15 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "triggers": { "crons": ["* * * * *"] },
+  "d1_databases": [
+    {
+      "binding": "GAME_D1",
+      "database_name": "quiz-relay-game",
+      "database_id": "a4661202-0ad1-4a9e-b767-dc6464b38e24",
+      "migrations_dir": "drizzle-d1"
+    }
+  ],
+  "vars": { "GAME_CONFIG_PROFILE": "default", "AUTH_PROVIDER": "clerk" },
   "durable_objects": {
     "bindings": [
       {

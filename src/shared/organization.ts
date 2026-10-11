@@ -23,7 +23,7 @@ export type OrganizationOverview = {
     pauseReason?: string | null;
     rankedPauseReason?: string | null;
     casualPauseReason?: string | null;
-    casualConfig?: import('./rooms').CasualSettings;
+    casualConfig?: import('./rooms.ts').CasualSettings;
     rankedPlayers?: number;
     hasOwnQuestions?: boolean;
     permissions: InstancePermission[];

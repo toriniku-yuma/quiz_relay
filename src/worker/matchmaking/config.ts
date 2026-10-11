@@ -1,4 +1,4 @@
-import { settings } from '../../shared/settings';
+import { settings } from '../../shared/settings.ts';
 
 export const waitingLifetime = settings.lobby.waitingLifetimeMs;
 export const reservationLifetime = settings.lobby.reservationLifetimeMs;

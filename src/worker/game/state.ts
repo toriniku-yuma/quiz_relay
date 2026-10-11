@@ -5,11 +5,11 @@ import type {
   Reply,
   RoomEvent,
   Snapshot,
-} from '../../shared/game';
-import { settings } from '../../shared/settings';
-import type { MatchDefinition } from '../catalog/definition';
-import type { MatchKind } from '../results/rating';
-import { makeResultRecord, type ResultRecord } from '../results/record';
+} from '../../shared/game.ts';
+import { settings } from '../../shared/settings.ts';
+import type { MatchDefinition } from '../catalog/definition.ts';
+import type { MatchKind } from '../results/rating.ts';
+import { makeResultRecord, type ResultRecord } from '../results/record.ts';
 import {
   answerReadings,
   choicesFor,
@@ -17,13 +17,14 @@ import {
   orderQuestions,
   type Question,
   readingChoices,
-} from './questions';
-import { appendEvent } from './recovery';
-import { type Rules, rules } from './rules';
+} from './questions.ts';
+import { appendEvent } from './recovery.ts';
+import { type Rules, rules } from './rules.ts';
 
-export { rules } from './rules';
+export { rules } from './rules.ts';
 
 export type State = {
+  parentRoomId?: string;
   reviewExpired?: boolean;
   guestNamesExpired?: boolean;
   answerStats?: {
@@ -46,6 +47,7 @@ export type State = {
     categoryId?: string;
     seriesId?: string;
     generation?: string;
+    sharedSource?: Question['sharedSource'];
     difficulty?: number;
     correct: boolean;
     participants: string[];
@@ -207,7 +209,13 @@ export function snapshot(state: State): Snapshot {
     questionId: state.question.id,
     questionNumber: state.questionIndex + 1,
     kind: state.matchKind,
-    questionCount: state.questions.length,
+    questionCount:
+      state.rules.winMode === 'questions'
+        ? Math.min(
+            state.questions.length,
+            state.rules.questionLimit ?? state.questions.length,
+          )
+        : state.questions.length,
     result: state.result ? { ...state.result } : null,
     roomSeq: state.roomSeq,
     reconnect: state.reconnect ? { ...state.reconnect } : null,
@@ -301,6 +309,7 @@ function judge(
         ...(question.categoryId ? { categoryId: question.categoryId } : {}),
         ...(question.seriesId ? { seriesId: question.seriesId } : {}),
         ...(question.generation ? { generation: question.generation } : {}),
+        ...(question.sharedSource ? { sharedSource: question.sharedSource } : {}),
         ...(question.difficulty !== undefined ? { difficulty: question.difficulty } : {}),
         correct: result === 'correct',
         participants: [...state.questionParticipants],

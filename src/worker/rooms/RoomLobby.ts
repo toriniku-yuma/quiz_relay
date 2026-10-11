@@ -1,21 +1,23 @@
-import type { Snapshot } from '../../shared/game';
+import type { Snapshot } from '../../shared/game.ts';
 import type {
   BroughtQuestion,
   RoomMember,
   RoomSettings,
   RoomView,
-} from '../../shared/rooms';
-import { validateBroughtSet, validateRoomSettings } from '../../shared/rooms';
-import { settings as runtime } from '../../shared/settings';
-import { type MatchDefinition, validateDefinition } from '../catalog/definition';
-import { contentHash } from '../catalog/hash';
-import type { Env } from '../env';
-import { deleteStored, readStored, writeStored } from '../game/storage';
-import type { InstanceScope } from '../matchmaking/Matchmaker';
-import { OrganizationError, validId } from '../organization/access';
-import { allowedInstanceActors } from '../organization/database';
-import { registerInstanceRoom } from '../organization/rooms';
-import { type Participant, publishRoom, roomDefinition } from './database';
+} from '../../shared/rooms.ts';
+import { validateBroughtSet, validateRoomSettings } from '../../shared/rooms.ts';
+import { settings as runtime } from '../../shared/settings.ts';
+import { type MatchDefinition, validateDefinition } from '../catalog/definition.ts';
+import { contentHash } from '../catalog/hash.ts';
+import type { Env } from '../env.ts';
+import { refreshParticipationAccess } from '../federation/participation.ts';
+import { deleteStored, readStored, writeStored } from '../game/storage.ts';
+import { failureCode } from '../http/handlers.ts';
+import type { InstanceScope } from '../matchmaking/Matchmaker.ts';
+import { OrganizationError, validId } from '../organization/access.ts';
+import { allowedInstanceActors } from '../organization/database.ts';
+import { registerInstanceRoom } from '../organization/rooms.ts';
+import { type Participant, publishRoom, roomDefinition } from './database.ts';
 
 type Member = RoomMember & {
   token: string;
@@ -42,7 +44,13 @@ export type UserRoom = {
   emptySince?: number;
   childSessionExpires?: number;
   match?: { id: string; actors: string[]; tokens: Record<string, string> };
-  starting?: { operationId: string; hash: string; revision: number; id: string };
+  starting?: {
+    operationId: string;
+    hash: string;
+    revision: number;
+    id: string;
+    expires?: number;
+  };
 };
 type Attachment = { actorId: string; live: boolean; lastSeen: number };
 type ChildSession = {
@@ -103,6 +111,9 @@ export class RoomLobby {
         return { value: await operation() };
       } catch (error) {
         if (error instanceof OrganizationError) return { error };
+        console.error(
+          JSON.stringify({ event: 'room_lobby_failed', code: failureCode(error) }),
+        );
         throw error;
       }
     });
@@ -281,6 +292,16 @@ export class RoomLobby {
     await this.status();
     const snapshot = await this.read();
     if (!snapshot) throw new OrganizationError('ROOM_NOT_FOUND', 404);
+    if (input.action === 'ready')
+      await refreshParticipationAccess(
+        this.env,
+        snapshot.scope.id,
+        [actor.id],
+        true,
+        undefined,
+        false,
+        snapshot.id,
+      );
     const allowed = await allowedInstanceActors(this.env, snapshot.scope, [actor.id]);
     const password = typeof input.password === 'string' ? input.password : undefined;
     if (password !== undefined && password.length > 128)
@@ -409,6 +430,7 @@ export class RoomLobby {
         revision: room.revision,
         id: crypto.randomUUID(),
       };
+      room.starting.expires = Date.now() + runtime.lobby.reservationLifetimeMs;
       await this.save(room);
       return { room: structuredClone(room) };
     });
@@ -422,6 +444,15 @@ export class RoomLobby {
         : null;
       if (this.isPlaying(previousStatus))
         throw new OrganizationError('MATCH_STARTED', 409);
+      await refreshParticipationAccess(
+        this.env,
+        initial.scope.id,
+        initial.members.map((member) => member.id),
+        true,
+        undefined,
+        false,
+        initial.id,
+      );
       const allowed = await allowedInstanceActors(
         this.env,
         initial.scope,
@@ -528,6 +559,7 @@ export class RoomLobby {
       initial.scope,
       fixed.members,
       fixed.tokens,
+      initial.id,
     );
     return this.atomic(async () => {
       const previous = await this.ctx.storage.get<{
@@ -749,12 +781,21 @@ export class RoomLobby {
       this.sweep(room);
       await this.save(room);
       this.broadcast(room);
+      if (this.env.PROBES_ENABLED === 'true' && this.env.ROOM_LIFECYCLE_LOGS === 'true')
+        console.info(
+          JSON.stringify({
+            event: 'room_lobby_connected',
+            objectId: this.ctx.id.toString(),
+            roomId: room.id,
+            sockets: this.sockets().length,
+          }),
+        );
       return new Response(null, { status: 101, webSocket: pair[0] });
     });
   }
   async message(socket: WebSocket, message: string | ArrayBuffer) {
     if (message !== 'sync') {
-      this.close(socket);
+      this.close(socket, undefined, 'WS_PROTOCOL');
       return;
     }
     await this.atomic(async () => {
@@ -771,7 +812,7 @@ export class RoomLobby {
   }
   async disconnect(socket: WebSocket) {
     await this.atomic(async () => {
-      this.close(socket);
+      this.close(socket, undefined, 'WS_DISCONNECTED');
       const room = await this.read();
       if (room) {
         this.sweep(room);
@@ -806,12 +847,13 @@ export class RoomLobby {
       );
       try {
         if (pending) await this.finishStart(pending, operationId);
-        else {
-          // No child RPC has been prepared yet; let the same request retry the admission checks.
+        else if ((room.starting.expires ?? 0) <= Date.now()) {
+          // Allow live admission checks to finish before recovering an abandoned start.
           await this.atomic(async () => {
             const latest = await this.read();
             if (
               latest?.starting?.operationId === operationId &&
+              (latest.starting.expires ?? 0) <= Date.now() &&
               !(await this.ctx.storage.get(`start:${operationId}`))
             ) {
               latest.starting = undefined;
@@ -844,8 +886,18 @@ export class RoomLobby {
       .getWebSockets()
       .filter((socket) => (socket.deserializeAttachment() as Attachment).live);
   }
-  private close(socket: WebSocket, reason?: string) {
+  private close(socket: WebSocket, reason?: string, cause = 'WS_CLOSED') {
     const attachment = socket.deserializeAttachment() as Attachment;
+    if (this.env.PROBES_ENABLED === 'true' && this.env.ROOM_LIFECYCLE_LOGS === 'true')
+      console.info(
+        JSON.stringify({
+          event: 'room_lobby_closed',
+          objectId: this.ctx.id.toString(),
+          code: reason ?? cause,
+          heartbeatAgeMs: Date.now() - attachment.lastSeen,
+          sockets: this.sockets().length,
+        }),
+      );
     attachment.live = false;
     socket.serializeAttachment(attachment);
     try {
@@ -861,7 +913,7 @@ export class RoomLobby {
           runtime.connection.heartbeatTimeoutMs <=
         now
       )
-        this.close(socket);
+        this.close(socket, undefined, 'HEARTBEAT_TIMEOUT');
     const connected = new Set(
       this.sockets().map(
         (socket) => (socket.deserializeAttachment() as Attachment).actorId,
@@ -878,7 +930,7 @@ export class RoomLobby {
       room.members = room.members.filter((member) => !ids.has(member.id));
       for (const socket of this.sockets())
         if (ids.has((socket.deserializeAttachment() as Attachment).actorId))
-          this.close(socket);
+          this.close(socket, undefined, 'SESSION_EXPIRED');
       room.revision++;
     }
     for (const member of room.members) {
@@ -944,7 +996,7 @@ export class RoomLobby {
       try {
         socket.send(JSON.stringify({ type: 'lobby', room: this.view(room, actor) }));
       } catch {
-        this.close(socket);
+        this.close(socket, undefined, 'WS_SEND_FAILED');
       }
     }
   }

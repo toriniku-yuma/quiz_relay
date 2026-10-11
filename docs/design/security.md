@@ -6,17 +6,18 @@
 
 ## 認証と参加セッション
 
-Supabase getUserでBearerを検証し、匿名・メール未確認を正式参加から除外します。
-メールリンクとGoogle認証を使い、名前・メールの一致でアカウントを独自統合しません。
+Googleログインに限定します。Clerkではsession tokenの署名・期限・issuer・許可originを検証し、検証済みGoogle連携のないアカウント、パスワード設定済み・BAN・ロック済みのアカウントを拒否します。Clerkの管理画面でもメールリンク・コード・パスワード・電話・passkey等を無効にし、Google以外の認証経路を残しません。Googleを連携済みという情報だけでは、過去のセッションのログイン方法を証明できないため、設定変更時は旧セッションを失効させます。
+移行前のSupabaseではgetUserとgetClaimsでBearerを検証し、匿名・メール未確認・検証済みamrにOAuth認証がないセッションを除外します。名前・メールの一致でアカウントを独自統合しません。旧ID対応付けは管理APIで取得したGoogleのprovider subjectを照合してから行います。
 初回管理者は設置者指定の検証済みAuth subjectだけが設定できます。初回設定完了後は再初期化を拒否します。
 
 参加更新APIは同一Origin・本人確認・本文上限を要求します。
 WebSocketは同一Originと部屋専用HttpOnly cookie、DOのactor対応表で認可します。
-cookieは最大12時間、アプリのログアウトで失効します。Supabase管理側からの即時失効伝播は未実装です。
+cookieは最大12時間、アプリのログアウトで失効します。Auth管理側から既存の対戦接続への即時失効伝播は未実装です。
 復帰情報はsubjectごとに分離し、開発参加APIのDEV／LOCAL_GAME_ENABLED制限を維持します。
 
 ゲストはサーバーと部屋の両方が許可した非レート参加だけ。ランク参加・部屋作成・作問資格を与えません。
 別組織の利用者は開催元のチケット交換を経由し、外部Authトークンを無検証で開催元のユーザーとして扱いません。
+外部ログインは[署名証明とstateの検証](protocol.md#参加チケットの形式)を経由し、クエリの所属元指定だけでログイン済みと判断しません。開催先の外部本人は所属origin・actorで固定し、Clerk会員・作問権限・管理権限を自動付与しません。開催先の自身のアカウントは優先し、ログアウトは開催先のCookieと予約を失効します。所属元のAuth管理側から外部ログインCookieへの即時失効伝播は保証せず、退会通知と12時間の期限で閉じます。新規参加には毎回所属元の本人確認が必要です。
 
 ## 権限と公開範囲
 
@@ -32,25 +33,27 @@ cookieは最大12時間、アプリのログアウトで失効します。Supaba
 ## DB接続と秘密
 
 service_role・管理PAT・DB接続文字列・署名秘密鍵をブラウザーや応答に渡しません。
-公開Auth設定はURLとpublishableKeyだけです。内部スキーマのgrants・RLSを明示します。
-reader・結果writer・設定writer・catalog writer・組織管理ロール・migrationを分離します。
-管理用接続はCLIの秘密ファイルに置き、Workerへ流用しません。[DB管理](../guides/database.md)。
+公開Auth設定はprovider・publishableKeyと、移行前のSupabase URLだけです。Clerk secret keyはWorker内の検証・ユーザー照合と専用消去Workerで使い、応答・ブラウザーへ渡しません。現在はWorkerで全操作を認可し、D1の公開クライアント接続を提供しません。旧PostgreSQLのgrants・RLSは移行元の履歴として保持します。
+現在は公開API・非公開消去サービス・設置者用CLI・migrationを分離します。旧PostgreSQLのreader・writer等のロールは移行元にだけ残します。
+旧DBの読取り用接続はCLIの秘密ファイルに置き、Workerへ流用しません。[DB管理](../guides/database.md)。
 過去版の不変トリガーとパラメーター化されたDrizzle操作を維持します。
 
 ## 外部への送信境界
 
-製品はCloudflare標準URLと独自ドメインを受け付けます。管理者が別経路で確認したHTTPS originの完全一致リストを使い、任意URL・IPリテラル・localhost・標準443以外のポートを受け付けません。
+現在はCloudflare標準URLを受け付け、独自ドメインは後続対応とします。登録済みHTTPS originの完全一致リストを使い、任意URL・IPリテラル・localhost・標準443以外のポートを受け付けません。
 送信先pathは通信設計の固定値から作り、入力されたURLをそのままfetchしません。userinfo・query・fragmentをorigin登録へ含めません。リダイレクトはmanualとし、3xxを追跡しません。別originへ署名・cookie・Authorizationを転送しません。
 
 global_fetch_strictly_publicを有効にして公開経路を使います。このフラグは公開インターネット同様の経路選択であり、それだけでアプリのSSRF対策完了とは扱いません。DNSのCNAME・A・AAAAが内部・loopback・link-localへ向く場合や、接続時にそのような宛先へ変わる場合を拒否する公開接続経路を検証します。事前のDNS検査だけで接続先を保証したと扱いません。
-現行の検証済みプローブはworkers.dev限定です。独自ドメイン対応では名前解決から実接続までの送信先制限、DNS変更、リダイレクト、秘密非転送の契約試験を実装条件とします。これは未実装・未検証の範囲であり、既存のホスト制限だけを削除して対応済みにはしません。
+現行の組織間通信はworkers.dev限定です。URLから新たに取得する相手は、検査済みoriginの固定公開鍵APIだけを呼び、鍵と対象インスタンスの署名情報を保存します。開催元は初期状態では所属組織の手動承認を必要とし、「禁止した組織以外は許可」を選んだ場合だけ未承認の組織も受け入れます。独自ドメイン対応では名前解決から実接続までの送信先制限、DNS変更、リダイレクト、秘密非転送の契約試験を実装条件とします。独自ドメインは未実装・未検証の範囲であり、既存のホスト制限だけを削除して対応済みにはしません。
 
 [公開経路の公式仕様](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)と[fetch](https://developers.cloudflare.com/workers/runtime-apis/fetch/)を参照。
 
-承認HTTPS origin・pin済みkid・鍵の有効期間・署名・用途・宛先・時刻・hash・nonce・サイズ・型を検証します。
+登録済みHTTPS origin・pin済みkid・鍵の有効期間・署名・用途・宛先・時刻・hash・nonce・サイズ・型を検証します。
 任意URLの取得、リダイレクト、内部・loopback・link-local IPへの送信を拒否します。
-未知の鍵は自動取得・承認しません。鍵更新は別経路で確認し、旧鍵と承認履歴を監査のため保持します。
+URLで初めて開く相手の公開鍵は、HTTPS・固定path・5秒・4KiB・redirect拒否・型とEd25519鍵の検査を通して取得します。自動承認や既存鍵の置換はしません。鍵更新は別経路で確認し、旧鍵と承認履歴を監査のため保持します。
 漏洩時はpeerを停止して新鍵を確認し、影響範囲を調べます。正常な更新で過去結果を一括無効にしません。
+
+未承認相手との通信は、対象の署名情報取得・許可された本人の参加予約・所属元の本人確認応答・参加済み結果と振り返り・匿名化通知に限定します。結果と通知では保存済みの本人・対象との関係を確認し、無関係なactorやinstanceの受信を拒否します。問題共有は許可しません。広く受け入れる開催元が未知の送信元からメタデータ・予約要求を受けた場合、originと件数制限を確認してから固定公開鍵APIを取得し、署名を検証します。自動取得は承認や問題共有許可を付与せず、既存鍵・明示禁止を上書きしません。
 
 ## ログと入力制限
 

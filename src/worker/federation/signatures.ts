@@ -21,14 +21,24 @@ type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
 export interface Delivery {
   protocolVersion: 1;
-  messageType: 'probe';
+  messageType:
+    | 'probe'
+    | 'metadata.request'
+    | 'metadata.response'
+    | 'questions.request'
+    | 'questions.response'
+    | 'event'
+    | 'event.receipt'
+    | 'reservation.request'
+    | 'reservation.response';
   issuer: string;
   audience: string;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
+  replyTo?: string;
   method: 'POST';
-  path: typeof INBOX_PATH;
+  path: string;
   bodyHash: string;
   body: Json;
 }
@@ -100,9 +110,14 @@ export async function verifyDelivery(
     key: CryptoKey;
     now: number;
     consumeNonce: (nonce: string, retainUntil: number) => Promise<boolean>;
+    messageType?: Delivery['messageType'];
+    path?: string;
+    maxBytes?: number;
+    replyTo?: string;
   },
 ) {
-  if (encoder.encode(message).length > MAX_MESSAGE_BYTES) throw new Error('MESSAGE_SIZE');
+  if (encoder.encode(message).length > (options.maxBytes ?? MAX_MESSAGE_BYTES))
+    throw new Error('MESSAGE_SIZE');
 
   const segments = message.split('.');
   if (segments.length !== 3 || segments.some((part) => !/^[A-Za-z0-9_-]+$/.test(part)))
@@ -128,15 +143,23 @@ export async function verifyDelivery(
   const delivery = value as Delivery;
   const fields =
     'audience,body,bodyHash,expiresAt,issuedAt,issuer,messageType,method,nonce,path,protocolVersion';
+  const response =
+    typeof delivery.messageType === 'string' &&
+    (delivery.messageType.endsWith('.response') ||
+      delivery.messageType === 'event.receipt');
   if (
-    Object.keys(delivery).sort().join(',') !== fields ||
+    Object.keys(delivery).sort().join(',') !==
+      (delivery.replyTo === undefined ? fields : `${fields},replyTo`) ||
     delivery.protocolVersion !== 1 ||
-    delivery.messageType !== 'probe' ||
+    delivery.messageType !== (options.messageType ?? 'probe') ||
     delivery.method !== 'POST' ||
-    delivery.path !== INBOX_PATH ||
+    delivery.path !== (options.path ?? INBOX_PATH) ||
     typeof delivery.nonce !== 'string' ||
     !/^[0-9a-f-]{36}$/.test(delivery.nonce) ||
-    typeof delivery.bodyHash !== 'string'
+    typeof delivery.bodyHash !== 'string' ||
+    (delivery.replyTo !== undefined &&
+      (!response || !/^[0-9a-f-]{36}$/.test(delivery.replyTo))) ||
+    (options.replyTo !== undefined && delivery.replyTo !== options.replyTo)
   )
     throw new Error('DELIVERY_SCHEMA');
 

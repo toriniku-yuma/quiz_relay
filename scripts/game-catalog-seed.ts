@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { validateMatchConfig } from '../src/worker/catalog/config.ts';
 import { validateDefinition } from '../src/worker/catalog/definition.ts';
 import { contentHash } from '../src/worker/catalog/hash.ts';
-import { connectDatabase } from '../src/worker/db/connection.ts';
+import { changeD1, rowBatchesD1 } from '../src/worker/db/d1.ts';
 import {
   competitions,
   questionAvailability,
@@ -11,6 +11,7 @@ import {
   questionVersions,
   rulesetVersions,
 } from '../src/worker/db/schema.ts';
+import { localD1 } from './local-d1.ts';
 
 async function main() {
   const [path = 'config/matchmaking.json', flag, ...extra] = process.argv.slice(2);
@@ -35,58 +36,71 @@ async function main() {
     questions,
   });
   if (flag === '--apply') {
-    const url = process.env.GAME_MIGRATION_DATABASE_URL;
-    if (!url) throw new Error('GAME_MIGRATION_DATABASE_URL_REQUIRED');
-    const { db, close } = connectDatabase(url, process.env.DATABASE_CA_CERT);
+    const { db, close } = await localD1();
     try {
-      await db.transaction(async (tx) => {
-        await tx.insert(rulesetVersions).values({
-          owner: config.owner,
-          rulesetId: config.rulesetId,
-          version: 1,
-          rulesHash: definition.rulesHash,
-          config: config.rules,
-        });
-        await tx.insert(questionVersions).values(
-          definition.questions.map((question) => ({
+      await changeD1(db, async (writes) => {
+        writes.push(
+          db.insert(rulesetVersions).values({
             owner: config.owner,
-            questionId: question.id,
+            rulesetId: config.rulesetId,
             version: 1,
-            payload: question,
-          })),
+            rulesHash: definition.rulesHash,
+            config: config.rules,
+          }),
         );
-        await tx.insert(questionSets).values({
-          owner: config.owner,
-          setId: config.questionSet.id,
-          version: config.questionSet.version,
-          manifestHash: definition.manifestHash,
-        });
-        await tx.insert(questionSetItems).values(
-          definition.questions.map((question, index) => ({
+        writes.push(
+          ...rowBatchesD1(
+            questionVersions,
+            definition.questions.map((question) => ({
+              owner: config.owner,
+              questionId: question.id,
+              version: 1,
+              payload: question,
+            })),
+          ),
+        );
+        writes.push(
+          db.insert(questionSets).values({
             owner: config.owner,
             setId: config.questionSet.id,
-            setVersion: config.questionSet.version,
-            ordinal: index + 1,
-            questionId: question.id,
-            questionVersion: 1,
-          })),
+            version: config.questionSet.version,
+            manifestHash: definition.manifestHash,
+          }),
         );
-        await tx.insert(questionAvailability).values(
-          definition.questions.map((question) => ({
+        writes.push(
+          ...rowBatchesD1(
+            questionSetItems,
+            definition.questions.map((question, index) => ({
+              owner: config.owner,
+              setId: config.questionSet.id,
+              setVersion: config.questionSet.version,
+              ordinal: index + 1,
+              questionId: question.id,
+              questionVersion: 1,
+            })),
+          ),
+        );
+        writes.push(
+          ...rowBatchesD1(
+            questionAvailability,
+            definition.questions.map((question) => ({
+              owner: config.owner,
+              questionId: question.id,
+            })),
+          ),
+        );
+        writes.push(
+          db.insert(competitions).values({
             owner: config.owner,
-            questionId: question.id,
-          })),
+            competitionId: config.competitionId,
+            version: 1,
+            playersPerMatch: config.playersPerMatch,
+            rulesetId: config.rulesetId,
+            rulesetVersion: 1,
+            setId: config.questionSet.id,
+            setVersion: config.questionSet.version,
+          }),
         );
-        await tx.insert(competitions).values({
-          owner: config.owner,
-          competitionId: config.competitionId,
-          version: 1,
-          playersPerMatch: config.playersPerMatch,
-          rulesetId: config.rulesetId,
-          rulesetVersion: 1,
-          setId: config.questionSet.id,
-          setVersion: config.questionSet.version,
-        });
       });
     } finally {
       await close();

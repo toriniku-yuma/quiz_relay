@@ -14,6 +14,7 @@ export type RoomSettings = {
   presenter: boolean;
   guests: boolean;
   categories: string[];
+  sharedSources?: string[];
   difficulties: number[];
   winMode: 'target' | 'questions';
   count: number;
@@ -62,6 +63,7 @@ export const newRoomSettings = (guests: boolean): RoomSettings => ({
   presenter: false,
   guests,
   categories: [],
+  sharedSources: [],
   difficulties: [0, 1, 2],
   winMode: 'target',
   count: 7,
@@ -149,8 +151,9 @@ export function validateRoomSettings(value: unknown): RoomSettings {
     throw new Error('INVALID_ROOM_SETTINGS');
   const settings = value as RoomSettings;
   if (
-    Object.keys(settings).sort().join(',') !==
-      Object.keys(newRoomSettings(false)).sort().join(',') ||
+    Object.keys({ ...settings, sharedSources: settings.sharedSources ?? [] })
+      .sort()
+      .join(',') !== Object.keys(newRoomSettings(false)).sort().join(',') ||
     typeof settings.name !== 'string' ||
     !settings.name.trim() ||
     graphemes(settings.name).length > 80 ||
@@ -166,6 +169,12 @@ export function validateRoomSettings(value: unknown): RoomSettings {
       (categoryId) =>
         typeof categoryId !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(categoryId),
     ) ||
+    (settings.sharedSources !== undefined &&
+      (!Array.isArray(settings.sharedSources) ||
+        settings.sharedSources.length > 100 ||
+        settings.sharedSources.some(
+          (key) => typeof key !== 'string' || key.length > 350,
+        ))) ||
     !Array.isArray(settings.difficulties) ||
     !settings.difficulties.length ||
     settings.difficulties.some((difficulty) => ![0, 1, 2].includes(difficulty)) ||

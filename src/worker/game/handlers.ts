@@ -1,7 +1,7 @@
 import type { Context, Handler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import type { Env } from '../env';
-import { parseJoin } from './validation';
+import type { Env } from '../env.ts';
+import { parseJoin } from './validation.ts';
 
 export function rejectLargeGameBody(context: Context<{ Bindings: Env }>) {
   return context.json({ code: 'INVALID_SETUP' }, 413);

@@ -1,5 +1,5 @@
 import values from '../../../config/rating.json' with { type: 'json' };
-import type { Player, Result } from '../../shared/game';
+import type { Player, Result } from '../../shared/game.ts';
 
 export type MatchKind = 'ranked' | 'casual' | 'room' | 'development';
 

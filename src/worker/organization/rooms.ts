@@ -1,8 +1,10 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { QuestionSelection } from '../../shared/questions.ts';
+import { changeD1 } from '../db/d1.ts';
 import { instanceDeletions, instanceRooms, instances } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import type { InstanceScope } from '../matchmaking/Matchmaker.ts';
+import { privateSelectionSQL } from '../results/privacy.ts';
 import { OrganizationError } from './access.ts';
 import { organizationDatabase } from './database.ts';
 
@@ -15,10 +17,8 @@ export async function registerInstanceRoom(
 ) {
   const { db, close } = organizationDatabase(env);
   try {
-    return await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${scope.id}`},0))`,
-      );
+    return await changeD1(db, async (writes) => {
+      const tx = db;
       const [instance] = await tx
         .select()
         .from(instances)
@@ -34,15 +34,23 @@ export async function registerInstanceRoom(
         ).length
       )
         throw new OrganizationError('INSTANCE_DELETING', 409);
-      await tx
-        .insert(instanceRooms)
-        .values({ roomId, instanceId: scope.id })
-        .onConflictDoNothing();
+      const [registered] = await tx
+        .select()
+        .from(instanceRooms)
+        .where(eq(instanceRooms.roomId, roomId));
+      if (registered && registered.instanceId !== scope.id)
+        throw new OrganizationError('INSTANCE_ROOM_CONFLICT', 409);
+      writes.push(
+        tx
+          .insert(instanceRooms)
+          .values({ roomId, instanceId: scope.id })
+          .onConflictDoNothing(),
+      );
       if (selection) {
-        const [row] = await tx.execute<{ selection: QuestionSelection }>(
-          sql`select quiz_game.private_selection(${scope.owner},${JSON.stringify(selection)}::jsonb) as selection`,
+        const [row] = await tx.all<{ selection: string }>(
+          sql`select ${privateSelectionSQL(sql`${scope.owner}`, sql`${JSON.stringify(selection)}`)} as selection`,
         );
-        return row.selection;
+        return JSON.parse(row.selection) as QuestionSelection;
       }
     });
   } finally {

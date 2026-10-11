@@ -58,9 +58,9 @@ export default function QuestionSelectionSettings({
               (weight, level) =>
                 level <= band && (
                   <TextField
-                    key={['初級', '中級', '上級'][level]}
+                    key={['簡単', '普通', '難しい'][level]}
                     id={`weight-${band}-${level}`}
-                    label={['初級', '中級', '上級'][level]}
+                    label={['簡単', '普通', '難しい'][level]}
                     type="number"
                     min={0}
                     step="any"

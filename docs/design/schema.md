@@ -3,7 +3,9 @@
 [一覧](../README.md) ／ [DB操作](../guides/database.md)
 
 **実装済みの列・制約は `src/worker/db/schema.ts` が正です。**
-このページはデータの責任範囲を説明します。作問・運営・カジュアルマッチ・部屋の保存は実装済み、組織間連携の拡張は未実装です。
+このページはデータの責任範囲を説明します。作問・運営・カジュアルマッチ・部屋・組織間連携をD1の75テーブルへ保存します。0000〜0036のmigrationとDrizzleスキーマを照合して管理します。
+
+75テーブルには、適用済みmigrationの履歴維持のために残す未使用の `quiz_information_entries` を含みます。インフォメーションの画面・APIは今回の対象外であり、提供しません。
 
 ## 識別と分離
 
@@ -11,7 +13,9 @@
 表示名を変えても識別子・問題・結果・レートを変えません。[組織設計](organization.md)。
 組織アカウントの現在の表示名は、組織IDとNFKC・前後空白除去後の名前の組で一意制約を設けます。登録・変更の同時要求でも重複を許可しません。過去結果の参加時表示名には現在名の一意制約を適用しません。
 ownerを複合FKに含め、他インスタンスの同名IDへ誤結合しないようにします。
-ブラウザーの anon・authenticated・PUBLIC へ内部スキーマを公開しません。
+D1はWorker bindingからだけ接続し、ブラウザーへDBを公開しません。本人・組織・操作権限はWorkerで確認します。
+
+連携の再送防止記録はissuer・purpose・nonceの一意制約で原子的に消費し、業務データの更新世代とは分離します。通信のたびに組織・結果・権限の読み取りを無効化しないためです。期限消去もこの表だけに限定し、承認・参加・結果の更新は通常の整合性検査を維持します。
 
 ## 固定する情報と変更できる情報
 
@@ -19,7 +23,7 @@ ownerを複合FKに含め、他インスタンスの同名IDへ誤結合しな�
 | --- | --- |
 | ルール・問題・問題セット | 不変版。内容hashと参照版を保持 |
 | 問題の本文・正答・読み・解説 | 現行は question_versions.payload 内。解答専用表は未実装 |
-| 改訂 | 新questionIdを作る。改訂系列と旧IDへの関連を保持する設計へ拡張 |
+| 改訂 | 新questionIdを作る。不変の改訂系列と旧IDへの関連を保持 |
 | 使用停止 | 不変内容と別の question_availability で管理 |
 | 有効な設定 | matchmaking_settings の参照を切り替える |
 | 試合 | 開始時のルール・問題・種別・開催元を固定 |
@@ -35,18 +39,16 @@ choiceCountは既存の保存項目として4固定とし、値を変更する�
 ## 設定の更新
 
 `quiz_game.matchmaking_settings` は `(owner, profile)` を主キーとし、同じownerのマッチング定義版を参照します。
-開催元単位のtransaction advisory lockで版割当を直列化し、版の追加・再利用と有効参照の更新を同一TXにまとめます。
+revisionの競合検査とD1のatomic batchで版の追加・再利用と有効参照の更新をまとめます。
+読み取り・更新の再計画は最大3回です。版が競合したときだけ50〜200msの待ち時間を分散させ、複数の処理が同じ間隔で競合し続けることを避けます。通常処理の待ち時間・認可・rollback・再試行回数は増やしません。
 待機・進行中のDOは保存した版を保持します。[設定変更](../guides/configuration.md)。
 
-readerはSELECTのみ、config writerはカタログ読取・ルール／定義版追加・有効参照更新だけを許可します。
-catalog writerはcatalog_operatorsで許されたownerの問題登録・改訂・停止・セット作成を扱います。
-Webの運営権限とCLIのDBロール認可を混同しません。
+D1にPostgreSQLのDBロール・RLSを残しません。通常APIの本人・対象認可、非公開の消去Worker、管理者subjectとownerを照合する設置者用CLIを分けます。
 
 ## 結果の確定
 
 resultIdと `(owner, matchId)` を一意にします。同一ID・同一hashの再試行だけを成功扱いにし、別内容をON CONFLICTで上書きしません。
-結果・参加者差分・outboxは不変トリガーで守り、専用results writerのSELECT/INSERTだけを許可します。
-readerへoutboxを公開しません。
+結果・参加者差分・outboxは不変トリガーで守り、Workerの保存処理だけが原本を追加し、通常APIへoutboxを公開しません。
 
 DB障害ではDOに未保存原本と再試行予定を残します。commit後の応答消失も同じ原本で再試行します。
 部屋の参加枠を解放しても未保存結果を削除しません。[復旧設計](architecture.md)。
@@ -68,32 +70,42 @@ DB障害ではDOに未保存原本と再試行予定を残します。commit後�
 | ロビー・開始の固定要求 | 親DO。操作ID・要求hash・revision、参加権、設定、持込内容と期限 |
 | 試合と結果 | 子DOと既存の結果／outbox。部屋ごとに新しい試合ID・結果IDで固定。`kind`と専任／ゲストを保持し、非レート差分は0 |
 
-0048は列・表・FK・index、0049は実行ロールの権限と消去・公開時の期限処理を追加します。ブラウザーのDB直接権限は付与しません。ゲストは通報者になれますが個人通報の対象にはできず、対象ユーザーのFKは登録アカウントに維持します。持込問題は出題済み内容だけを30日公開し、問題通報自体の365日保持とは分けます。
+D1のmigrationで列・表・FK・indexと不変保護を管理します。ブラウザーのDB直接接続は提供しません。ゲストは通報者になれますが個人通報の対象にはできず、対象ユーザーのFKは登録アカウントに維持します。持込問題は出題済み内容だけを30日公開し、問題通報自体の365日保持とは分けます。
 
-## 連携で追加する情報
+## 連携の保存情報
 
 | 情報 | 主なキー・条件 |
 | --- | --- |
 | 接続先と公開鍵 | 組織origin・対象instance・kid・有効期間・承認状態。旧鍵履歴を保持 |
-| 許可 | 相手instance・機能・方向・ランク／カジュアルマッチ |
+| 参加許可 | organizationsの外部参加方式・更新世代と、federation_peersの承認・明示禁止・ランク／カジュアルの受入許可。承認と禁止は独立して保存 |
+| 共有許可 | 相手instance・機能・方向。参加の受入方式とは独立し、問題・結果共有の個別設定を保持 |
+| URL取得先 | `(sourceInstanceId, peerOrigin, instanceId)`。新しいsourceInstanceIdは自組織ID。署名確認済みの対象1件を保存し、未使用・お気に入りなしの取得先は30日で整理 |
+| 本人の参加記録 | `(peerOrigin, reservationId)`。本人actor・所属組織・開催instance・match・modeを固定し、結果と匿名化通知の受信を限定。表示名や問題本文は持たない |
 | 共有問題 | 共有元instance・改訂系列・questionId・版・hash |
 | ローカル分類と除外 | 取り込み設定・系列ID。原本の同期で上書きしない |
+| 取り込み専用カテゴリ | カテゴリの `import_only`。通常投稿・JSON取込・通常問題の移動をAPIで禁止 |
+| 共有元カテゴリの候補 | `quiz_federation_question_sources` の `(instance_id, peer_origin, source_instance_id)`。名前・取得日時・次回予定・lease・エラーを保持。画面APIはキャッシュを読み、定期処理で取得 |
 | inbox | `(origin, eventId)` 一意。署名原本・hash・受領／処理／隔離状態 |
 | outbox配送先 | `(origin, eventId, destination)` 一意。試行回数・次回時刻・lease・エラー |
 | チケット消費 | `(issuer, jti)` 一意。期限まで永続的に重複交換を拒否 |
 | 参加セッション | tokenのhash・actor・開催instance・match・期限・失効 |
+| 外部ログイン | tokenのhash・所属origin・所属組織・所属actor・表示名・組織名・12時間の期限。参加予約やClerk会員とは独立 |
 
 受信側はinboxと原本を同一TXで保存してからACKします。受領と履歴反映は別状態として再処理可能にします。
 結果共有は本人の外部対戦履歴のために使い、問題本文・正答・入力履歴は配送しません。[通信](protocol.md)。
 
+0035は旧データを保持して参加設定を追加し、URL取得先・メタデータ・同期ジョブの所属元instanceへのFKを外します。新しい参加用キャッシュには自組織IDを保存し、Workerで自組織の範囲を検証します。問題共有の対象instanceへの制約は維持します。移行前の参加・結果のsourceInstanceIdは書き換えず、旧instanceの識別子で復帰と読取りを継続します。本人の外部履歴は組織アカウントで新旧両方をまとめて取得します。
+
 ## 制約とmigration
+0036は `quiz_federation_login_sessions` と期限・本人の索引、参加予約の本人索引を追加します。既存の参加・結果を変更しません。ログインCookieの秘密はhashだけをDBへ保存し、期限到来時は既存の参加清掃で最大100件ずつ削除します。
+
 
 版は正整数、回数・勝数は非負整数。レートは負数も許可します。
 JSON・文字列長・期限・件数は入力境界で検証し、DBでも可能なCHECK・FK・UNIQUEを設けます。
 参照中の固定版をcascade削除しません。署名秘密鍵はDBへ保存せずWorker secretsで管理します。
 
 outboxの状態／再試行時刻、inboxの処理状態／受信時刻、開催元／終了時刻、resultId検索にindexを設けます。
-Drizzle Kitの生成・custom migrationと `drizzle.__drizzle_migrations` に管理を統一します。
+Drizzle Kitの生成・custom migrationと migration journalとD1の適用履歴 に管理を統一します。
 既存DBは構造と履歴を照合してから移行し、初期migration・seedを再実行しません。[DB手順](../guides/database.md)。
 
 ## 作問申請の同時更新

@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { validateMatchConfig } from '../src/worker/catalog/config.ts';
+import { authorizeCatalog } from '../src/worker/catalog/manage.ts';
 import { publishMatchConfig } from '../src/worker/catalog/publish.ts';
-import { connectDatabase } from '../src/worker/db/connection.ts';
+import { localD1 } from './local-d1.ts';
 
 async function main() {
   const [path, profile, flag, ...extra] = process.argv.slice(2);
@@ -20,11 +21,17 @@ async function main() {
     console.log(JSON.stringify({ profile, config, applied: false }, null, 2));
     return;
   }
-  const url = process.env.GAME_CONFIG_DATABASE_URL;
-  if (!url) throw new Error('GAME_CONFIG_DATABASE_URL_REQUIRED');
-  const { db, close } = connectDatabase(url, process.env.DATABASE_CA_CERT);
+  const subject = process.env.CATALOG_SUBJECT ?? process.env.INITIAL_ADMIN_SUBJECT;
+  if (!subject) throw new Error('CATALOG_SUBJECT_REQUIRED');
+  const { db, close } = await localD1();
   try {
-    console.log(JSON.stringify(await publishMatchConfig(db, config, profile)));
+    console.log(
+      JSON.stringify(
+        await publishMatchConfig(db, config, profile, () =>
+          authorizeCatalog(db, config.owner, subject),
+        ),
+      ),
+    );
   } finally {
     await close();
   }

@@ -1,46 +1,36 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { changeD1, type Database } from '../db/d1.ts';
 import {
   accountInstanceSelections,
   organizationAccounts as accounts,
   accountWithdrawals,
+  federationFavorites,
   instanceGrants,
   instances,
   personalQuestionSets,
   questionSubmissions,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
-import { publishQuestionCatalog } from '../questions/catalog.ts';
+import { planControlEvent } from '../federation/controls.ts';
 import { OrganizationError, validId } from './access.ts';
-import { type organizationDatabase, organizationIdentity } from './database.ts';
-
-type Database = ReturnType<typeof organizationDatabase>['db'];
+import { organizationIdentity } from './database.ts';
 
 export async function recordWithdrawal(
-  db: Pick<Database, 'transaction'>,
+  db: Database,
   subject: string,
   operationId: string,
-  profile: string,
+  _profile: string,
 ) {
   validId(operationId);
-  return db.transaction(async (tx) => {
+  return changeD1(db, async (writes) => {
+    const tx = db;
     const { organization, account } = await organizationIdentity(
       tx,
       subject,
       undefined,
       true,
     );
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`profile:${organization.id}`}, 0))`,
-    );
-    const scopes = await tx
-      .select()
-      .from(instances)
-      .where(eq(instances.organizationId, organization.id))
-      .orderBy(asc(instances.id));
-    for (const scope of scopes)
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${scope.id}`}, 0))`,
-      );
+
     const [prior] = await tx
       .select()
       .from(accountWithdrawals)
@@ -65,39 +55,61 @@ export async function recordWithdrawal(
       if (administrators.length < 2)
         throw new OrganizationError('LAST_ADMINISTRATOR', 409);
     }
-    await tx.execute(
-      sql`select set_config('quiz.organization_id', ${organization.id}, true)`,
+    const now = new Date().toISOString();
+    const job: typeof accountWithdrawals.$inferSelect = {
+      id: operationId,
+      organizationId: organization.id,
+      actorId: account.actorId,
+      requestedAt: now,
+      authDeletedAt: null,
+      erasedAt: null,
+      auditErasedAt: null,
+      retryAt: now,
+      attempts: 0,
+      roomCursor: null,
+      lastAttemptAt: '1970-01-01T00:00:00.000Z',
+    };
+    writes.push(tx.insert(accountWithdrawals).values(job));
+    await planControlEvent(tx, writes, {
+      version: 1,
+      eventId: operationId,
+      type: 'withdrawal',
+      subjectId: account.actorId,
+      createdAt: Date.parse(now),
+    });
+    writes.push(
+      tx
+        .update(accounts)
+        .set({ withdrawnAt: job.requestedAt, displayName: null, administrator: false })
+        .where(eq(accounts.actorId, account.actorId)),
     );
-    const [job] = await tx
-      .insert(accountWithdrawals)
-      .values({
-        id: operationId,
-        organizationId: organization.id,
-        actorId: account.actorId,
-      })
-      .returning();
-    await tx
-      .update(accounts)
-      .set({ withdrawnAt: job.requestedAt, displayName: null, administrator: false })
-      .where(eq(accounts.actorId, account.actorId));
-    await tx.delete(instanceGrants).where(eq(instanceGrants.actorId, account.actorId));
-    await tx
-      .delete(accountInstanceSelections)
-      .where(eq(accountInstanceSelections.actorId, account.actorId));
-    await tx
-      .delete(personalQuestionSets)
-      .where(eq(personalQuestionSets.authorId, account.actorId));
-    const authored = await tx
-      .update(questionSubmissions)
-      .set({ authorName: '退会ユーザー' })
-      .where(eq(questionSubmissions.authorId, account.actorId))
-      .returning({
-        instanceId: questionSubmissions.instanceId,
-        publishedId: questionSubmissions.publishedId,
-      });
-    for (const scope of scopes)
-      if (authored.some((row) => row.instanceId === scope.id && row.publishedId))
-        await publishQuestionCatalog(tx, scope.id, scope.owner, profile);
+    // Queue this organization's original results once; routine expiry uses the due index.
+    writes.push(
+      sql`insert into quiz_game_result_privacy_jobs (result_id,due_at) select result_id,${now} from quiz_game_match_results where owner in (select owner from quiz_game_instances where organization_id=${organization.id}) on conflict(result_id) do update set due_at=min(due_at,excluded.due_at)`,
+    );
+    writes.push(
+      tx.delete(instanceGrants).where(eq(instanceGrants.actorId, account.actorId)),
+      tx
+        .delete(federationFavorites)
+        .where(eq(federationFavorites.actorId, account.actorId)),
+    );
+    writes.push(
+      tx
+        .delete(accountInstanceSelections)
+        .where(eq(accountInstanceSelections.actorId, account.actorId)),
+    );
+    writes.push(
+      tx
+        .delete(personalQuestionSets)
+        .where(eq(personalQuestionSets.authorId, account.actorId)),
+    );
+    writes.push(
+      tx
+        .update(questionSubmissions)
+        .set({ authorName: '退会ユーザー' })
+        .where(eq(questionSubmissions.authorId, account.actorId)),
+    );
+    // Catalog readers project retired author names immediately; erasure clears saved names later.
     return job;
   });
 }

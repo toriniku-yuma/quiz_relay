@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { API_PATHS } from '../../shared/api-paths';
-import { type AuthEnv, authenticate, sameOrigin } from '../auth/handlers';
+import { API_PATHS } from '../../shared/api-paths.ts';
+import { type AuthEnv, authenticate, sameOrigin } from '../auth/handlers.ts';
 import {
   casual,
   guest,
@@ -16,7 +16,7 @@ import {
   sets,
   settings,
   socket,
-} from './handlers';
+} from './handlers.ts';
 
 const rooms = new Hono<AuthEnv>();
 rooms.use('/api/play/*', sameOrigin);

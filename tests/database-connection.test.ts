@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { connectDatabase } from '../src/worker/db/connection';
+import { connectDatabase } from '../scripts/legacy-postgres/connection';
 
 const harness = vi.hoisted(() => ({ postgres: vi.fn() }));
 vi.mock('postgres', () => ({ default: harness.postgres }));

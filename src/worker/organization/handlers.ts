@@ -1,6 +1,6 @@
 import type { Context, Handler, MiddlewareHandler } from 'hono';
-import type { AuthEnv } from '../auth/handlers';
-import { canViewInstance, OrganizationError, organizationEnabled } from './access';
+import type { AuthEnv } from '../auth/handlers.ts';
+import { canViewInstance, OrganizationError, organizationEnabled } from './access.ts';
 import {
   accountPermissions,
   addInstance,
@@ -8,14 +8,15 @@ import {
   overview,
   publishInstance,
   renameInstance,
+  renameOrganization,
   resolveInstance,
   setInstanceGrants,
   setInstanceSelection,
   setupOrganization,
-} from './database';
-import { requestInstanceDeletion } from './deletion';
-import { changeInstanceOperation } from './operations';
-import { saveProfile } from './profile';
+} from './database.ts';
+import { requestInstanceDeletion } from './deletion.ts';
+import { changeInstanceOperation } from './operations.ts';
+import { saveProfile } from './profile.ts';
 
 export const organizationOverview: Handler<AuthEnv> = async (context) => {
   if (!organizationEnabled(context.env))
@@ -75,6 +76,8 @@ export const mutateOrganization: Handler<AuthEnv> = async (context) => {
       return context.json(await accountPermissions(db, context.get('subject'), value));
     if (context.req.path.endsWith('/setup'))
       await setupOrganization(db, context.env, context.get('subject'), value);
+    else if (context.req.path.endsWith('/settings'))
+      await renameOrganization(db, context.get('subject'), value);
     else if (context.req.path.endsWith('/add'))
       await addInstance(db, context.get('subject'), value);
     else if (context.req.path.endsWith('/rename'))

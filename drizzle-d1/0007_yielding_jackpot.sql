@@ -1,0 +1,1 @@
+ALTER TABLE `quiz_game_account_withdrawals` ADD `audit_erased_at` text;

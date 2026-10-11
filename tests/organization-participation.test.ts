@@ -17,7 +17,17 @@ const mocks = vi.hoisted(() => ({
   blocked: new Set<string>(),
 }));
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({ auth: { getUser: mocks.user } }),
+  createClient: () => ({
+    auth: {
+      getUser: mocks.user,
+      getClaims: async () => ({
+        data: {
+          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
+        },
+        error: null,
+      }),
+    },
+  }),
 }));
 vi.mock('../src/worker/organization/database', () => ({
   organizationDatabase: () => ({ db: {}, close: async () => {} }),

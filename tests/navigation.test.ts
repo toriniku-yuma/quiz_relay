@@ -1,10 +1,23 @@
 import { expect, it, vi } from 'vitest';
-import { gameHref, handleNavigation, isAppUrl } from '../src/client/app/navigation';
+import {
+  externalInstanceHref,
+  gameHref,
+  handleNavigation,
+  isAppUrl,
+} from '../src/client/app/navigation';
 
 it('same-tab navigation stays within application pages and preserves instance/view values', () => {
   const current = new URL('https://quiz.example/game/');
   expect(isAppUrl(new URL('/debug/?instance=a', current), current)).toBe(true);
   expect(isAppUrl(new URL('/local-game', current), current)).toBe(true);
+  expect(isAppUrl(new URL('/federation/', current), current)).toBe(true);
+  expect(isAppUrl(new URL('/question-sharing/?instance=a', current), current)).toBe(true);
+  const external = new URL(
+    externalInstanceHref('https://peer.quiz-relay.workers.dev', 'same-id'),
+    current,
+  );
+  expect(isAppUrl(external, current)).toBe(true);
+  expect(external.searchParams.get('peer')).toBe('https://peer.quiz-relay.workers.dev');
   expect(isAppUrl(new URL('https://other.example/game/'), current)).toBe(false);
   expect(isAppUrl(new URL('/api/auth/logout', current), current)).toBe(false);
   expect(isAppUrl(new URL('/unknown/', current), current)).toBe(false);

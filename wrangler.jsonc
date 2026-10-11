@@ -8,7 +8,7 @@
     "directory": "./dist/client",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/federation/*"]
+    "run_worker_first": ["/api/*", "/federation/v1/*"]
   },
   "durable_objects": {
     "bindings": [
@@ -22,6 +22,15 @@
     { "tag": "v2", "new_sqlite_classes": ["GameRoom"] },
     { "tag": "v3", "new_sqlite_classes": ["Matchmaker"] }
   ],
+  "d1_databases": [
+    {
+      "binding": "GAME_D1",
+      "database_name": "quiz-relay-game",
+      "database_id": "a4661202-0ad1-4a9e-b767-dc6464b38e24",
+      "migrations_dir": "drizzle-d1"
+    }
+  ],
+  "triggers": { "crons": ["* * * * *"] },
   "services": [
     {
       "binding": "ACCOUNT_ERASURE",
@@ -38,6 +47,11 @@
       "name": "API_LIMITER",
       "namespace_id": "716329410",
       "simple": { "limit": 120, "period": 60 }
+    },
+    {
+      "name": "FEDERATION_LIMITER",
+      "namespace_id": "716329420",
+      "simple": { "limit": 60, "period": 60 }
     }
   ],
   "observability": { "enabled": false }

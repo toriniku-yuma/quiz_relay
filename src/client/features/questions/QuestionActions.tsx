@@ -43,23 +43,33 @@ export default function QuestionActions({
   }
   if (!open) return null;
   const deleted = rows.some((submission) => submission.deletedAt);
-  const choices = deleted
-    ? { restore: '復元' }
-    : {
-        classify: 'カテゴリ変更',
-        ...(data.administrator ? { difficulty: '難易度変更' } : {}),
-        stop: '使用停止',
-        resume: '使用停止の解除',
-        ...(rows.every(
-          (submission) => submission.status === 'pending' || submission.publishedId,
-        )
-          ? { return: '差戻し' }
-          : {}),
-        delete: '削除',
-        ...(rows.length === 1 && rows[0].status === 'pending'
-          ? { approve: '承認', reject: '却下' }
-          : {}),
-      };
+  const shared = rows.some((submission) => submission.shared);
+  const choices = shared
+    ? rows.every((row) => row.shared && !row.shared.expired)
+      ? {
+          'exclude-shared': rows.every((row) => row.shared?.excluded)
+            ? '出題に戻す'
+            : '出題から除外',
+          ...(data.administrator ? { difficulty: '難易度変更' } : {}),
+        }
+      : {}
+    : deleted
+      ? { restore: '復元' }
+      : {
+          classify: 'カテゴリ変更',
+          ...(data.administrator ? { difficulty: '難易度変更' } : {}),
+          stop: '使用停止',
+          resume: '使用停止の解除',
+          ...(rows.every(
+            (submission) => submission.status === 'pending' || submission.publishedId,
+          )
+            ? { return: '差戻し' }
+            : {}),
+          delete: '削除',
+          ...(rows.length === 1 && rows[0].status === 'pending'
+            ? { approve: '承認', reject: '却下' }
+            : {}),
+        };
   return (
     <Modal
       title={rows.length === 1 ? '問題の操作' : '問題の一括操作'}
@@ -70,6 +80,7 @@ export default function QuestionActions({
         対象 {rows.length}件：
         {rows.map((submission) => submission.input.text || '未入力').join('、')}
       </p>
+      {shared && <p>共有問題の本文は共有元が管理します。</p>}
       <form
         className="grid gap-4"
         onSubmit={async (event) => {
@@ -80,6 +91,7 @@ export default function QuestionActions({
             categoryId: category,
             difficulty: Number(level),
             fixed,
+            excluded: !rows.every((row) => row.shared?.excluded),
           }));
           const body = {
             operation: 'bulk',
@@ -119,7 +131,10 @@ export default function QuestionActions({
               >
                 <option value="">選択してください</option>
                 {data.categories
-                  .filter((availableCategory) => availableCategory.active)
+                  .filter(
+                    (availableCategory) =>
+                      availableCategory.active && !availableCategory.importOnly,
+                  )
                   .map((availableCategory) => (
                     <option key={availableCategory.id} value={availableCategory.id}>
                       {availableCategory.name}
@@ -137,7 +152,7 @@ export default function QuestionActions({
                   value={level}
                   onChange={(event) => setLevel(event.target.value)}
                 >
-                  {['初級', '中級', '上級'].map((label, i) => (
+                  {['簡単', '普通', '難しい'].map((label, i) => (
                     <option key={label} value={i}>
                       {label}
                     </option>
@@ -153,15 +168,17 @@ export default function QuestionActions({
               </label>
             </>
           )}
-          <TextField
-            id="question-action-reason"
-            label="理由"
-            placeholder="例：内容に誤りがあるため"
-            required={!['classify', 'approve'].includes(action)}
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            maxLength={1000}
-          />
+          {action !== 'exclude-shared' && (
+            <TextField
+              id="question-action-reason"
+              label="理由"
+              placeholder="例：内容に誤りがあるため"
+              required={!['classify', 'approve'].includes(action)}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              maxLength={1000}
+            />
+          )}
         </fieldset>
         {action === 'delete' && (
           <p>通常一覧と出題から外します。削除済み一覧から復元できます。</p>

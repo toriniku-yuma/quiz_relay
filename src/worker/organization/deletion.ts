@@ -1,11 +1,12 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
+import { changeD1, type Database } from '../db/d1.ts';
 import { instanceDeletions, instances } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { OrganizationError, requireAdministrator, validId } from './access.ts';
-import { type organizationDatabase, organizationIdentity } from './database.ts';
+import { organizationIdentity } from './database.ts';
 
 export async function requestInstanceDeletion(
-  db: Pick<ReturnType<typeof organizationDatabase>['db'], 'transaction'>,
+  db: Database,
   env: Env,
   subject: string,
   input: Record<string, unknown>,
@@ -13,10 +14,8 @@ export async function requestInstanceDeletion(
   const id = validId(input.id),
     operationId = validId(input.operationId);
   if (!env.ACCOUNT_ERASURE) throw new OrganizationError('ERASURE_UNAVAILABLE', 503);
-  await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`questions:${id}`},0))`,
-    );
+  await changeD1(db, async (writes) => {
+    const tx = db;
     const { organization, account } = await organizationIdentity(tx, subject);
     requireAdministrator(account);
     const [previous] = await tx
@@ -46,14 +45,16 @@ export async function requestInstanceDeletion(
       throw new OrganizationError('EDIT_CONFLICT', 409);
     if (!instance.roomInventoryComplete)
       throw new OrganizationError('ROOM_INVENTORY_REQUIRED', 409);
-    await tx.insert(instanceDeletions).values({
-      id: operationId,
-      instanceId: id,
-      organizationId: organization.id,
-      owner: instance.owner,
-      name: instance.name,
-      operatorId: account.actorId,
-    });
+    writes.push(
+      tx.insert(instanceDeletions).values({
+        id: operationId,
+        instanceId: id,
+        organizationId: organization.id,
+        owner: instance.owner,
+        name: instance.name,
+        operatorId: account.actorId,
+      }),
+    );
   });
   const response = await env.ACCOUNT_ERASURE.fetch(
     'https://account-erasure.internal/instance',

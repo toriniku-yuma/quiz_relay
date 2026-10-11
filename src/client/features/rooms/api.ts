@@ -2,7 +2,7 @@ import { instanceApiPath } from '../../../shared/api-paths';
 import { setupAuth } from '../auth/client';
 import { OrganizationRequestError } from '../organization/useOrganization';
 
-const messages: Record<string, string> = {
+export const playMessages: Record<string, string> = {
   CASUAL_DISABLED: 'カジュアルマッチは無効です。',
   CASUAL_PAUSED: 'カジュアルマッチ・部屋の受付を停止しています。',
   GUEST_NOT_ALLOWED: 'ゲスト参加は許可されていません。',
@@ -69,7 +69,7 @@ export async function playRequest<T>(
   };
   if (!response.ok)
     throw new PlayRequestError(
-      messages[result.code ?? ''] ??
+      playMessages[result.code ?? ''] ??
         '操作を完了できませんでした。入力または通信状態を確認してください。',
       response.status,
       result.code ?? '',

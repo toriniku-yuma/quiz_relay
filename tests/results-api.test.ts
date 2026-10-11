@@ -6,11 +6,21 @@ import app from '../src/worker/index';
 
 const mocks = vi.hoisted(() => ({ user: vi.fn(), read: vi.fn() }));
 vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({ auth: { getUser: mocks.user } }),
+  createClient: () => ({
+    auth: {
+      getUser: mocks.user,
+      getClaims: async () => ({
+        data: {
+          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
+        },
+        error: null,
+      }),
+    },
+  }),
 }));
 vi.mock('../src/worker/results/read', () => ({ readResults: mocks.read }));
-vi.mock('../src/worker/db/connection', () => ({
-  connectDatabase: () => ({ db: {}, close: async () => {} }),
+vi.mock('../src/worker/db/d1', () => ({
+  connectD1: () => ({}),
 }));
 beforeEach(() => {
   mocks.user.mockReset();
@@ -25,7 +35,6 @@ const runtime = {
   ...(env as unknown as Env),
   ORGANIZATION_ENABLED: 'false',
   GAME_OWNER: 'https://game.test',
-  GAME_DATABASE_URL: 'test',
   SUPABASE_URL: 'https://auth.test',
   SUPABASE_PUBLISHABLE_KEY: 'test',
 };

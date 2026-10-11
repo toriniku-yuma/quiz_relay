@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import type { ModeratedUser } from '../../../shared/moderation';
+import { useApp } from '../../app/context';
 import Button from '../../components/Button';
 import Modal from '../../components/Modal';
 import TextField from '../../components/TextField';
 import Investigation from './Investigation';
+import UserScopeSelect from './UserScopeSelect';
 import { useMutation } from './useMutation';
 import { useUserActions } from './useUserActions';
 export default function UserCases({
@@ -19,6 +21,12 @@ export default function UserCases({
   saved: () => Promise<void>;
 }) {
   const model = useUserActions(instanceId, user.actorId, saved);
+  const { organization } = useApp();
+  const administrator = organization.data?.account?.administrator === true;
+  const scopes =
+    organization.data?.instances.filter(
+      (instance) => administrator || instance.permissions.includes('users'),
+    ) ?? [];
   const [selected, setSelected] = useState<string[]>([]),
     [reason, setReason] = useState(''),
     [decision, setDecision] = useState(''),
@@ -46,6 +54,20 @@ export default function UserCases({
           busy={mutation.busy}
           onClose={() => model.setOpen('')}
         >
+          <UserScopeSelect
+            value={model.scope}
+            instances={scopes}
+            allowOrganization={administrator}
+            organizationLabel="組織全体の記録"
+            disabled={model.busy || mutation.busy || mutation.uncertain}
+            onChange={(value) => {
+              setSelected([]);
+              setReportId('');
+              setReason('');
+              setDecision('');
+              void model.changeScope(value);
+            }}
+          />
           {(model.error || mutation.error) && (
             <Button
               disabled={model.busy || mutation.busy || mutation.uncertain}
@@ -62,7 +84,7 @@ export default function UserCases({
               event.preventDefault();
               void mutation.submit({
                 action: kind === 'reports' ? 'resolveReports' : 'decideAppeal',
-                instanceId,
+                instanceId: model.scope,
                 actorId: user.actorId,
                 ids: selected,
                 id: selected[0],
@@ -75,7 +97,9 @@ export default function UserCases({
             }}
           >
             <fieldset
-              disabled={mutation.busy || mutation.uncertain}
+              disabled={
+                model.busy || !!model.error || mutation.busy || mutation.uncertain
+              }
               className="grid gap-3"
             >
               {rows?.map((row) => (
@@ -104,14 +128,23 @@ export default function UserCases({
                   {'sanction' in row && (
                     <p>
                       対象BAN：
-                      {row.sanction.instanceId === null ? '組織全体' : 'このインスタンス'}{' '}
+                      {row.sanction.instanceId === null
+                        ? '組織全体'
+                        : (scopes.find((scope) => scope.id === row.sanction.instanceId)
+                            ?.name ?? '削除済みインスタンス')}{' '}
                       / {row.sanction.reason}
                     </p>
                   )}
                   {'resultId' in row && (
-                    <Button onClick={() => setReportId(row.id)}>
-                      試合と過去戦績を確認
-                    </Button>
+                    <div className="grid gap-2">
+                      <p>
+                        {scopes.find((scope) => scope.id === row.instanceId)?.name ??
+                          'インスタンス'}
+                      </p>
+                      <Button onClick={() => setReportId(row.id)}>
+                        試合と過去戦績を確認
+                      </Button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -147,7 +180,12 @@ export default function UserCases({
             )}
             <Button
               type="submit"
-              disabled={mutation.busy || (!mutation.uncertain && !selected.length)}
+              disabled={
+                mutation.busy ||
+                model.busy ||
+                !!model.error ||
+                (!mutation.uncertain && !selected.length)
+              }
             >
               {mutation.uncertain
                 ? '同じ内容で再試行'
@@ -158,7 +196,10 @@ export default function UserCases({
           </form>
           {reportId && (
             <Investigation
-              instanceId={instanceId}
+              instanceId={
+                model.data?.reports?.find((report) => report.id === reportId)
+                  ?.instanceId ?? model.scope
+              }
               actorId={user.actorId}
               reportId={reportId}
             />

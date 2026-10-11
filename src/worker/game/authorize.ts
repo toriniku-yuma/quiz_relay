@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from 'hono';
-import type { Env } from '../env';
+import type { Env } from '../env.ts';
 
 export const authorizeLocalGame: MiddlewareHandler<{ Bindings: Env }> = async (
   context,

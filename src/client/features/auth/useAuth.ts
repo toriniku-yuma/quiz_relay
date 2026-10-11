@@ -1,28 +1,28 @@
-import type { User } from '@supabase/supabase-js';
 import { useEffect, useState } from 'react';
 import { navigate } from '../../app/navigation';
-import { GAME_PATH, ROOMS_PATH } from '../../app/paths';
+import { GAME_PATH } from '../../app/paths';
 import { hasAuthCallback, readAuthReturn } from './callback';
-import {
-  redirectSignedOut,
-  sendLoginEmail,
-  setupAuth,
-  signInWithGoogle,
-  signOut,
-} from './client';
+import type { AuthUser } from './clerk';
+import { redirectSignedOut, setupAuth, signInWithGoogle, signOut } from './client';
 import { publicPlayEntry } from './publicEntry';
 
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   useEffect(() => {
     const initialUrl = new URL(location.href);
     const publicEntry = publicPlayEntry(initialUrl);
-    const storedAuthentication =
-      typeof localStorage !== 'undefined' &&
-      Object.keys(localStorage).some((key) => /^sb-.*-auth-token$/.test(key));
+    let storedAuthentication = false;
+    try {
+      storedAuthentication =
+        (typeof localStorage !== 'undefined' &&
+          Object.keys(localStorage).some((key) => /^sb-.*-auth-token$/.test(key))) ||
+        (typeof document !== 'undefined' && document.cookie?.includes('__session='));
+    } catch {
+      /* Private browsing can deny storage access. */
+    }
     const signedOut = (actualLogout = false) => {
       if (actualLogout || subject || storedAuthentication || !publicEntry)
         redirectSignedOut(subject);
@@ -58,18 +58,19 @@ export function useAuth() {
       .catch(() => {
         if (active)
           setMessage(
-            'ログイン状態を確認できませんでした。最新のリンクでログインし直してください。',
+            'ログイン状態を確認できませんでした。Googleログインをやり直してください。',
           );
       })
       .finally(() => {
         if (active) {
           setReady(true);
-          if (hasAuthCallback(new URL(location.href))) {
+          const callbackUrl = new URL(location.href);
+          if (
+            hasAuthCallback(callbackUrl) &&
+            callbackUrl.searchParams.get('clerk-callback') !== '1'
+          ) {
             const target = readAuthReturn();
-            navigate(
-              subject && target?.startsWith(`${ROOMS_PATH}?`) ? target : GAME_PATH,
-              true,
-            );
+            navigate(subject && target ? target : GAME_PATH, true);
           }
         }
       });
@@ -96,11 +97,6 @@ export function useAuth() {
     ready,
     busy,
     message,
-    email: (email: string) =>
-      run(
-        () => sendLoginEmail(undefined, email),
-        'メールを送りました。最新のリンクを、このブラウザーで開いてください。',
-      ),
     google: () => run(() => signInWithGoogle()),
     logout: () => run(signOut),
   };

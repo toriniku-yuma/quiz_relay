@@ -11,6 +11,7 @@ export function connectGameSocket(
     status: (status: ConnectionStatus) => void;
     error: (message: string) => void;
     released?: () => void;
+    finished?: () => boolean;
   },
 ) {
   let disposed = false;
@@ -44,18 +45,13 @@ export function connectGameSocket(
     clearInterval(sync);
     ws.close();
 
+    if (callbacks.finished?.()) {
+      dispose();
+      callbacks.status('closed');
+      return;
+    }
+
     if (code === 1008) {
-      if (
-        [
-          'NO_RANKED_QUESTIONS',
-          'SETUP_UNAVAILABLE',
-          'WAITING_EXPIRED',
-          'WAITING_CANCELLED',
-          'INSTANCE_ACCESS_REVOKED',
-          'MATCH_REPLACED',
-        ].includes(reason)
-      )
-        callbacks.released?.();
       stop(
         reason === 'MATCH_REPLACED'
           ? '新しい参加先へ切り替えました。'
@@ -67,6 +63,17 @@ export function connectGameSocket(
                 ? '出題できる問題がないため待機を解除しました。問題が復旧したら、改めてマッチングしてください。'
                 : '接続が拒否されました。他のタブを閉じ、再接続してください。',
       );
+      if (
+        [
+          'NO_RANKED_QUESTIONS',
+          'SETUP_UNAVAILABLE',
+          'WAITING_EXPIRED',
+          'WAITING_CANCELLED',
+          'INSTANCE_ACCESS_REVOKED',
+          'MATCH_REPLACED',
+        ].includes(reason)
+      )
+        callbacks.released?.();
       return;
     }
     if (retryWindow === undefined) {
