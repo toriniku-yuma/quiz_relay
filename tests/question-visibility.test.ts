@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import type { Env } from '../src/worker/env';
 import { dummyCharacters, graphemes } from '../src/worker/game/questions';
 import { advance, createState, snapshot } from '../src/worker/game/state';
-import { questionStatistics } from '../src/worker/questions/statistics';
+import { resultTrials } from '../src/worker/questions/difficulty-statistics';
 import { scheduledD1 } from '../src/worker/scheduled';
 import { resultFixture } from './fixtures/result';
 
@@ -44,7 +44,7 @@ it('作問者名は設定を固定し、問題終了後だけに表示する', (
   expect(hidden.question.authorName).toBeUndefined();
 });
 
-it('実績は試合単位で重複排除し、人数・世代・実力帯を混ぜない', () => {
+it('実績は出題単位で重複排除し、ランク戦で実力帯の揃った出題だけを記録する', () => {
   const { record } = resultFixture();
   record.startingRatings = { a: 1000, b: 1000 };
   record.definition.selection = {
@@ -67,29 +67,31 @@ it('実績は試合単位で重複排除し、人数・世代・実力帯を混�
       participants: ['a', 'b'],
     },
   ];
-  const stats = questionStatistics(
-    [record, record, { ...record, kind: 'casual' }],
-    'generation',
-  );
-  expect(stats).toHaveLength(1);
-  expect(stats[0]).toMatchObject({
-    trials: 1,
-    correct: 1,
-    participants: 2,
-    band: 0,
-    players: 2,
-  });
-  expect(questionStatistics([record], 'different-generation')).toEqual([]);
+  const [question] = record.completedQuestions;
+  expect(resultTrials(record)).toEqual([
+    {
+      owner: record.owner,
+      matchId: record.matchId,
+      resultId: record.result.id,
+      questionId: 'q',
+      generation: 'generation',
+      band: 0,
+      players: 2,
+      rulesHash: record.definition.rulesHash,
+      bandRevision: 1,
+      correct: true,
+      actors: ['a', 'b'],
+    },
+  ]);
   expect(
-    questionStatistics(
-      [{ ...record, startingRatings: { a: 1000, b: 1800 } }],
-      'generation',
-    ),
-  ).toEqual([]);
+    resultTrials({ ...record, completedQuestions: [question, question] }),
+  ).toHaveLength(1);
+  expect(resultTrials({ ...record, kind: 'casual' })).toEqual([]);
+  expect(resultTrials({ ...record, startingRatings: { a: 1000, b: 1800 } })).toEqual([]);
 });
 
 it('定期処理はDBと非公開の消去Workerの設定を必須とする', async () => {
-  await expect(scheduledD1({ ORGANIZATION_ENABLED: 'true' } as Env)).rejects.toThrow(
+  await expect(scheduledD1({} as Env)).rejects.toThrow(
     'MAINTENANCE_CONFIGURATION_REQUIRED',
   );
 });

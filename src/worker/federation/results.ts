@@ -7,12 +7,9 @@ import { changeD1, connectD1, type D1Write, type Database, rowsD1 } from '../db/
 import {
   federationDeletedInstances,
   federationParticipations,
-  federationPeers,
-  federationPolicies,
   federationReservations,
   federationResultDeliveries,
   federationResultInbox,
-  instanceDeletions,
   instances,
   organizationAccounts,
   organizations,
@@ -24,8 +21,7 @@ import { readResults } from '../results/read.ts';
 import type { ResultRecord } from '../results/record.ts';
 import { retiredResultActors } from './controls.ts';
 import { signEvent, verifyEvent } from './events.ts';
-import { participationSource } from './participation-source.ts';
-import { federationDatabase, requestPeer } from './transport.ts';
+import { federationDatabase, federationEnabled, requestPeer } from './transport.ts';
 
 export async function planResultDeliveries(
   db: Database,
@@ -70,7 +66,7 @@ export async function planResultDeliveries(
         reservationId: row.id,
         hostInstanceId: instance.id,
         hostInstanceName: instance.name,
-        sourceInstanceId: row.sourceInstanceId,
+        sourceOrganizationId: row.sourceOrganizationId,
         sourceActorId: row.sourceActorId,
         selfId: row.actorId,
         startedAt: record.startedAt,
@@ -124,11 +120,8 @@ function resultEvent(value: unknown): FederatedResult {
     throw new OrganizationError('INVALID_RESULT_EVENT', 400);
   const result = value as FederatedResult;
   if (
-    Object.keys(result)
-      .filter((key) => key !== 'reservationId')
-      .sort()
-      .join(',') !==
-      'definition,eventId,finishedAt,hostInstanceId,hostInstanceName,kind,matchId,players,reason,resultId,selfId,sourceActorId,sourceInstanceId,startedAt,version,winnerId' ||
+    Object.keys(result).sort().join(',') !==
+      'definition,eventId,finishedAt,hostInstanceId,hostInstanceName,kind,matchId,players,reason,reservationId,resultId,selfId,sourceActorId,sourceOrganizationId,startedAt,version,winnerId' ||
     result.version !== 1 ||
     !/^[a-f0-9]{64}$/.test(result.sourceActorId) ||
     !/^[a-f0-9]{64}$/.test(result.selfId) ||
@@ -141,7 +134,6 @@ function resultEvent(value: unknown): FederatedResult {
     result.hostInstanceName.length > 80 ||
     ![
       'target_reached',
-      'seven_correct',
       'exhausted',
       'question_limit',
       'last_remaining',
@@ -153,13 +145,13 @@ function resultEvent(value: unknown): FederatedResult {
     result.players.length > 16
   )
     throw new OrganizationError('INVALID_RESULT_EVENT', 400);
-  if (result.reservationId !== undefined) validId(result.reservationId);
   for (const id of [
     result.eventId,
     result.resultId,
     result.matchId,
+    result.reservationId,
     result.hostInstanceId,
-    result.sourceInstanceId,
+    result.sourceOrganizationId,
   ])
     validId(id);
   for (const player of result.players) {
@@ -242,54 +234,32 @@ export async function receiveResultEvent(env: Env, peerOrigin: string, message: 
       }
       return { received: true, applied: previous.appliedAt !== null, duplicate: true };
     }
-    const [policy] = await db
-      .select()
-      .from(federationPolicies)
-      .where(
-        and(
-          eq(federationPolicies.instanceId, payload.sourceInstanceId),
-          eq(federationPolicies.peerOrigin, peerOrigin),
-          eq(federationPolicies.peerInstanceId, payload.hostInstanceId),
-        ),
-      );
     const [organization] = await db.select().from(organizations);
     const [account] = await db
-        .select()
-        .from(organizationAccounts)
-        .where(eq(organizationAccounts.actorId, payload.sourceActorId)),
-      [instance] = await db
-        .select()
-        .from(instances)
-        .where(eq(instances.id, payload.sourceInstanceId));
-    const [consent] = payload.reservationId
-      ? await db
-          .select()
-          .from(federationParticipations)
-          .where(
-            and(
-              eq(federationParticipations.peerOrigin, peerOrigin),
-              eq(federationParticipations.reservationId, payload.reservationId),
-              eq(federationParticipations.actorId, payload.sourceActorId),
-              eq(federationParticipations.sourceInstanceId, payload.sourceInstanceId),
-              eq(federationParticipations.hostInstanceId, payload.hostInstanceId),
-              eq(federationParticipations.mode, payload.kind),
-              payload.kind === 'room'
-                ? undefined
-                : eq(federationParticipations.matchId, payload.matchId),
-            ),
-          )
-      : [];
-    const [peer] = await db
       .select()
-      .from(federationPeers)
-      .where(eq(federationPeers.origin, peerOrigin));
+      .from(organizationAccounts)
+      .where(eq(organizationAccounts.actorId, payload.sourceActorId));
+    const [consent] = await db
+      .select()
+      .from(federationParticipations)
+      .where(
+        and(
+          eq(federationParticipations.peerOrigin, peerOrigin),
+          eq(federationParticipations.reservationId, payload.reservationId),
+          eq(federationParticipations.actorId, payload.sourceActorId),
+          eq(federationParticipations.sourceOrganizationId, payload.sourceOrganizationId),
+          eq(federationParticipations.hostInstanceId, payload.hostInstanceId),
+          eq(federationParticipations.mode, payload.kind),
+          payload.kind === 'room'
+            ? undefined
+            : eq(federationParticipations.matchId, payload.matchId),
+        ),
+      );
     if (
-      (payload.reservationId
-        ? !consent
-        : !peer?.approved || !policy?.permissions.receive.results) ||
-      (!instance && payload.sourceInstanceId !== organization?.id) ||
-      !account ||
-      account.organizationId !== (instance?.organizationId ?? organization?.id)
+      !consent ||
+      !organization ||
+      payload.sourceOrganizationId !== organization.id ||
+      account?.organizationId !== organization.id
     )
       throw new OrganizationError('FEDERATION_RESULT_DENIED', 403);
     writes.push(
@@ -297,7 +267,7 @@ export async function receiveResultEvent(env: Env, peerOrigin: string, message: 
         peerOrigin,
         eventId: payload.eventId,
         actorId: payload.sourceActorId,
-        sourceInstanceId: payload.sourceInstanceId,
+        sourceOrganizationId: payload.sourceOrganizationId,
         payload,
         payloadHash: hash,
         message: String(message),
@@ -327,41 +297,6 @@ export async function deliverResult(env: Env, eventId: string) {
         job.leaseUntil > Date.now()
       )
         return null;
-      const [policy] = await db
-        .select()
-        .from(federationPolicies)
-        .where(
-          and(
-            eq(federationPolicies.instanceId, job.instanceId),
-            eq(federationPolicies.peerOrigin, job.peerOrigin),
-            eq(federationPolicies.peerInstanceId, job.payload.sourceInstanceId),
-          ),
-        );
-      if (!job.payload.reservationId && !policy?.permissions.send.results) {
-        const [deletion] = !policy
-          ? await db
-              .select()
-              .from(instanceDeletions)
-              .where(
-                and(
-                  eq(instanceDeletions.instanceId, job.instanceId),
-                  sql`${instanceDeletions.acceptedAt} is not null`,
-                ),
-              )
-          : [];
-        if (!deletion) {
-          writes.push(
-            db
-              .update(federationResultDeliveries)
-              .set({
-                errorCode: 'FEDERATION_RESULT_PAUSED',
-                nextAttemptAt: Date.now() + 60000,
-              })
-              .where(eq(federationResultDeliveries.eventId, eventId)),
-          );
-          return null;
-        }
-      }
       writes.push(
         db
           .update(federationResultDeliveries)
@@ -457,15 +392,10 @@ export async function deliverResult(env: Env, eventId: string) {
     );
   });
 }
-export async function foreignHistory(
-  env: Env,
-  subject: string,
-  instanceId: string,
-  cursor?: string,
-) {
+export async function foreignHistory(env: Env, subject: string, cursor?: string) {
   if (!env.GAME_D1) throw new OrganizationError('RESULTS_UNAVAILABLE', 503);
   const db = connectD1(env.GAME_D1),
-    identity = await participationSource(db, subject, validId(instanceId));
+    identity = await organizationIdentity(db, subject);
   let after: { finishedAt: number; eventId: string } | undefined;
   if (cursor !== undefined) {
     if (typeof cursor !== 'string' || !/^\d{13}:[a-f0-9-]{36}$/.test(cursor))
@@ -479,10 +409,6 @@ export async function foreignHistory(
     .where(
       and(
         eq(federationResultInbox.actorId, identity.account.actorId),
-        // Organization history includes the actor's old instance-scoped participation too.
-        instanceId === identity.organization.id
-          ? undefined
-          : eq(federationResultInbox.sourceInstanceId, instanceId),
         sql`${federationResultInbox.appliedAt} is not null`,
         after
           ? sql`(${federationResultInbox.finishedAt},${federationResultInbox.eventId})<(${after.finishedAt},${after.eventId})`
@@ -524,17 +450,17 @@ export async function hostResultReview(env: Env, peerOrigin: string, value: unkn
     !value ||
     typeof value !== 'object' ||
     Array.isArray(value) ||
-    Object.keys(value).sort().join(',') !== 'resultId,sourceActorId,sourceInstanceId'
+    Object.keys(value).sort().join(',') !== 'resultId,sourceActorId,sourceOrganizationId'
   )
     throw new OrganizationError('INVALID_RESULT_REVIEW', 400);
   const input = value as {
       resultId: string;
       sourceActorId: string;
-      sourceInstanceId: string;
+      sourceOrganizationId: string;
     },
     db = federationDatabase(env);
   validId(input.resultId);
-  validId(input.sourceInstanceId);
+  validId(input.sourceOrganizationId);
   const [delivery] = await db
     .select()
     .from(federationResultDeliveries)
@@ -543,7 +469,7 @@ export async function hostResultReview(env: Env, peerOrigin: string, value: unkn
         eq(federationResultDeliveries.resultId, input.resultId),
         eq(federationResultDeliveries.peerOrigin, peerOrigin),
         eq(federationResultDeliveries.sourceActorId, input.sourceActorId),
-        sql`json_extract(${federationResultDeliveries.payload}, '$.sourceInstanceId')=${input.sourceInstanceId}`,
+        sql`json_extract(${federationResultDeliveries.payload}, '$.sourceOrganizationId')=${input.sourceOrganizationId}`,
       ),
     );
   const [instance] = delivery
@@ -599,7 +525,7 @@ export async function reviewForeignResult(
       {
         resultId: row.payload.resultId,
         sourceActorId: row.actorId,
-        sourceInstanceId: row.sourceInstanceId,
+        sourceOrganizationId: row.sourceOrganizationId,
       },
       100000,
       true,
@@ -645,20 +571,17 @@ export async function reviewForeignResult(
   return body as unknown as { questions: NonNullable<HistoryEntry['questions']> };
 }
 export async function dispatchSavedResult(env: Env, resultId: string) {
-  if (!env.GAME_D1 || !env.ACCOUNT_ERASURE || !env.FEDERATION_ORIGIN) return;
-  for (const job of await dueResultDeliveries(
-    connectD1(env.GAME_D1),
-    Date.now(),
-    resultId,
-  )) {
-    const response = await env.ACCOUNT_ERASURE.fetch(
-      'https://account-erasure.internal/maintenance',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: 'federationResult', eventId: job.eventId }),
-      },
-    );
+  // Deployments without federation never create result deliveries.
+  if (!federationEnabled(env)) return;
+  const db = federationDatabase(env),
+    erasure = env.ACCOUNT_ERASURE;
+  if (!erasure) throw new OrganizationError('FEDERATION_NOT_CONFIGURED', 503);
+  for (const job of await dueResultDeliveries(db, Date.now(), resultId)) {
+    const response = await erasure.fetch('https://account-erasure.internal/maintenance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: 'federationResult', eventId: job.eventId }),
+    });
     await response.json().catch(() => null);
     if (!response.ok) throw new OrganizationError('FEDERATION_RESULT_UNAVAILABLE', 503);
   }

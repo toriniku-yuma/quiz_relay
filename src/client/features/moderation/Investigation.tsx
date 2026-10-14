@@ -61,11 +61,10 @@ export default function Investigation({
       {data && (
         <>
           <p>
-            集計 {data.summary.matches}試合（詳細記録あり {data.summary.recordedMatches}
-            試合） / 正答 {data.summary.correct} / 誤答 {data.summary.wrong} / 時間切れ{' '}
-            {data.summary.timeouts} / 正答時平均 {time(data.summary.correctMs)}（
-            {data.summary.correctSamples}回） / 誤答時平均 {time(data.summary.wrongMs)}（
-            {data.summary.wrongSamples}回）
+            集計 {data.summary.matches}試合 / 正答 {data.summary.correct} / 誤答{' '}
+            {data.summary.wrong} / 時間切れ {data.summary.timeouts} / 正答時平均{' '}
+            {time(data.summary.correctMs)}（{data.summary.correctSamples}回） / 誤答時平均{' '}
+            {time(data.summary.wrongMs)}（{data.summary.wrongSamples}回）
           </p>
           <DataTable
             label="調査対象の戦績"
@@ -93,8 +92,8 @@ export default function Investigation({
                   </td>
                   <td>{result.outcome}</td>
                   <td>{result.correct}</td>
-                  <td>{result.wrong ?? `未記録（お手つき合計 ${result.mistakes}）`}</td>
-                  <td>{result.timeouts ?? '未記録'}</td>
+                  <td>{result.wrong}</td>
+                  <td>{result.timeouts}</td>
                   <td>{time(result.correctMs)}</td>
                   <td>{time(result.wrongMs)}</td>
                   <td>{result.ratingDelta}</td>

@@ -156,7 +156,6 @@ it.each(
 )('部屋作成の入口は本人の作成・参加制限に従う: %j', ({ restrictions }) => {
   mocks.url.searchParams.delete('room');
   mocks.organization = {
-    enabled: true,
     account: { actorId: 'actor', administrator: false, displayName: '登録名' },
     instances: [{ id: 'instance-a', name: '対象', state: 'published', permissions: [] }],
     sanctions: restrictions.length

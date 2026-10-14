@@ -63,9 +63,5 @@ export const authenticate: MiddlewareHandler<AuthEnv> = async (context, next) =>
     return context.json({ code: 'RATE_LIMIT' }, 429);
   context.set('subject', identity.subject);
   context.set('displayName', identity.displayName);
-  context.set(
-    'actorId',
-    await contentHash({ home: context.env.GAME_OWNER, subject: identity.subject }),
-  );
   await next();
 };

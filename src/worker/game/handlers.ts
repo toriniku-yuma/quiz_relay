@@ -1,6 +1,7 @@
 import type { Context, Handler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { Env } from '../env.ts';
+import { developmentRoomName } from './room-names.ts';
 import { parseJoin } from './validation.ts';
 
 export function rejectLargeGameBody(context: Context<{ Bindings: Env }>) {
@@ -25,7 +26,7 @@ export const joinGame: Handler<{ Bindings: Env }> = async (context) => {
 
   const room = context.req.query('room') as string;
   const cookie = `qr_dev_${room}`;
-  const result = await context.env.GAME_ROOM.getByName(`1b-hiragana:${room}`).join(
+  const result = await context.env.GAME_ROOM.getByName(developmentRoomName(room)).join(
     input,
     getCookie(context, cookie),
   );
@@ -56,7 +57,7 @@ export const connectGame: Handler<{ Bindings: Env }> = async (context) => {
 
   const headers = new Headers(context.req.raw.headers);
   headers.set('X-Game-Session', token);
-  return context.env.GAME_ROOM.getByName(`1b-hiragana:${room}`).fetch(
+  return context.env.GAME_ROOM.getByName(developmentRoomName(room)).fetch(
     new Request(context.req.raw, { headers }),
   );
 };

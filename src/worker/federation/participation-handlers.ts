@@ -11,6 +11,7 @@ import {
   instances,
   organizations,
 } from '../db/schema.ts';
+import { matchRoomName, userRoomName } from '../game/room-names.ts';
 import { OrganizationError, validId } from '../organization/access.ts';
 import { roomResult } from '../rooms/rpc.ts';
 import { receivingParticipation } from './admission.ts';
@@ -63,7 +64,7 @@ function publicSession(row: Awaited<ReturnType<typeof participationSession>>) {
   return {
     reservationId: row.reservation.id,
     operationId: row.reservation.operationId,
-    sourceInstanceId: row.reservation.sourceInstanceId,
+    sourceOrganizationId: row.reservation.sourceOrganizationId,
     actorId: row.reservation.actorId,
     sourceActorId: row.reservation.sourceActorId,
     name: row.reservation.displayName,
@@ -75,24 +76,6 @@ function publicSession(row: Awaited<ReturnType<typeof participationSession>>) {
     expiresAt: row.reservation.sessionExpiresAt,
   };
 }
-export const participationSettings: Handler<AuthEnv> = async (context) => {
-  context.header('Cache-Control', 'no-store');
-  const db = federationDatabase(context.env);
-  const [organization] = await db.select().from(organizations).limit(1);
-  return context.json({
-    origin: context.env.FEDERATION_ORIGIN,
-    open: organization?.externalParticipation === 'unblocked',
-    peers: await db
-      .select({ origin: federationPeers.origin, name: federationPeers.name })
-      .from(federationPeers)
-      .where(
-        and(
-          eq(federationPeers.approved, true),
-          eq(federationPeers.participationBlocked, false),
-        ),
-      ),
-  });
-};
 export const participationTickets: Handler<AuthEnv> = async (context) => {
   context.header('Cache-Control', 'no-store');
   return context.json(
@@ -274,7 +257,7 @@ export const participationExchange: Handler<AuthEnv> = async (context) => {
     if (
       proof.iss !== login.peerOrigin ||
       proof.sub !== login.sourceActorId ||
-      proof.sourceInstanceId !== login.sourceOrganizationId
+      proof.sourceOrganizationId !== login.sourceOrganizationId
     )
       throw new OrganizationError('PARTICIPATION_TICKET_BINDING', 401);
   }
@@ -337,15 +320,14 @@ export const participationConfig: Handler<AuthEnv> = async (context) => {
       reservationId(context),
     ),
     definition = await loadMatchDefinition(
+      context.env,
       {
-        ...context.env,
-        GAME_OWNER: identity.instance.owner,
-        GAME_CONFIG_PROFILE:
+        owner: identity.instance.owner,
+        profile:
           identity.reservation.mode === 'casual'
             ? `${context.env.GAME_CONFIG_PROFILE}-casual`
             : context.env.GAME_CONFIG_PROFILE,
       },
-      undefined,
       identity.reservation.actorId,
     );
   context.header('Cache-Control', 'no-store');
@@ -402,15 +384,18 @@ export const participationSocket: Handler<AuthEnv> = async (context) => {
       secretFor(context),
       reservationId(context),
     ),
-    headers = new Headers(context.req.raw.headers);
+    headers = new Headers(context.req.raw.headers),
+    roomId = identity.reservation.roomId;
+  if (!roomId) throw new OrganizationError('PARTICIPATION_BINDING', 403);
   const game =
     identity.reservation.mode === 'room'
       ? roomResult(
-          await context.env.GAME_ROOM.getByName(
-            `room:${identity.reservation.roomId}`,
-          ).userRoomGameSession(identity.reservation.actorId, identity.token),
+          await context.env.GAME_ROOM.getByName(userRoomName(roomId)).userRoomGameSession(
+            identity.reservation.actorId,
+            identity.token,
+          ),
         )
-      : { room: identity.reservation.roomId, token: identity.token };
+      : { room: roomId, token: identity.token };
   if (
     identity.reservation.mode === 'room' &&
     game.room !== validId(context.req.query('room'))
@@ -418,7 +403,7 @@ export const participationSocket: Handler<AuthEnv> = async (context) => {
     throw new OrganizationError('PARTICIPATION_BINDING', 403);
   headers.set('X-Game-Session', game.token);
   headers.set('X-Game-Instance', identity.instance.id);
-  return context.env.GAME_ROOM.getByName(`1c:${game.room}`).fetch(
+  return context.env.GAME_ROOM.getByName(matchRoomName(game.room)).fetch(
     new Request(context.req.raw, { headers }),
   );
 };

@@ -187,7 +187,7 @@ it('旧対戦接続の遅い通知・状態で、新対戦の復帰情報を消�
   expect(game().roomId).toBe('match-b');
   expect(game().error).toBe('');
   expect(
-    JSON.parse(sessionStorage.getItem('quiz-relay-1c:user-a') ?? 'null').room,
+    JSON.parse(sessionStorage.getItem('quiz-relay-match:user-a') ?? 'null').room,
   ).toEqual({ id: 'match-b', instanceId: 'instance-b' });
   if (typeof cleanup === 'function') cleanup();
 });

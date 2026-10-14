@@ -1,1 +1,0 @@
-ALTER TABLE `quiz_federation_question_links` ADD `mapping_hash` text DEFAULT '' NOT NULL;

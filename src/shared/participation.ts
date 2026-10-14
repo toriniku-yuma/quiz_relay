@@ -1,13 +1,13 @@
 export type ParticipationTarget = {
   peerOrigin: string;
-  sourceInstanceId: string;
+  sourceOrganizationId: string;
   hostInstanceId: string;
   mode: 'ranked' | 'casual' | 'room';
 };
 export type ForeignSession = {
   reservationId: string;
   operationId: string;
-  sourceInstanceId: string;
+  sourceOrganizationId: string;
   actorId: string;
   sourceActorId?: string;
   name: string;
@@ -42,7 +42,7 @@ export type ForeignLoginTicket = {
   iss: string;
   aud: string;
   sub: string;
-  sourceInstanceId: string;
+  sourceOrganizationId: string;
   hostInstanceId: string;
   mode: ParticipationTarget['mode'];
   name: string;
@@ -83,12 +83,9 @@ export function participationTarget(
     source = url.searchParams.get('source'),
     instance = url.searchParams.get('instance'),
     mode = url.searchParams.get('mode');
-  const flow = url.searchParams.get('flow');
-  if (flow !== null && !['login', 'participation'].includes(flow)) return null;
   const keys = authorize
-    ? ['host', 'source', 'instance', 'mode', 'state', 'operation']
+    ? ['host', 'source', 'instance', 'mode', 'state', 'operation', 'flow']
     : ['home', 'source', 'instance', 'mode'];
-  if (authorize && flow) keys.push('flow');
   if (
     [...url.searchParams.keys()].some((key) => !keys.includes(key)) ||
     keys.some((key) => url.searchParams.getAll(key).length !== 1) ||
@@ -98,32 +95,14 @@ export function participationTarget(
     !['ranked', 'casual', 'room'].includes(mode ?? '') ||
     (authorize &&
       (!participationId(url.searchParams.get('state')) ||
-        !participationId(url.searchParams.get('operation'))))
+        !participationId(url.searchParams.get('operation')) ||
+        !['login', 'participation'].includes(url.searchParams.get('flow') ?? '')))
   )
     return null;
   return {
     peerOrigin: peer,
-    sourceInstanceId: source,
+    sourceOrganizationId: source,
     hostInstanceId: instance,
     mode: mode as ParticipationTarget['mode'],
   };
-}
-
-export function validParticipationMessage(
-  value: unknown,
-  state: string,
-): value is {
-  type: 'quiz-relay-participation';
-  state: string;
-  ticket: string;
-} {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const message = value as Record<string, unknown>;
-  return (
-    Object.keys(message).sort().join(',') === 'state,ticket,type' &&
-    message.type === 'quiz-relay-participation' &&
-    message.state === state &&
-    typeof message.ticket === 'string' &&
-    message.ticket.length <= 16384
-  );
 }

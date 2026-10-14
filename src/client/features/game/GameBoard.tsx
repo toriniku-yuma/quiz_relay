@@ -126,7 +126,6 @@ export default function GameBoard({ game }: { game: Game }) {
               {
                 {
                   target_reached: '規定の正解数に到達',
-                  seven_correct: '7問先取で終了しました。',
                   exhausted: '全問終了時の正解数で判定しました。',
                   question_limit: '指定問題数の終了時の正解数で判定しました。',
                   last_remaining: '失格していない最後の1人が勝利しました。',

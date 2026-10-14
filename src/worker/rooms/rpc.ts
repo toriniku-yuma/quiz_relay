@@ -1,5 +1,6 @@
 import { OrganizationError } from '../organization/access.ts';
-export type RoomRejection = {
+
+type RoomRejection = {
   ok: false;
   code: string;
   status: OrganizationError['status'];

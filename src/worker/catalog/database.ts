@@ -2,7 +2,6 @@ import { and, asc, eq, exists, inArray, or, sql } from 'drizzle-orm';
 import { connectD1, readD1 } from '../db/d1.ts';
 import {
   questionAvailability as a,
-  matchmakingSettings as active,
   competitions as c,
   questionSetItems as i,
   matchResults,
@@ -10,6 +9,7 @@ import {
   rulesetVersions as r,
   resultPlayers,
   questionSets as s,
+  matchmakingSettings as settings,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { sharedQuestionAvailableSQL } from '../federation/question-access.ts';
@@ -22,17 +22,16 @@ import {
 } from './definition.ts';
 import { contentHash } from './hash.ts';
 
+export type ActiveProfile = { owner: string; profile: string };
+
 // One statement keeps the definition, ordered questions and availability in one DB snapshot.
 export async function loadMatchDefinition(
   env: Env,
-  reference?: VersionRef,
+  active: ActiveProfile,
   actorId?: string,
 ): Promise<MatchDefinition> {
-  const ref = reference ? validateRef(reference) : null;
-  const owner = ref?.owner ?? env.GAME_OWNER;
-  const profile = env.GAME_CONFIG_PROFILE;
-  if (!ref && (!profile || !/^[a-zA-Z0-9_-]{1,64}$/.test(profile)))
-    throw new Error('INVALID_CONFIG_PROFILE');
+  const { owner, profile } = active;
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(profile)) throw new Error('INVALID_CONFIG_PROFILE');
   if (!env.GAME_D1) throw new Error('GAME_DATABASE_NOT_CONFIGURED');
   const db = connectD1(env.GAME_D1);
   return readD1(db, async () => {
@@ -92,31 +91,24 @@ export async function loadMatchDefinition(
       .where(
         and(
           eq(c.owner, owner),
-          ref
-            ? and(eq(c.competitionId, ref.id), eq(c.version, ref.version))
-            : exists(
-                db
-                  .select()
-                  .from(active)
-                  .where(
-                    and(
-                      eq(active.owner, c.owner),
-                      eq(active.profile, profile ?? ''),
-                      eq(active.competitionId, c.competitionId),
-                      eq(active.competitionVersion, c.version),
-                    ),
-                  ),
+          exists(
+            db
+              .select()
+              .from(settings)
+              .where(
+                and(
+                  eq(settings.owner, c.owner),
+                  eq(settings.profile, profile),
+                  eq(settings.competitionId, c.competitionId),
+                  eq(settings.competitionVersion, c.version),
+                ),
               ),
+          ),
         ),
       )
       .orderBy(asc(i.setId), asc(i.ordinal));
-    if (!rows.length)
-      throw new Error(ref ? 'DEFINITION_NOT_FOUND' : 'RANKED_NOT_CONFIGURED');
-    if (
-      !ref &&
-      actorId &&
-      /^authored-band-[0-2]$/.test(rows[0].competition.competitionId)
-    ) {
+    if (!rows.length) throw new Error('RANKED_NOT_CONFIGURED');
+    if (actorId && /^authored-band-[0-2]$/.test(rows[0].competition.competitionId)) {
       const [rating] = await db
         .select({
           value:
@@ -137,10 +129,7 @@ export async function loadMatchDefinition(
       const band =
         rating.value < boundaries[0] ? 0 : rating.value < boundaries[1] ? 1 : 2;
       if (band > 0)
-        return loadMatchDefinition({
-          ...env,
-          GAME_CONFIG_PROFILE: `${profile}-band-${band}`,
-        });
+        return loadMatchDefinition(env, { owner, profile: `${profile}-band-${band}` });
     }
     const availableRows = rows.filter((row) => row.sharedAvailable === 1);
     if (
@@ -185,5 +174,39 @@ export async function loadMatchDefinition(
       rules: ruleset.config,
       questions: availableRows.map((row) => row.question),
     });
+  });
+}
+
+// The room already holds the validated questions; only the immutable version must still exist.
+// Question availability is not checked, so a stop applies from the next waiting room.
+export async function loadFixedVersion(env: Env, reference: VersionRef) {
+  const ref = validateRef(reference);
+  if (!env.GAME_D1) throw new Error('GAME_DATABASE_NOT_CONFIGURED');
+  const db = connectD1(env.GAME_D1);
+  return readD1(db, async () => {
+    const [row] = await db
+      .select({ playersPerMatch: c.playersPerMatch, rulesHash: r.rulesHash })
+      .from(c)
+      .innerJoin(
+        r,
+        and(
+          eq(r.owner, c.owner),
+          eq(r.rulesetId, c.rulesetId),
+          eq(r.version, c.rulesetVersion),
+        ),
+      )
+      .innerJoin(
+        s,
+        and(eq(s.owner, c.owner), eq(s.setId, c.setId), eq(s.version, c.setVersion)),
+      )
+      .where(
+        and(
+          eq(c.owner, ref.owner),
+          eq(c.competitionId, ref.id),
+          eq(c.version, ref.version),
+        ),
+      );
+    if (!row) throw new Error('DEFINITION_NOT_FOUND');
+    return row;
   });
 }

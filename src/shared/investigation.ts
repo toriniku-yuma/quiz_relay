@@ -5,8 +5,8 @@ export type MatchStatistics = {
   outcome: string;
   correct: number;
   mistakes: number;
-  wrong: number | null;
-  timeouts: number | null;
+  wrong: number;
+  timeouts: number;
   correctMs: number | null;
   wrongMs: number | null;
   ratingDelta: number;
@@ -18,7 +18,6 @@ export type Investigation = {
   pagination: Pagination;
   summary: {
     matches: number;
-    recordedMatches: number;
     correct: number;
     wrong: number;
     timeouts: number;

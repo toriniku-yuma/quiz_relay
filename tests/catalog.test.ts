@@ -56,7 +56,7 @@ async function definition(): Promise<MatchDefinition> {
   });
 }
 
-describe('1C fixed catalog', () => {
+describe('fixed catalog', () => {
   it('部屋の作問者表示を固定原本の検証で落とさず、本文hashを維持する', async () => {
     const source = await definition();
     source.kind = 'room';
@@ -180,8 +180,7 @@ describe('1C fixed catalog', () => {
     await expect(
       loadMatchDefinition({ GAME_D1: undefined } as Env, {
         owner: 'https://example.com',
-        id: 'demo',
-        version: 1,
+        profile: 'local',
       }),
     ).rejects.toThrow('GAME_DATABASE_NOT_CONFIGURED');
   });
@@ -218,48 +217,31 @@ it('D1 loader rejects absent/retired data and invalid immutable versions', async
     },
   }));
   const env = { GAME_D1: {} } as Env;
+  const active = { owner: source.competition.owner, profile: 'local' };
   database.query.mockResolvedValueOnce(rows);
-  expect(await loadMatchDefinition(env, source.competition)).toEqual(source);
+  expect(await loadMatchDefinition(env, active)).toEqual(source);
 
   database.query.mockResolvedValueOnce([]);
-  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
-    'DEFINITION_NOT_FOUND',
-  );
+  await expect(loadMatchDefinition(env, active)).rejects.toThrow('RANKED_NOT_CONFIGURED');
   database.query.mockResolvedValueOnce(
     rows.map((row) => ({ ...row, availability: null })),
   );
-  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
-    'QUESTION_UNAVAILABLE',
-  );
+  await expect(loadMatchDefinition(env, active)).rejects.toThrow('QUESTION_UNAVAILABLE');
   database.query.mockResolvedValueOnce(
     rows.map((row) => ({ ...row, ruleset: { ...row.ruleset, rulesHash: 'mismatch' } })),
   );
-  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
+  await expect(loadMatchDefinition(env, active)).rejects.toThrow(
     'DEFINITION_HASH_MISMATCH',
   );
   database.query.mockRejectedValueOnce(new Error('database offline'));
-  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
-    'database offline',
-  );
-  database.query.mockResolvedValueOnce(rows);
-  expect(
-    await loadMatchDefinition({
-      ...env,
-      GAME_OWNER: source.competition.owner,
-      GAME_CONFIG_PROFILE: 'local',
-    }),
-  ).toEqual(source);
+  await expect(loadMatchDefinition(env, active)).rejects.toThrow('database offline');
   database.query.mockResolvedValueOnce(
     rows.map((row) => ({
       ...row,
       competition: { ...row.competition, version: 2, playersPerMatch: 2 },
     })),
   );
-  const next = await loadMatchDefinition({
-    ...env,
-    GAME_OWNER: source.competition.owner,
-    GAME_CONFIG_PROFILE: 'local',
-  });
+  const next = await loadMatchDefinition(env, active);
   expect(next.competition.version).toBe(2);
   expect(next.playersPerMatch).toBe(2);
   database.query.mockResolvedValueOnce(
@@ -268,18 +250,14 @@ it('D1 loader rejects absent/retired data and invalid immutable versions', async
       availability: { ...row.availability, retiredAt: '2026-09-16' },
     })),
   );
-  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
-    'NO_RANKED_QUESTIONS',
-  );
+  await expect(loadMatchDefinition(env, active)).rejects.toThrow('NO_RANKED_QUESTIONS');
   database.query.mockResolvedValueOnce(
     rows.map((row, index) => ({
       ...row,
       availability: { ...row.availability, retiredAt: index === 0 ? '2026-09-16' : null },
     })),
   );
-  await expect(loadMatchDefinition(env, source.competition)).rejects.toThrow(
-    'QUESTION_UNAVAILABLE',
-  );
+  await expect(loadMatchDefinition(env, active)).rejects.toThrow('QUESTION_UNAVAILABLE');
 });
 
 it('requires an explicit non-empty question set to create a match', () => {

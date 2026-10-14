@@ -31,7 +31,7 @@ import {
 import { publishQuestionCatalog } from '../questions/catalog.ts';
 import { QuestionPlan } from '../questions/plan.ts';
 import { exportSharedQuestions } from './question-source.ts';
-import { federationDatabase, requestPeer } from './transport.ts';
+import { federationConfig, federationDatabase, requestPeer } from './transport.ts';
 
 type Import = typeof federationQuestionImports.$inferSelect;
 async function parsedPage(value: unknown, job: Import): Promise<SharedQuestionPage> {
@@ -143,7 +143,7 @@ async function importAllowed(env: Env, job: Import) {
     !row ||
     row.instance.state === 'archived' ||
     row.deleted ||
-    !row.policy.permissions.receive.questions ||
+    !row.policy.receiveQuestions ||
     !row.peer.approved
   )
     throw new OrganizationError('QUESTION_IMPORT_DENIED', 403);
@@ -177,7 +177,7 @@ export async function syncQuestionImport(env: Env, id: string) {
       ...(!applying && job.cursor ? { cursor: job.cursor } : {}),
     };
     const received =
-      job.peerOrigin === env.FEDERATION_ORIGIN
+      job.peerOrigin === federationConfig(env).origin
         ? await exportSharedQuestions(db, job.peerOrigin, request)
         : (
             await requestPeer(
@@ -350,7 +350,7 @@ export async function syncQuestionImport(env: Env, id: string) {
         updatedLinks: (typeof federationQuestionLinks.$inferInsert)[] = [];
       for (const { payload: question } of staged) {
         const link = links.find((row) => row.sourceSeriesId === question.seriesId);
-        const nativeAuthor = job.peerOrigin === env.FEDERATION_ORIGIN;
+        const nativeAuthor = job.peerOrigin === federationConfig(env).origin;
         const authorId = nativeAuthor
           ? question.authorId
           : await actorForSubject(

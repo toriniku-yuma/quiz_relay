@@ -20,7 +20,6 @@ import {
   participationRelease,
   participationReservations,
   participationResume,
-  participationSettings,
   participationSocket,
   participationStatus,
   participationTickets,
@@ -58,10 +57,11 @@ federation.post(
   ownForeignResults,
 );
 federation.use('/api/v1/participation/*', async (context, next) => {
+  const limiter = context.env.API_LIMITER;
+  if (!limiter) return context.json({ code: 'RATE_LIMITER_NOT_CONFIGURED' }, 503);
   if (
-    context.env.API_LIMITER &&
     !(
-      await context.env.API_LIMITER.limit({
+      await limiter.limit({
         key: `participation-ip:${context.req.header('CF-Connecting-IP') ?? 'local'}`,
       })
     ).success
@@ -69,7 +69,6 @@ federation.use('/api/v1/participation/*', async (context, next) => {
     return context.json({ code: 'RATE_LIMIT' }, 429);
   await next();
 });
-federation.get(API_PATHS.participationSettings, participationSettings);
 federation.post(
   API_PATHS.participationTickets,
   sameOrigin,

@@ -22,15 +22,15 @@ vi.mock('../src/worker/organization/database', () => ({
   resolveInstance: mocks.resolve,
   allowedInstanceActors: mocks.allowed,
 }));
-vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
+vi.mock('../src/worker/catalog/database', () => ({
+  loadMatchDefinition: mocks.load,
+  loadFixedVersion: mocks.load,
+}));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/organization/moderation', () => ({
   requireUnrestricted: vi.fn(),
 }));
-const runtime = {
-  ...env,
-  ORGANIZATION_ENABLED: 'true',
-} as unknown as Env;
+const runtime = env as unknown as Env;
 let id: string;
 let owner: string;
 let org: string;
@@ -85,7 +85,7 @@ const post = (path: string, body: object) =>
   );
 async function join(name: string) {
   actor = name;
-  const response = await post('join', { name });
+  const response = await post('join', {});
   expect(response.status).toBe(200);
   const cookie = response.headers.get('set-cookie');
   if (!cookie) throw new Error('Missing session cookie');
@@ -114,7 +114,7 @@ async function socket(entry: { room: string; cookie: string }) {
 }
 async function state(room: string) {
   return runInDurableObject(
-    runtime.GAME_ROOM.getByName(`1c:${room}`),
+    runtime.GAME_ROOM.getByName(`match:${room}`),
     async (_i, ctx) => {
       const stored = await ctx.storage.get<{ state: State }>('room');
       if (!stored) throw new Error('Missing room');
@@ -129,7 +129,7 @@ it('権限取消の通知で待機を解除し、古いcookie・再参加を拒�
   await runtime.MATCHMAKER.getByName(org).refreshWaiting('a', id);
   expect((await state(firstAdmission.room)).players).toEqual([]);
   expect((await socket(firstAdmission)).status).toBe(401);
-  expect((await post('join', { name: 'a' })).status).toBe(409);
+  expect((await post('join', {})).status).toBe(409);
   expect((await post('resume', {})).status).toBe(409);
 });
 it('通知が失敗しても開始直前に全員の権限を確認し、取消対象を除外する', async () => {
@@ -176,14 +176,9 @@ it('通知が届かなくても待機列の定期確認で取消対象を解除�
 it('受付後に権限が変わった遅延reserveを拒否する', async () => {
   mocks.blocked.add('a');
   const definition = await mocks.load();
-  const result = await runtime.GAME_ROOM.getByName(`1c:${crypto.randomUUID()}`).reserve(
-    'a',
-    'A',
-    'late',
-    definition,
-    { id, owner },
-    'generation',
-  );
+  const result = await runtime.GAME_ROOM.getByName(
+    `match:${crypto.randomUUID()}`,
+  ).reserve('a', 'A', 'late', definition, { id, owner }, 'generation');
   expect(result).toEqual({ ok: false, code: 'INSTANCE_NOT_FOUND' });
 });
 
@@ -233,19 +228,20 @@ it('退会の受付停止は待機・試合中を拒否し、同じ操作IDだ�
   await maker.cancelWithdrawal('a', operationId);
   expect(await maker.beginWithdrawal('unused', operationId)).toEqual({ ok: true });
   await maker.cancelWithdrawal('unused', crypto.randomUUID());
-  expect(
-    await maker.enter('unused', 'unused', undefined, false, { id, owner }),
-  ).toMatchObject({ ok: false, code: 'WITHDRAWAL_PENDING' });
+  expect(await maker.enter('unused', 'unused', false, { id, owner })).toMatchObject({
+    ok: false,
+    code: 'WITHDRAWAL_PENDING',
+  });
   await maker.cancelWithdrawal('unused', operationId);
-  expect(
-    await maker.enter('unused', 'unused', undefined, false, { id, owner }),
-  ).toMatchObject({ ok: true });
+  expect(await maker.enter('unused', 'unused', false, { id, owner })).toMatchObject({
+    ok: true,
+  });
 });
 
 it('完全削除は進行中・未保存結果を拒否し、保存済み部屋だけを消去する', async () => {
   const firstAdmission = await join('a'),
     secondAdmission = await join('b');
-  const room = runtime.GAME_ROOM.getByName(`1c:${firstAdmission.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${firstAdmission.room}`);
   await socket(firstAdmission);
   await socket(secondAdmission);
   await runInDurableObject(room, async (_instance, ctx) => {
@@ -287,6 +283,6 @@ it('完全削除は進行中・未保存結果を拒否し、保存済み部屋�
   await room.eraseInstance(id);
   expect(await room.inventoryScope()).toBeNull();
   expect(
-    await room.reserve('a', '再入室', 'token', undefined, { id, owner }),
+    await room.reserve('a', '再入室', 'token', undefined, { id, owner }, 'generation'),
   ).toMatchObject({ ok: false });
 });

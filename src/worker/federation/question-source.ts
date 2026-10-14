@@ -89,7 +89,7 @@ export async function exportSharedQuestions(
       policyQuery,
       categoriesQuery,
     ]);
-    if (source?.state !== 'published' || !policy?.permissions.send.questions)
+    if (source?.state !== 'published' || !policy?.sendQuestions)
       throw new OrganizationError('QUESTION_SHARING_DENIED', 403);
     return {
       categories: categories.map(({ id, name }) => ({ id, name })),
@@ -188,7 +188,7 @@ export async function exportSharedQuestions(
     joins.orderBy(asc(questionSubmissions.seriesId)).limit(26),
     factsQuery,
   ]);
-  if (source?.state !== 'published' || !policy?.permissions.send.questions)
+  if (source?.state !== 'published' || !policy?.sendQuestions)
     throw new OrganizationError('QUESTION_SHARING_DENIED', 403);
   const snapshot = await contentHash({
     source: source.operationRevision,

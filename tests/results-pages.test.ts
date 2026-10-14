@@ -33,7 +33,6 @@ vi.mock('../src/client/app/context', () => ({
     auth: { ready: mocks.ready, user: mocks.guest ? null : { id: 'self' } },
     organization: {
       data: {
-        enabled: true,
         instances: [{ id: 'instance-a', name: '対象インスタンス' }],
         account: { actorId: 'self' },
       },

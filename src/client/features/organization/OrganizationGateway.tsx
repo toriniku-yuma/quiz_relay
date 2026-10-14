@@ -15,12 +15,13 @@ export default function OrganizationGateway() {
   const selected = organization.data?.instances.find(
     (instance) => instance.id === instanceId,
   );
-  const legacy = organization.data?.enabled === false;
   const [sessionId, setSessionId] = useState<string | null>(null);
   const matchingPage =
     url.pathname.replace(/\/$/, '') === GAME_PATH.replace(/\/$/, '') && !view;
-  const available =
-    legacy || canAccessInstance(selected, organization.data?.account?.administrator);
+  const available = canAccessInstance(
+    selected,
+    organization.data?.account?.administrator,
+  );
   const canResume = !!organization.data?.account && /^[0-9a-f-]{36}$/.test(instanceId);
   useEffect(() => {
     if (matchingPage && (available || canResume) && sessionId === null)

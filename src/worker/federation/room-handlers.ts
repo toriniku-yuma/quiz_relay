@@ -12,6 +12,7 @@ import {
   personalQuestionSets,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
+import { userRoomName } from '../game/room-names.ts';
 import { actorForSubject, OrganizationError, validId } from '../organization/access.ts';
 import { allowedInstanceActors, organizationIdentity } from '../organization/database.ts';
 import { requireUnrestricted } from '../organization/moderation.ts';
@@ -23,7 +24,7 @@ import {
   roomSharedSources,
 } from '../rooms/database.ts';
 import { roomResult } from '../rooms/rpc.ts';
-import { participationPolicy } from './admission.ts';
+import { requireParticipationReceiving } from './admission.ts';
 import { foreignLoginSession } from './login.ts';
 import {
   participationScope,
@@ -38,7 +39,7 @@ import { federationDatabase } from './transport.ts';
 async function publicRoomList(env: Env, instanceId: string) {
   const rooms = await roomIds(env, instanceId),
     views = await Promise.allSettled(
-      rooms.map((room) => env.GAME_ROOM.getByName(`room:${room.id}`).userRoomInfo()),
+      rooms.map((room) => env.GAME_ROOM.getByName(userRoomName(room.id)).userRoomInfo()),
     );
   return {
     rooms: views.flatMap((view) =>
@@ -75,14 +76,7 @@ export const foreignLoginRoomActions: Handler<AuthEnv> = async (context) => {
     .where(eq(instances.id, validId(input.instanceId)));
   if (instance?.state !== 'published' || instance.casualPauseReason)
     throw new OrganizationError('INSTANCE_NOT_AVAILABLE', 403);
-  await participationPolicy(
-    db,
-    instance.id,
-    account.peerOrigin,
-    account.sourceOrganizationId,
-    'room',
-    'receive',
-  );
+  await requireParticipationReceiving(db, account.peerOrigin, 'room');
   if (action === 'list')
     return context.json(await publicRoomList(context.env, instance.id));
   if (action === 'options')
@@ -183,7 +177,7 @@ export const foreignRoomActions: Handler<AuthEnv> = async (context) => {
         : { sets: await personalSets(env, subject) },
     );
   const room = validId(input.room),
-    lobby = env.GAME_ROOM.getByName(`room:${room}`),
+    lobby = env.GAME_ROOM.getByName(userRoomName(room)),
     maker = env.MATCHMAKER.getByName(instance.organizationId);
   if (action === 'info') {
     const view = roomResult(
@@ -306,7 +300,7 @@ export const foreignRoomSocket: Handler<AuthEnv> = async (context) => {
   const headers = new Headers(context.req.raw.headers);
   headers.set('X-Game-Session', admission.token);
   headers.set('X-Game-Instance', session.instance.id);
-  return context.env.GAME_ROOM.getByName(`room:${row.roomId}`).fetch(
+  return context.env.GAME_ROOM.getByName(userRoomName(row.roomId)).fetch(
     new Request(context.req.raw, { headers }),
   );
 };

@@ -105,7 +105,6 @@ async function readOverview(
   const [existing] = await db.select().from(organizations);
   if (!existing)
     return {
-      enabled: true,
       setup: { subject, eligible: !!initialSubject && subject === initialSubject },
       instances: [],
     };
@@ -211,7 +210,6 @@ async function readOverview(
         .limit(101)
     : [];
   return {
-    enabled: true,
     organization: { id: organization.id, name: organization.name },
     account: {
       actorId: account.actorId,
@@ -576,7 +574,6 @@ export async function accountPermissions(
     .from(grants)
     .where(and(eq(grants.instanceId, id), eq(grants.actorId, target.actorId)));
   return {
-    enabled: true,
     instances: [],
     accounts: [{ actorId: target.actorId, administrator: target.administrator }],
     grants: permissions,

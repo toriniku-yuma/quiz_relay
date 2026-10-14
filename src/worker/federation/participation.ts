@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, ne } from 'drizzle-orm';
 import { API_PATHS } from '../../shared/api-paths.ts';
 import { normalizeDisplayName } from '../../shared/profile.ts';
 import { contentHash } from '../catalog/hash.ts';
-import { changeD1, connectD1 } from '../db/d1.ts';
+import { changeD1 } from '../db/d1.ts';
 import {
   federationActors,
   federationNonces,
@@ -17,20 +17,29 @@ import {
   organizations,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
+import { matchRoomName, userRoomName } from '../game/room-names.ts';
 import { actorForSubject, OrganizationError, validId } from '../organization/access.ts';
 import { allowedInstanceActors } from '../organization/database.ts';
 import { ensureCasualCatalog } from '../rooms/database.ts';
 import { roomResult } from '../rooms/rpc.ts';
-import { participationPolicy } from './admission.ts';
+import {
+  requireParticipationReceiving,
+  requireParticipationSending,
+} from './admission.ts';
 import { participationSource, sourceActors } from './participation-source.ts';
 import { canonical, origin } from './signatures.ts';
 import { signParticipationTicket, verifyParticipationTicket } from './tickets.ts';
-import { federationDatabase, requestPeer } from './transport.ts';
+import {
+  federationConfig,
+  federationDatabase,
+  federationEnabled,
+  requestPeer,
+} from './transport.ts';
 
-export const participationLifetime = 60000;
+const participationLifetime = 60000;
 type Reservation = typeof federationReservations.$inferSelect;
 type ReservationRequest = {
-  sourceInstanceId: string;
+  sourceOrganizationId: string;
   hostInstanceId: string;
   mode: 'ranked' | 'casual' | 'room';
   actorId: string;
@@ -52,7 +61,7 @@ function reservationRequest(value: unknown): ReservationRequest {
   const input = object(value);
   if (
     Object.keys(input).sort().join(',') !==
-      'actorId,authorizationId,displayName,hostInstanceId,mode,operationId,sourceInstanceId' ||
+      'actorId,authorizationId,displayName,hostInstanceId,mode,operationId,sourceOrganizationId' ||
     typeof input.actorId !== 'string' ||
     !/^[a-f0-9]{64}$/.test(input.actorId)
   )
@@ -61,7 +70,7 @@ function reservationRequest(value: unknown): ReservationRequest {
   if (!displayName || displayName !== input.displayName)
     throw new OrganizationError('INVALID_PARTICIPATION', 400);
   return {
-    sourceInstanceId: validId(input.sourceInstanceId),
+    sourceOrganizationId: validId(input.sourceOrganizationId),
     hostInstanceId: validId(input.hostInstanceId),
     mode: participationMode(input.mode),
     actorId: input.actorId,
@@ -102,7 +111,6 @@ export async function reservationAdmission(
   return env.MATCHMAKER.getByName(instance.organizationId).enter(
     row.actorId,
     '',
-    undefined,
     true,
     participationScope(instance, row.mode),
   );
@@ -115,18 +123,18 @@ async function reservationIdentity(
   if (row.mode === 'room') {
     const view = admission.room
       ? roomResult(
-          await env.GAME_ROOM.getByName(`room:${admission.room}`).userRoomView(
+          await env.GAME_ROOM.getByName(userRoomName(admission.room)).userRoomView(
             row.actorId,
             admission.token,
           ),
         )
       : null;
     const status = view?.matchRoom
-      ? await env.GAME_ROOM.getByName(`1c:${view.matchRoom}`).lobbyStatus()
+      ? await env.GAME_ROOM.getByName(matchRoomName(view.matchRoom)).lobbyStatus()
       : null;
     return { matchId: row.id, phase: status?.phase ?? 'WAITING' };
   }
-  return env.GAME_ROOM.getByName(`1c:${admission.room}`).reservationIdentity(
+  return env.GAME_ROOM.getByName(matchRoomName(admission.room)).reservationIdentity(
     row.actorId,
     admission.token,
   );
@@ -135,35 +143,28 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
   const input = object(value);
   if (
     Object.keys(input).sort().join(',') !==
-    'hostInstanceId,mode,operationId,peerOrigin,sourceInstanceId'
+    'hostInstanceId,mode,operationId,peerOrigin,sourceOrganizationId'
   )
     throw new OrganizationError('INVALID_PARTICIPATION', 400);
   const db = federationDatabase(env),
-    sourceInstanceId = validId(input.sourceInstanceId),
+    sourceOrganizationId = validId(input.sourceOrganizationId),
     hostInstanceId = validId(input.hostInstanceId),
     peerOrigin = origin(String(input.peerOrigin)),
     mode = participationMode(input.mode),
     operationId = validId(input.operationId),
-    identity = await participationSource(db, subject, sourceInstanceId);
+    identity = await participationSource(db, subject, sourceOrganizationId);
   if (!identity.account.displayName) throw new OrganizationError('PROFILE_REQUIRED', 409);
   const check = async () => {
-    await participationPolicy(
-      db,
-      sourceInstanceId,
-      peerOrigin,
-      hostInstanceId,
-      mode,
-      'send',
-    );
+    await requireParticipationSending(db, peerOrigin);
     if (
       !(
-        await sourceActors(env, db, sourceInstanceId, mode, [identity.account.actorId])
+        await sourceActors(db, sourceOrganizationId, mode, [identity.account.actorId])
       ).includes(identity.account.actorId)
     )
       throw new OrganizationError('PARTICIPATION_RESTRICTED', 403);
   };
   const maker = env.MATCHMAKER.getByName(identity.organization.id),
-    target = { sourceInstanceId, hostInstanceId, peerOrigin, mode };
+    target = { sourceOrganizationId, hostInstanceId, peerOrigin, mode };
   try {
     await check();
   } catch (error) {
@@ -178,12 +179,7 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
   }
   const claimed = await maker.claimForeign(
     identity.account.actorId,
-    {
-      sourceInstanceId,
-      hostInstanceId,
-      peerOrigin,
-      mode,
-    },
+    target,
     operationId,
     identity.account.displayName,
   );
@@ -196,7 +192,7 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
     'reservation.request',
     'reservation.response',
     {
-      sourceInstanceId,
+      sourceOrganizationId,
       hostInstanceId,
       mode,
       operationId,
@@ -237,7 +233,7 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
           peerOrigin,
           reservationId: validId(result.reservationId),
           actorId: identity.account.actorId,
-          sourceInstanceId,
+          sourceOrganizationId,
           hostInstanceId,
           matchId: validId(result.matchId),
           mode,
@@ -250,10 +246,10 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
   return {
     ticket: await signParticipationTicket(env, {
       protocolVersion: 1,
-      iss: env.FEDERATION_ORIGIN ?? '',
+      iss: federationConfig(env).origin,
       sub: identity.account.actorId,
       aud: peerOrigin,
-      sourceInstanceId,
+      sourceOrganizationId,
       hostInstanceId,
       mode,
       matchId: validId(result.matchId),
@@ -346,15 +342,7 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
               (input.mode === 'casual' && !instance.casualConfig.enabled))))
     )
       throw new OrganizationError('INSTANCE_NOT_AVAILABLE', 403);
-    if (!continuation)
-      await participationPolicy(
-        db,
-        instance.id,
-        peerOrigin,
-        input.sourceInstanceId,
-        input.mode,
-        'receive',
-      );
+    if (!continuation) await requireParticipationReceiving(db, peerOrigin, input.mode);
     const [account] = await db
       .select()
       .from(organizationAccounts)
@@ -427,7 +415,7 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
       operationId: input.operationId,
       requestHash: hash,
       authorizationId: input.authorizationId,
-      sourceInstanceId: input.sourceInstanceId,
+      sourceOrganizationId: input.sourceOrganizationId,
       sourceActorId: input.actorId,
       actorId,
       instanceId: instance.id,
@@ -481,7 +469,6 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
     (await env.MATCHMAKER.getByName(organization.id).enter(
       actorId,
       input.displayName,
-      undefined,
       row.state === 'exchanged',
       participationScope(instance, input.mode),
       false,
@@ -496,10 +483,9 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
           ? 429
           : 409,
     );
-  const actual = await env.GAME_ROOM.getByName(`1c:${result.room}`).reservationIdentity(
-    actorId,
-    result.token,
-  );
+  const actual = await env.GAME_ROOM.getByName(
+    matchRoomName(result.room),
+  ).reservationIdentity(actorId, result.token);
   if (row.matchId && row.matchId !== actual.matchId)
     throw new OrganizationError('STALE_RESERVATION', 409);
   const expiresAt = Math.min(
@@ -507,15 +493,7 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
     row.state === 'exchanged' ? result.expires : row.expiresAt,
   );
   await changeD1(db, async (writes) => {
-    if (!continuation)
-      await participationPolicy(
-        db,
-        instance.id,
-        peerOrigin,
-        input.sourceInstanceId,
-        input.mode,
-        'receive',
-      );
+    if (!continuation) await requireParticipationReceiving(db, peerOrigin, input.mode);
     const [current] = await db
       .select()
       .from(federationReservations)
@@ -553,7 +531,7 @@ export async function validateHomeParticipation(
   const input = object(value);
   if (
     Object.keys(input).sort().join(',') !==
-      'actors,existing,hostInstanceId,mode,sourceInstanceId' ||
+      'actors,existing,hostInstanceId,mode,sourceOrganizationId' ||
     typeof input.existing !== 'boolean' ||
     !Array.isArray(input.actors) ||
     input.actors.length < 1 ||
@@ -570,7 +548,7 @@ export async function validateHomeParticipation(
   )
     throw new OrganizationError('INVALID_PARTICIPATION', 400);
   const db = federationDatabase(env),
-    sourceInstanceId = validId(input.sourceInstanceId),
+    sourceOrganizationId = validId(input.sourceOrganizationId),
     hostInstanceId = validId(input.hostInstanceId),
     mode = participationMode(input.mode);
   const actors = input.actors.map((actor) => ({
@@ -582,17 +560,9 @@ export async function validateHomeParticipation(
   if (new Set(actorIds).size !== actors.length)
     throw new OrganizationError('INVALID_PARTICIPATION', 400);
   const [organization] = await db.select().from(organizations);
-  if (!organization) return { actors: [] };
+  if (!organization || sourceOrganizationId !== organization.id) return { actors: [] };
   try {
-    if (!input.existing)
-      await participationPolicy(
-        db,
-        sourceInstanceId,
-        peerOrigin,
-        hostInstanceId,
-        mode,
-        'send',
-      );
+    if (!input.existing) await requireParticipationSending(db, peerOrigin);
   } catch (error) {
     if (
       error instanceof OrganizationError &&
@@ -602,9 +572,8 @@ export async function validateHomeParticipation(
     throw error;
   }
   const allowed = await sourceActors(
-    env,
     db,
-    sourceInstanceId,
+    sourceOrganizationId,
     mode,
     actorIds,
     input.existing,
@@ -617,7 +586,7 @@ export async function validateHomeParticipation(
         actor.actorId,
         actor.operationId,
         actor.authorizationId,
-        { peerOrigin, sourceInstanceId, hostInstanceId, mode },
+        { peerOrigin, sourceOrganizationId, hostInstanceId, mode },
       )
     )
       verified.push(actor.actorId);
@@ -636,15 +605,9 @@ export async function refreshParticipationAccess(
   existing = false,
   roomId?: string,
 ) {
-  if (
-    !actors.length ||
-    !env.GAME_D1 ||
-    !env.FEDERATION_ORIGIN ||
-    !env.SIGNING_KID ||
-    !env.SIGNING_PRIVATE_KEY
-  )
-    return;
-  const db = connectD1(env.GAME_D1);
+  // Deployments without federation never hold foreign reservations.
+  if (!actors.length || !federationEnabled(env)) return;
+  const db = federationDatabase(env);
   const rows = await db
     .select()
     .from(federationReservations)
@@ -668,7 +631,7 @@ export async function refreshParticipationAccess(
     if (!force && row.allowedUntil > Date.now() + 10000) continue;
     const key = canonical([
       row.peerOrigin,
-      row.sourceInstanceId,
+      row.sourceOrganizationId,
       row.mode,
       roomId ?? row.matchId,
     ]);
@@ -687,7 +650,7 @@ export async function refreshParticipationAccess(
         'reservation.request',
         'reservation.response',
         {
-          sourceInstanceId: first.sourceInstanceId,
+          sourceOrganizationId: first.sourceOrganizationId,
           hostInstanceId: instanceId,
           mode: first.mode,
           existing,
@@ -757,7 +720,7 @@ export async function exchangeParticipation(env: Env, value: unknown) {
     !reserved ||
     reserved.peerOrigin !== ticket.iss ||
     reserved.sourceActorId !== ticket.sub ||
-    reserved.sourceInstanceId !== ticket.sourceInstanceId ||
+    reserved.sourceOrganizationId !== ticket.sourceOrganizationId ||
     reserved.instanceId !== ticket.hostInstanceId ||
     reserved.mode !== ticket.mode ||
     reserved.matchId !== ticket.matchId ||
@@ -834,14 +797,7 @@ export async function exchangeParticipation(env: Env, value: unknown) {
     )
       throw new OrganizationError('STALE_RESERVATION', 409);
     if (actual.phase === 'WAITING') {
-      await participationPolicy(
-        db,
-        instance.id,
-        ticket.iss,
-        ticket.sourceInstanceId,
-        ticket.mode,
-        'receive',
-      );
+      await requireParticipationReceiving(db, ticket.iss, ticket.mode);
       if (current.allowedUntil <= Date.now())
         throw new OrganizationError('PARTICIPATION_RESTRICTED', 403);
     }

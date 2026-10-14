@@ -39,7 +39,6 @@
   ],
   "vars": {
     "PROBES_ENABLED": "false",
-    "GAME_OWNER": "https://quiz-relay-probe.quiz-relay.workers.dev",
     "GAME_CONFIG_PROFILE": "default"
   },
   "ratelimits": [

@@ -4,7 +4,7 @@ import { matchResults, resultPrivacyJobs } from '../worker/db/schema.ts';
 import { eraseResult } from '../worker/results/database.ts';
 import { privateResultSQL } from '../worker/results/privacy.ts';
 
-export function resultPrivacyPending() {
+function resultPrivacyPending() {
   const projection = privateResultSQL(matchResults.payload);
   return sql`exists(select fullkey, type, atom from json_tree(${matchResults.payload}) except select fullkey, type, atom from json_tree(${projection})) or exists(select fullkey, type, atom from json_tree(${projection}) except select fullkey, type, atom from json_tree(${matchResults.payload}))`;
 }

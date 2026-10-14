@@ -1,6 +1,6 @@
 {
-  "id": "9a153d9f-6b87-4bd5-89ba-1e36b72020cd",
-  "prevId": "17778b45-1ad3-4acc-a688-a79c249ed223",
+  "id": "1765fea4-f474-40e4-9b0e-788310ec5f1f",
+  "prevId": "588ae938-8300-4d4f-8f65-2467cd6f57ef",
   "version": "6",
   "dialect": "sqlite",
   "tables": {
@@ -112,6 +112,13 @@
         },
         "erased_at": {
           "name": "erased_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "audit_erased_at": {
+          "name": "audit_erased_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -323,30 +330,6 @@
         }
       }
     },
-    "quiz_game_catalog_operators": {
-      "name": "quiz_game_catalog_operators",
-      "columns": {
-        "role_name": {
-          "name": "role_name",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "owner": {
-          "name": "owner",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "quiz_game_competitions": {
       "name": "quiz_game_competitions",
       "columns": {
@@ -469,6 +452,2680 @@
           "value": "version > 0"
         }
       }
+    },
+    "quiz_database_revision": {
+      "name": "quiz_database_revision",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "database_revision_singleton": {
+          "name": "database_revision_singleton",
+          "value": "\"quiz_database_revision\".\"id\" = 1"
+        }
+      }
+    },
+    "quiz_game_difficulty_actors": {
+      "name": "quiz_game_difficulty_actors",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "band": {
+          "name": "band",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "players": {
+          "name": "players",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rules_hash": {
+          "name": "rules_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "band_revision": {
+          "name": "band_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "quiz_game_difficulty_actors_owner_generation_band_players_rules_hash_band_revision_actor_id_pk": {
+          "columns": [
+            "owner",
+            "generation",
+            "band",
+            "players",
+            "rules_hash",
+            "band_revision",
+            "actor_id"
+          ],
+          "name": "quiz_game_difficulty_actors_owner_generation_band_players_rules_hash_band_revision_actor_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_game_difficulty_samples": {
+      "name": "quiz_game_difficulty_samples",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "band": {
+          "name": "band",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "players": {
+          "name": "players",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rules_hash": {
+          "name": "rules_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "band_revision": {
+          "name": "band_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "trials": {
+          "name": "trials",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "correct": {
+          "name": "correct",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "quiz_game_difficulty_samples_owner_generation_band_players_rules_hash_band_revision_pk": {
+          "columns": [
+            "owner",
+            "generation",
+            "band",
+            "players",
+            "rules_hash",
+            "band_revision"
+          ],
+          "name": "quiz_game_difficulty_samples_owner_generation_band_players_rules_hash_band_revision_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_game_difficulty_trials": {
+      "name": "quiz_game_difficulty_trials",
+      "columns": {
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "question_id": {
+          "name": "question_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result_id": {
+          "name": "result_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "band": {
+          "name": "band",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "players": {
+          "name": "players",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rules_hash": {
+          "name": "rules_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "band_revision": {
+          "name": "band_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "correct": {
+          "name": "correct",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actors": {
+          "name": "actors",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "difficulty_trials_result": {
+          "name": "difficulty_trials_result",
+          "columns": [
+            "result_id"
+          ],
+          "isUnique": false
+        },
+        "difficulty_trials_generation": {
+          "name": "difficulty_trials_generation",
+          "columns": [
+            "owner",
+            "generation"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_game_difficulty_trials_result_id_quiz_game_match_results_result_id_fk": {
+          "name": "quiz_game_difficulty_trials_result_id_quiz_game_match_results_result_id_fk",
+          "tableFrom": "quiz_game_difficulty_trials",
+          "columnsFrom": [
+            "result_id"
+          ],
+          "tableTo": "quiz_game_match_results",
+          "columnsTo": [
+            "result_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_game_difficulty_trials_owner_match_id_question_id_pk": {
+          "columns": [
+            "owner",
+            "match_id",
+            "question_id"
+          ],
+          "name": "quiz_game_difficulty_trials_owner_match_id_question_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_actors": {
+      "name": "quiz_federation_actors",
+      "columns": {
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_actor_id": {
+          "name": "source_actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "quiz_federation_actors_peer_origin_source_actor_id_unique": {
+          "name": "quiz_federation_actors_peer_origin_source_actor_id_unique",
+          "columns": [
+            "peer_origin",
+            "source_actor_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_actors_actor_id_quiz_game_organization_accounts_actor_id_fk": {
+          "name": "quiz_federation_actors_actor_id_quiz_game_organization_accounts_actor_id_fk",
+          "tableFrom": "quiz_federation_actors",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "tableTo": "quiz_game_organization_accounts",
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_actors_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_actors_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_actors",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_control_deliveries": {
+      "name": "quiz_federation_control_deliveries",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "quarantined": {
+          "name": "quarantined",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        }
+      },
+      "indexes": {
+        "federation_control_due": {
+          "name": "federation_control_due",
+          "columns": [
+            "applied_at",
+            "quarantined",
+            "next_attempt_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_control_deliveries_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_control_deliveries_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_control_deliveries",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_control_deliveries_event_id_peer_origin_pk": {
+          "columns": [
+            "event_id",
+            "peer_origin"
+          ],
+          "name": "quiz_federation_control_deliveries_event_id_peer_origin_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_control_inbox": {
+      "name": "quiz_federation_control_inbox",
+      "columns": {
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "room_cursor": {
+          "name": "room_cursor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "conflict_hash": {
+          "name": "conflict_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_control_apply": {
+          "name": "federation_control_apply",
+          "columns": [
+            "applied_at",
+            "received_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_control_inbox_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_control_inbox_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_control_inbox",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_control_inbox_peer_origin_event_id_pk": {
+          "columns": [
+            "peer_origin",
+            "event_id"
+          ],
+          "name": "quiz_federation_control_inbox_peer_origin_event_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_deleted_instances": {
+      "name": "quiz_federation_deleted_instances",
+      "columns": {
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_deleted_instances_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_deleted_instances_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_deleted_instances",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_deleted_instances_peer_origin_instance_id_pk": {
+          "columns": [
+            "peer_origin",
+            "instance_id"
+          ],
+          "name": "quiz_federation_deleted_instances_peer_origin_instance_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_favorites": {
+      "name": "quiz_federation_favorites",
+      "columns": {
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_favorites_actor_id_quiz_game_organization_accounts_actor_id_fk": {
+          "name": "quiz_federation_favorites_actor_id_quiz_game_organization_accounts_actor_id_fk",
+          "tableFrom": "quiz_federation_favorites",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "tableTo": "quiz_game_organization_accounts",
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_favorites_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_favorites_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_favorites",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_favorites_actor_id_peer_origin_instance_id_pk": {
+          "columns": [
+            "actor_id",
+            "peer_origin",
+            "instance_id"
+          ],
+          "name": "quiz_federation_favorites_actor_id_peer_origin_instance_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_login_sessions": {
+      "name": "quiz_federation_login_sessions",
+      "columns": {
+        "hash": {
+          "name": "hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_organization_id": {
+          "name": "source_organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_actor_id": {
+          "name": "source_actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "organization_name": {
+          "name": "organization_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_login_expiry": {
+          "name": "federation_login_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        },
+        "federation_login_actor": {
+          "name": "federation_login_actor",
+          "columns": [
+            "peer_origin",
+            "source_actor_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_login_sessions_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_login_sessions_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_login_sessions",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_metadata": {
+      "name": "quiz_federation_metadata",
+      "columns": {
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "next_cursor": {
+          "name": "next_cursor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_success_at": {
+          "name": "last_success_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_metadata_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_metadata_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_metadata",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_metadata_instance_id_peer_origin_pk": {
+          "columns": [
+            "instance_id",
+            "peer_origin"
+          ],
+          "name": "quiz_federation_metadata_instance_id_peer_origin_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_metadata_jobs": {
+      "name": "quiz_federation_metadata_jobs",
+      "columns": {
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "attempt_id": {
+          "name": "attempt_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "failures": {
+          "name": "failures",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_metadata_due": {
+          "name": "federation_metadata_due",
+          "columns": [
+            "next_attempt_at",
+            "lease_until"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_metadata_jobs_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_metadata_jobs_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_metadata_jobs",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_metadata_jobs_instance_id_peer_origin_pk": {
+          "columns": [
+            "instance_id",
+            "peer_origin"
+          ],
+          "name": "quiz_federation_metadata_jobs_instance_id_peer_origin_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_nonces": {
+      "name": "quiz_federation_nonces",
+      "columns": {
+        "issuer": {
+          "name": "issuer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "purpose": {
+          "name": "purpose",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "nonce": {
+          "name": "nonce",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_nonce_expiry": {
+          "name": "federation_nonce_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "quiz_federation_nonces_issuer_purpose_nonce_pk": {
+          "columns": [
+            "issuer",
+            "purpose",
+            "nonce"
+          ],
+          "name": "quiz_federation_nonces_issuer_purpose_nonce_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_participations": {
+      "name": "quiz_federation_participations",
+      "columns": {
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_organization_id": {
+          "name": "source_organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "host_instance_id": {
+          "name": "host_instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "authorized_at": {
+          "name": "authorized_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_participation_actor": {
+          "name": "federation_participation_actor",
+          "columns": [
+            "actor_id",
+            "peer_origin"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_participations_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_participations_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_participations",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_participations_actor_id_quiz_game_organization_accounts_actor_id_fk": {
+          "name": "quiz_federation_participations_actor_id_quiz_game_organization_accounts_actor_id_fk",
+          "tableFrom": "quiz_federation_participations",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "tableTo": "quiz_game_organization_accounts",
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_participations_peer_origin_reservation_id_pk": {
+          "columns": [
+            "peer_origin",
+            "reservation_id"
+          ],
+          "name": "quiz_federation_participations_peer_origin_reservation_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_peer_keys": {
+      "name": "quiz_federation_peer_keys",
+      "columns": {
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kid": {
+          "name": "kid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "public_key": {
+          "name": "public_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_peer_keys_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_peer_keys_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_peer_keys",
+          "columnsFrom": [
+            "origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_peer_keys_origin_kid_pk": {
+          "columns": [
+            "origin",
+            "kid"
+          ],
+          "name": "quiz_federation_peer_keys_origin_kid_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_peers": {
+      "name": "quiz_federation_peers",
+      "columns": {
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kid": {
+          "name": "kid",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "public_key": {
+          "name": "public_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "approved": {
+          "name": "approved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "discovered": {
+          "name": "discovered",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "participation_blocked": {
+          "name": "participation_blocked",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "receive_ranked": {
+          "name": "receive_ranked",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "receive_casual": {
+          "name": "receive_casual",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_policies": {
+      "name": "quiz_federation_policies",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_instance_id": {
+          "name": "peer_instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "send_questions": {
+          "name": "send_questions",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "receive_questions": {
+          "name": "receive_questions",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        }
+      },
+      "indexes": {
+        "federation_policy_peer": {
+          "name": "federation_policy_peer",
+          "columns": [
+            "peer_origin"
+          ],
+          "isUnique": false
+        },
+        "quiz_federation_policies_instance_id_peer_origin_peer_instance_id_unique": {
+          "name": "quiz_federation_policies_instance_id_peer_origin_peer_instance_id_unique",
+          "columns": [
+            "instance_id",
+            "peer_origin",
+            "peer_instance_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_policies_instance_id_quiz_game_instances_id_fk": {
+          "name": "quiz_federation_policies_instance_id_quiz_game_instances_id_fk",
+          "tableFrom": "quiz_federation_policies",
+          "columnsFrom": [
+            "instance_id"
+          ],
+          "tableTo": "quiz_game_instances",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_policies_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_policies_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_policies",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_question_imports": {
+      "name": "quiz_federation_question_imports",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_instance_id": {
+          "name": "source_instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "config": {
+          "name": "config",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "cursor": {
+          "name": "cursor",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "active_snapshot": {
+          "name": "active_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_success_at": {
+          "name": "last_success_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "failures": {
+          "name": "failures",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "attempt_id": {
+          "name": "attempt_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "federation_question_import_due": {
+          "name": "federation_question_import_due",
+          "columns": [
+            "enabled",
+            "next_attempt_at",
+            "lease_until"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_question_imports_instance_id_quiz_game_instances_id_fk": {
+          "name": "quiz_federation_question_imports_instance_id_quiz_game_instances_id_fk",
+          "tableFrom": "quiz_federation_question_imports",
+          "columnsFrom": [
+            "instance_id"
+          ],
+          "tableTo": "quiz_game_instances",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_question_links": {
+      "name": "quiz_federation_question_links",
+      "columns": {
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_instance_id": {
+          "name": "source_instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_series_id": {
+          "name": "source_series_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "import_id": {
+          "name": "import_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "submission_id": {
+          "name": "submission_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_question_id": {
+          "name": "source_question_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_hash": {
+          "name": "source_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_category": {
+          "name": "source_category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_difficulty": {
+          "name": "source_difficulty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_author_id": {
+          "name": "source_author_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "seen_snapshot": {
+          "name": "seen_snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "excluded": {
+          "name": "excluded",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "mapping_revision": {
+          "name": "mapping_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "mapping_hash": {
+          "name": "mapping_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "last_available_at": {
+          "name": "last_available_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "cache_purged_at": {
+          "name": "cache_purged_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_question_link_import": {
+          "name": "federation_question_link_import",
+          "columns": [
+            "import_id",
+            "seen_snapshot"
+          ],
+          "isUnique": false
+        },
+        "federation_question_cache_due": {
+          "name": "federation_question_cache_due",
+          "columns": [
+            "cache_purged_at",
+            "last_available_at"
+          ],
+          "isUnique": false
+        },
+        "quiz_federation_question_links_submission_id_unique": {
+          "name": "quiz_federation_question_links_submission_id_unique",
+          "columns": [
+            "submission_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_question_links_instance_id_quiz_game_instances_id_fk": {
+          "name": "quiz_federation_question_links_instance_id_quiz_game_instances_id_fk",
+          "tableFrom": "quiz_federation_question_links",
+          "columnsFrom": [
+            "instance_id"
+          ],
+          "tableTo": "quiz_game_instances",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_question_links_import_id_quiz_federation_question_imports_id_fk": {
+          "name": "quiz_federation_question_links_import_id_quiz_federation_question_imports_id_fk",
+          "tableFrom": "quiz_federation_question_links",
+          "columnsFrom": [
+            "import_id"
+          ],
+          "tableTo": "quiz_federation_question_imports",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_question_links_submission_id_quiz_game_question_submissions_id_fk": {
+          "name": "quiz_federation_question_links_submission_id_quiz_game_question_submissions_id_fk",
+          "tableFrom": "quiz_federation_question_links",
+          "columnsFrom": [
+            "submission_id"
+          ],
+          "tableTo": "quiz_game_question_submissions",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_question_links_instance_id_peer_origin_source_instance_id_source_series_id_pk": {
+          "columns": [
+            "instance_id",
+            "peer_origin",
+            "source_instance_id",
+            "source_series_id"
+          ],
+          "name": "quiz_federation_question_links_instance_id_peer_origin_source_instance_id_source_series_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_question_sources": {
+      "name": "quiz_federation_question_sources",
+      "columns": {
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_instance_id": {
+          "name": "source_instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "categories": {
+          "name": "categories",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "last_success_at": {
+          "name": "last_success_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_question_sources_instance_id_quiz_game_instances_id_fk": {
+          "name": "quiz_federation_question_sources_instance_id_quiz_game_instances_id_fk",
+          "tableFrom": "quiz_federation_question_sources",
+          "columnsFrom": [
+            "instance_id"
+          ],
+          "tableTo": "quiz_game_instances",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_question_sources_instance_id_peer_origin_source_instance_id_pk": {
+          "columns": [
+            "instance_id",
+            "peer_origin",
+            "source_instance_id"
+          ],
+          "name": "quiz_federation_question_sources_instance_id_peer_origin_source_instance_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_question_staging": {
+      "name": "quiz_federation_question_staging",
+      "columns": {
+        "import_id": {
+          "name": "import_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "snapshot": {
+          "name": "snapshot",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "series_id": {
+          "name": "series_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_question_staging_import_id_quiz_federation_question_imports_id_fk": {
+          "name": "quiz_federation_question_staging_import_id_quiz_federation_question_imports_id_fk",
+          "tableFrom": "quiz_federation_question_staging",
+          "columnsFrom": [
+            "import_id"
+          ],
+          "tableTo": "quiz_federation_question_imports",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_question_staging_import_id_snapshot_series_id_pk": {
+          "columns": [
+            "import_id",
+            "snapshot",
+            "series_id"
+          ],
+          "name": "quiz_federation_question_staging_import_id_snapshot_series_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_reservation_closures": {
+      "name": "quiz_federation_reservation_closures",
+      "columns": {
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_actor_id": {
+          "name": "source_actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "confirmed": {
+          "name": "confirmed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_closure_expiry": {
+          "name": "federation_closure_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_reservation_closures_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_reservation_closures_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_reservation_closures",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_reservation_closures_peer_origin_operation_id_pk": {
+          "columns": [
+            "peer_origin",
+            "operation_id"
+          ],
+          "name": "quiz_federation_reservation_closures_peer_origin_operation_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_reservations": {
+      "name": "quiz_federation_reservations",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "operation_id": {
+          "name": "operation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "authorization_id": {
+          "name": "authorization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "source_organization_id": {
+          "name": "source_organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_actor_id": {
+          "name": "source_actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "match_id": {
+          "name": "match_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'creating'"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_expires_at": {
+          "name": "session_expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "allowed_until": {
+          "name": "allowed_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "federation_reservation_actor": {
+          "name": "federation_reservation_actor",
+          "columns": [
+            "instance_id",
+            "actor_id",
+            "allowed_until"
+          ],
+          "isUnique": false
+        },
+        "federation_reservation_expiry": {
+          "name": "federation_reservation_expiry",
+          "columns": [
+            "state",
+            "expires_at"
+          ],
+          "isUnique": false
+        },
+        "federation_reservation_identity": {
+          "name": "federation_reservation_identity",
+          "columns": [
+            "peer_origin",
+            "source_actor_id",
+            "state"
+          ],
+          "isUnique": false
+        },
+        "quiz_federation_reservations_peer_origin_operation_id_unique": {
+          "name": "quiz_federation_reservations_peer_origin_operation_id_unique",
+          "columns": [
+            "peer_origin",
+            "operation_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_reservations_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_reservations_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_reservations",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_reservations_actor_id_quiz_game_organization_accounts_actor_id_fk": {
+          "name": "quiz_federation_reservations_actor_id_quiz_game_organization_accounts_actor_id_fk",
+          "tableFrom": "quiz_federation_reservations",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "tableTo": "quiz_game_organization_accounts",
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_reservations_instance_id_quiz_game_instances_id_fk": {
+          "name": "quiz_federation_reservations_instance_id_quiz_game_instances_id_fk",
+          "tableFrom": "quiz_federation_reservations",
+          "columnsFrom": [
+            "instance_id"
+          ],
+          "tableTo": "quiz_game_instances",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_result_deliveries": {
+      "name": "quiz_federation_result_deliveries",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result_id": {
+          "name": "result_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_actor_id": {
+          "name": "source_actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "quarantined": {
+          "name": "quarantined",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        }
+      },
+      "indexes": {
+        "federation_result_due": {
+          "name": "federation_result_due",
+          "columns": [
+            "received_at",
+            "quarantined",
+            "next_attempt_at"
+          ],
+          "isUnique": false
+        },
+        "quiz_federation_result_deliveries_result_id_peer_origin_source_actor_id_unique": {
+          "name": "quiz_federation_result_deliveries_result_id_peer_origin_source_actor_id_unique",
+          "columns": [
+            "result_id",
+            "peer_origin",
+            "source_actor_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_result_deliveries_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_result_deliveries_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_result_deliveries",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_result_inbox": {
+      "name": "quiz_federation_result_inbox",
+      "columns": {
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_organization_id": {
+          "name": "source_organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "conflict_hash": {
+          "name": "conflict_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_result_history": {
+          "name": "federation_result_history",
+          "columns": [
+            "actor_id",
+            "source_organization_id",
+            "finished_at",
+            "event_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_result_inbox_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_result_inbox_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_result_inbox",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "quiz_federation_result_inbox_actor_id_quiz_game_organization_accounts_actor_id_fk": {
+          "name": "quiz_federation_result_inbox_actor_id_quiz_game_organization_accounts_actor_id_fk",
+          "tableFrom": "quiz_federation_result_inbox",
+          "columnsFrom": [
+            "actor_id"
+          ],
+          "tableTo": "quiz_game_organization_accounts",
+          "columnsTo": [
+            "actor_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_result_inbox_peer_origin_event_id_pk": {
+          "columns": [
+            "peer_origin",
+            "event_id"
+          ],
+          "name": "quiz_federation_result_inbox_peer_origin_event_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_retired_identities": {
+      "name": "quiz_federation_retired_identities",
+      "columns": {
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "retired_at": {
+          "name": "retired_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_retired_identities_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_retired_identities_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_retired_identities",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_retired_identities_peer_origin_actor_id_pk": {
+          "columns": [
+            "peer_origin",
+            "actor_id"
+          ],
+          "name": "quiz_federation_retired_identities_peer_origin_actor_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_sessions": {
+      "name": "quiz_federation_sessions",
+      "columns": {
+        "hash": {
+          "name": "hash",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "federation_session_expiry": {
+          "name": "federation_session_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_federation_sessions_reservation_id_quiz_federation_reservations_id_fk": {
+          "name": "quiz_federation_sessions_reservation_id_quiz_federation_reservations_id_fk",
+          "tableFrom": "quiz_federation_sessions",
+          "columnsFrom": [
+            "reservation_id"
+          ],
+          "tableTo": "quiz_federation_reservations",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_federation_targets": {
+      "name": "quiz_federation_targets",
+      "columns": {
+        "source_organization_id": {
+          "name": "source_organization_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "peer_origin": {
+          "name": "peer_origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "instance_id": {
+          "name": "instance_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_federation_targets_peer_origin_quiz_federation_peers_origin_fk": {
+          "name": "quiz_federation_targets_peer_origin_quiz_federation_peers_origin_fk",
+          "tableFrom": "quiz_federation_targets",
+          "columnsFrom": [
+            "peer_origin"
+          ],
+          "tableTo": "quiz_federation_peers",
+          "columnsTo": [
+            "origin"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "quiz_federation_targets_source_organization_id_peer_origin_instance_id_pk": {
+          "columns": [
+            "source_organization_id",
+            "peer_origin",
+            "instance_id"
+          ],
+          "name": "quiz_federation_targets_source_organization_id_peer_origin_instance_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "quiz_game_guest_sessions": {
       "name": "quiz_game_guest_sessions",
@@ -928,6 +3585,30 @@
           "value": "\"quiz_game_instances\".\"state\" IN ('preparing', 'published', 'archived')"
         }
       }
+    },
+    "quiz_maintenance_checkpoints": {
+      "name": "quiz_maintenance_checkpoints",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "completed_day": {
+          "name": "completed_day",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "quiz_game_match_results": {
       "name": "quiz_game_match_results",
@@ -1628,6 +4309,22 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "external_participation": {
+          "name": "external_participation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'approved'"
+        },
+        "federation_revision": {
+          "name": "federation_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
         }
       },
       "indexes": {
@@ -1965,6 +4662,14 @@
           "autoincrement": false,
           "default": true
         },
+        "import_only": {
+          "name": "import_only",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
         "revision": {
           "name": "revision",
           "type": "integer",
@@ -2064,6 +4769,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "statistics_revision": {
+          "name": "statistics_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         },
         "cursor": {
           "name": "cursor",
@@ -2941,6 +5654,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "search_text": {
+          "name": "search_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
         "reason": {
           "name": "reason",
           "type": "text",
@@ -3274,6 +5995,105 @@
           "value": "\"quiz_game_result_players\".\"rating_delta\" IN (-20, 0, 20)"
         }
       }
+    },
+    "quiz_game_result_privacy_changes": {
+      "name": "quiz_game_result_privacy_changes",
+      "columns": {
+        "result_id": {
+          "name": "result_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "previous_hash": {
+          "name": "previous_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload_hash": {
+          "name": "payload_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "quiz_game_result_privacy_changes_result_id_quiz_game_match_results_result_id_fk": {
+          "name": "quiz_game_result_privacy_changes_result_id_quiz_game_match_results_result_id_fk",
+          "tableFrom": "quiz_game_result_privacy_changes",
+          "columnsFrom": [
+            "result_id"
+          ],
+          "tableTo": "quiz_game_match_results",
+          "columnsTo": [
+            "result_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "quiz_game_result_privacy_jobs": {
+      "name": "quiz_game_result_privacy_jobs",
+      "columns": {
+        "result_id": {
+          "name": "result_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "due_at": {
+          "name": "due_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "result_privacy_due": {
+          "name": "result_privacy_due",
+          "columns": [
+            "due_at",
+            "result_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "quiz_game_result_privacy_jobs_result_id_quiz_game_match_results_result_id_fk": {
+          "name": "quiz_game_result_privacy_jobs_result_id_quiz_game_match_results_result_id_fk",
+          "tableFrom": "quiz_game_result_privacy_jobs",
+          "columnsFrom": [
+            "result_id"
+          ],
+          "tableTo": "quiz_game_match_results",
+          "columnsTo": [
+            "result_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "quiz_game_room_directory": {
       "name": "quiz_game_room_directory",

@@ -1,8 +1,7 @@
 import { applyD1Migrations, env } from 'cloudflare:test';
 import { count, eq } from 'drizzle-orm';
 import { beforeAll, expect, it } from 'vitest';
-import app from '../scripts/federation-game-worker';
-import type { FederationTestEnv } from '../scripts/federation-worker';
+import app, { type FederationTestEnv } from '../scripts/federation-game-worker';
 import { connectD1 } from '../src/worker/db/d1';
 import {
   federationPeers,
@@ -20,7 +19,7 @@ const testEnv = {
   ...runtime,
   TEST_NODE: 'A',
   TEST_ADMIN_SUBJECT: 'qa-admin',
-  GAME_OWNER: origin,
+  FEDERATION_ORIGIN: origin,
   PROBES_ENABLED: 'true',
   PROBE_TOKEN: 'a'.repeat(64),
 };
@@ -151,7 +150,7 @@ it('DB単独の疎通確認は固定のQA配置だけに限定し、データを
     app.request(
       `${origin}/api/probes/game/database-read`,
       { headers: { Authorization: `Bearer ${token}` } },
-      { ...testEnv, GAME_OWNER: owner },
+      { ...testEnv, FEDERATION_ORIGIN: owner },
     );
   expect((await request('invalid')).status).toBe(401);
   expect((await request(testEnv.PROBE_TOKEN, 'https://other.example')).status).toBe(403);
@@ -168,7 +167,7 @@ it('負荷試験の本人fixtureはQA専用配置・正しいtoken・新規runId
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       },
-      { ...testEnv, GAME_OWNER: owner },
+      { ...testEnv, FEDERATION_ORIGIN: owner },
     );
   const input = {
     runId: crypto.randomUUID(),
@@ -202,7 +201,7 @@ it('片側未承認の検証はBの固定peerだけを変更し、鍵を維持�
         headers: { Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       },
-      { ...testEnv, TEST_NODE: 'B', GAME_OWNER: bOrigin, PEER_ORIGIN: peer },
+      { ...testEnv, TEST_NODE: 'B', FEDERATION_ORIGIN: bOrigin, PEER_ORIGIN: peer },
     );
   expect((await request({}, 'invalid')).status).toBe(401);
   expect((await request({})).status).toBe(403);

@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
   status: vi.fn(),
   logout: vi.fn(),
 }));
-vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
+vi.mock('../src/worker/catalog/database', () => ({
+  loadMatchDefinition: mocks.load,
+  loadFixedVersion: mocks.load,
+}));
 vi.mock('../src/worker/organization/database', () => ({
   allowedInstanceActors: async (_env: Env, _scope: unknown, actors: string[]) => actors,
 }));
@@ -29,7 +32,7 @@ const runtime = env as unknown as Env;
 let organization: string, scope: { id: string; owner: string }, actor: string;
 const target = (): ParticipationTarget => ({
   peerOrigin: 'https://host.quiz-relay.workers.dev',
-  sourceInstanceId: scope.id,
+  sourceOrganizationId: scope.id,
   hostInstanceId: crypto.randomUUID(),
   mode: 'ranked',
 });
@@ -65,8 +68,8 @@ async function queue() {
     }>('queue'),
   );
 }
-it('ローカル待機と外部予約を同じ2枠へ数え、成立後に旧本人だけを離脱させる', async () => {
-  const local = await maker().enter(actor, '本人', undefined, false, scope);
+it('ローカル待機と外部予約を同じ2枠へ数え、成立後にローカル待機の本人だけを離脱させる', async () => {
+  const local = await maker().enter(actor, '本人', false, scope);
   if (!local.ok) throw new Error(local.code);
   const operationId = crypto.randomUUID(),
     destination = target();
@@ -83,15 +86,7 @@ it('ローカル待機と外部予約を同じ2枠へ数え、成立後に旧本
     await maker().claimForeign(actor, target(), crypto.randomUUID(), '本人'),
   ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
   expect(
-    await maker().enter(
-      actor,
-      '本人',
-      undefined,
-      false,
-      scope,
-      false,
-      crypto.randomUUID(),
-    ),
+    await maker().enter(actor, '本人', false, scope, false, crypto.randomUUID()),
   ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
   expect((await queue())?.actors[actor].room).toBe(local.room);
   expect(
@@ -104,7 +99,7 @@ it('ローカル待機と外部予約を同じ2枠へ数え、成立後に旧本
   ).toEqual({ ok: true });
   expect((await queue())?.actors[actor]).toBeUndefined();
   const old = await runInDurableObject(
-    runtime.GAME_ROOM.getByName(`1c:${local.room}`),
+    runtime.GAME_ROOM.getByName(`match:${local.room}`),
     async (_instance, state) =>
       readStored<{ state: { players: unknown[] } }>(state.storage, 'room'),
   );
@@ -186,15 +181,7 @@ it('離脱応答が不明な旧外部枠を保持し、3枠目を拒否してAla
   await maker().commitForeign(actor, second, crypto.randomUUID(), Date.now() + 43200000);
   expect((await queue())?.foreign?.[actor]).toHaveLength(2);
   expect(
-    await maker().enter(
-      actor,
-      '本人',
-      undefined,
-      false,
-      scope,
-      false,
-      crypto.randomUUID(),
-    ),
+    await maker().enter(actor, '本人', false, scope, false, crypto.randomUUID()),
   ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
   expect(
     await maker().claimForeign(actor, target(), crypto.randomUUID(), '本人'),
@@ -224,15 +211,7 @@ it('新しいローカル参加が拒否された場合は、元の外部参加�
   );
   mocks.load.mockRejectedValueOnce(new Error('DB_UNAVAILABLE'));
   expect(
-    await maker().enter(
-      actor,
-      '本人',
-      undefined,
-      false,
-      scope,
-      false,
-      crypto.randomUUID(),
-    ),
+    await maker().enter(actor, '本人', false, scope, false, crypto.randomUUID()),
   ).toMatchObject({ ok: false, code: 'GAME_DATABASE_UNAVAILABLE' });
   expect(mocks.release).not.toHaveBeenCalled();
   expect((await queue())?.foreign?.[actor]).toEqual([
@@ -241,7 +220,6 @@ it('新しいローカル参加が拒否された場合は、元の外部参加�
   const local = await maker().enter(
     actor,
     '本人',
-    undefined,
     false,
     scope,
     false,

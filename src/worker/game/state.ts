@@ -27,7 +27,7 @@ export type State = {
   parentRoomId?: string;
   reviewExpired?: boolean;
   guestNamesExpired?: boolean;
-  answerStats?: {
+  answerStats: {
     actorId: string;
     result: 'correct' | 'wrong' | 'timeout';
     elapsedMs: number | null;
@@ -52,7 +52,7 @@ export type State = {
     correct: boolean;
     participants: string[];
   }[];
-  matchKind?: MatchKind;
+  matchKind: MatchKind;
   startedAt?: number;
   completed?: ResultRecord;
   rules: Rules;
@@ -260,7 +260,7 @@ function judge(
       (participant) => !participant.disqualified && participant.role !== 'presenter',
     )
     .map((participant) => participant.id);
-  if (player && result !== 'unanswered' && state.answerStats)
+  if (player && result !== 'unanswered')
     state.answerStats.push({
       actorId: player.id,
       result,
@@ -514,7 +514,7 @@ export function commandFingerprint(command: Command) {
   ]);
 }
 
-export function isActive(state: State) {
+function isActive(state: State) {
   return (
     state.phase === 'REVEALING' || state.phase === 'ANSWERING' || state.phase === 'JUDGED'
   );
@@ -565,13 +565,11 @@ function checkInvalid(state: State, now: number) {
 }
 
 export function changed(state: State, now: number) {
-  if (state.answerStats) {
-    if (!state.buzzClock || state.buzzClock.questionId !== state.question.id)
-      state.buzzClock = { questionId: state.question.id, elapsed: 0, since: null };
-    const clock = state.buzzClock;
-    if (clock.since !== null) clock.elapsed += Math.max(0, now - clock.since);
-    clock.since = state.phase === 'REVEALING' && !state.reconnect ? now : null;
-  }
+  if (!state.buzzClock || state.buzzClock.questionId !== state.question.id)
+    state.buzzClock = { questionId: state.question.id, elapsed: 0, since: null };
+  const clock = state.buzzClock;
+  if (clock.since !== null) clock.elapsed += Math.max(0, now - clock.since);
+  clock.since = state.phase === 'REVEALING' && !state.reconnect ? now : null;
   state.roomSeq++;
   const current = snapshot(state);
   state.events = appendEvent(state.events, state.publicState, current, now);

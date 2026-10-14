@@ -1,6 +1,6 @@
 import type { Context, Handler, MiddlewareHandler } from 'hono';
 import type { AuthEnv } from '../auth/handlers.ts';
-import { canViewInstance, OrganizationError, organizationEnabled } from './access.ts';
+import { canViewInstance, OrganizationError } from './access.ts';
 import {
   accountPermissions,
   addInstance,
@@ -19,8 +19,6 @@ import { changeInstanceOperation } from './operations.ts';
 import { saveProfile } from './profile.ts';
 
 export const organizationOverview: Handler<AuthEnv> = async (context) => {
-  if (!organizationEnabled(context.env))
-    return context.json({ enabled: false, instances: [] });
   const { db, close } = organizationDatabase(context.env);
   try {
     const input = (await context.req.json().catch(() => ({}))) as {
@@ -42,8 +40,6 @@ export const organizationOverview: Handler<AuthEnv> = async (context) => {
 };
 
 export const mutateOrganization: Handler<AuthEnv> = async (context) => {
-  if (!organizationEnabled(context.env))
-    throw new OrganizationError('ORGANIZATION_UNAVAILABLE', 503);
   const input: unknown = await context.req.json().catch(() => null);
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new OrganizationError('INVALID_SETUP', 400);
@@ -105,40 +101,34 @@ export const mutateOrganization: Handler<AuthEnv> = async (context) => {
 const contextFor =
   (existingParticipation: boolean): MiddlewareHandler<AuthEnv> =>
   async (context, next) => {
-    if (!organizationEnabled(context.env)) {
-      context.set('instanceOwner', context.env.GAME_OWNER);
-      context.set('instanceId', '');
-      context.set('organizationId', context.env.GAME_OWNER);
-    } else {
-      const { db, close } = organizationDatabase(context.env);
-      try {
-        const { organization, account, instance, permissions } = await resolveInstance(
-          db,
-          context.get('subject'),
-          context.req.query('instance') ?? '',
-          existingParticipation,
-        );
-        if (
-          !existingParticipation &&
-          !canViewInstance(instance.state, account.administrator, permissions ?? [])
-        )
-          throw new OrganizationError('INSTANCE_PREPARING', 409);
-        if (
-          !existingParticipation &&
-          context.req.path.startsWith('/api/matchmaking/') &&
-          instance.rankedPauseReason &&
-          !account.administrator &&
-          !permissions.length
-        )
-          throw new OrganizationError('RANKED_PAUSED', 409);
-        context.set('actorId', account.actorId);
-        context.set('profileName', account.displayName ?? null);
-        context.set('organizationId', organization.id);
-        context.set('instanceId', instance.id);
-        context.set('instanceOwner', instance.owner);
-      } finally {
-        await close();
-      }
+    const { db, close } = organizationDatabase(context.env);
+    try {
+      const { organization, account, instance, permissions } = await resolveInstance(
+        db,
+        context.get('subject'),
+        context.req.query('instance') ?? '',
+        existingParticipation,
+      );
+      if (
+        !existingParticipation &&
+        !canViewInstance(instance.state, account.administrator, permissions)
+      )
+        throw new OrganizationError('INSTANCE_PREPARING', 409);
+      if (
+        !existingParticipation &&
+        context.req.path.startsWith('/api/matchmaking/') &&
+        instance.rankedPauseReason &&
+        !account.administrator &&
+        !permissions.length
+      )
+        throw new OrganizationError('RANKED_PAUSED', 409);
+      context.set('actorId', account.actorId);
+      context.set('profileName', account.displayName ?? null);
+      context.set('organizationId', organization.id);
+      context.set('instanceId', instance.id);
+      context.set('instanceOwner', instance.owner);
+    } finally {
+      await close();
     }
     await next();
   };

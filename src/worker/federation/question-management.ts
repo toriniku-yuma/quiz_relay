@@ -1,9 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { exportJWK, exportSPKI, importJWK, importPKCS8 } from 'jose';
-import {
-  disabledFederationPermissions,
-  FEDERATION_FRESH_MS,
-} from '../../shared/federation.ts';
+import { FEDERATION_FRESH_MS } from '../../shared/federation.ts';
 import type {
   QuestionImportConfig,
   QuestionSharingOverview,
@@ -31,7 +28,7 @@ import { questionContext } from '../questions/read.ts';
 import { peerRequest } from './egress.ts';
 import { cachedQuestionSource } from './question-sources.ts';
 import { INBOX_PATH } from './signatures.ts';
-import { federationDatabase } from './transport.ts';
+import { federationConfig, federationDatabase } from './transport.ts';
 
 function exact(input: Record<string, unknown>, fields: string[]) {
   if (Object.keys(input).some((key) => !fields.includes(key)))
@@ -76,6 +73,7 @@ export async function questionSharing(
   input: Record<string, unknown>,
 ) {
   const db = federationDatabase(env),
+    federation = federationConfig(env),
     instanceId = validId(input.instanceId),
     ctx = await questionContext(db, subject, instanceId);
   if (!ctx.review) throw new OrganizationError('REVIEW_FORBIDDEN', 403);
@@ -163,25 +161,23 @@ export async function questionSharing(
         administrator: ctx.account.administrator,
         sourceCategories: [...sourceCategories.values()],
         sources: [
-          ...(env.FEDERATION_ORIGIN
-            ? (
-                await db
-                  .select()
-                  .from(instances)
-                  .where(
-                    and(
-                      eq(instances.organizationId, ctx.organization.id),
-                      eq(instances.state, 'published'),
-                      sql`${instances.id}<>${instanceId}`,
-                    ),
-                  )
-              ).map((instance) => ({
-                peerOrigin: env.FEDERATION_ORIGIN ?? '',
-                instanceId: instance.id,
-                name: `この組織 ／ ${instance.name}`,
-                internal: true,
-              }))
-            : []),
+          ...(
+            await db
+              .select()
+              .from(instances)
+              .where(
+                and(
+                  eq(instances.organizationId, ctx.organization.id),
+                  eq(instances.state, 'published'),
+                  sql`${instances.id}<>${instanceId}`,
+                ),
+              )
+          ).map((instance) => ({
+            peerOrigin: federation.origin,
+            instanceId: instance.id,
+            name: `この組織 ／ ${instance.name}`,
+            internal: true,
+          })),
           ...(
             await db
               .select({ metadata: federationMetadata, peer: federationPeers })
@@ -225,22 +221,19 @@ export async function questionSharing(
     if (input.operation === 'internalPermission') {
       exact(input, ['operation', 'instanceId', 'sourceInstanceId', 'allowed']);
       requireAdministrator(currentContext.account);
-      const sourceInstanceId = validId(input.sourceInstanceId);
+      const sourceInstanceId = validId(input.sourceInstanceId),
+        allowed = input.allowed;
       await resolveInstance(db, subject, sourceInstanceId, true);
-      if (
-        sourceInstanceId === instanceId ||
-        typeof input.allowed !== 'boolean' ||
-        !env.FEDERATION_ORIGIN
-      )
+      if (sourceInstanceId === instanceId || typeof allowed !== 'boolean')
         throw new OrganizationError('INVALID_QUESTION_SHARING', 400);
-      const peerOrigin = env.FEDERATION_ORIGIN;
+      const peerOrigin = federation.origin;
       const [peer] = await db
         .select()
         .from(federationPeers)
         .where(eq(federationPeers.origin, peerOrigin));
       if (!peer) {
         const { d: _privateComponent, ...publicJwk } = await exportJWK(
-          await importPKCS8(env.SIGNING_PRIVATE_KEY ?? '', 'EdDSA', {
+          await importPKCS8(federation.privateKey, 'EdDSA', {
             extractable: true,
           }),
         );
@@ -251,7 +244,7 @@ export async function questionSharing(
           db.insert(federationPeers).values({
             origin: peerOrigin,
             name: currentContext.organization.name,
-            kid: env.SIGNING_KID ?? '',
+            kid: federation.kid,
             publicKey,
             approved: true,
           }),
@@ -267,17 +260,13 @@ export async function questionSharing(
           ),
         );
       const rows = [
-        [sourceInstanceId, instanceId, 'send'],
-        [instanceId, sourceInstanceId, 'receive'],
+        [sourceInstanceId, instanceId, 'sendQuestions'],
+        [instanceId, sourceInstanceId, 'receiveQuestions'],
       ] as const;
-      for (const [local, remote, direction] of rows) {
+      for (const [local, remote, field] of rows) {
         const before = policies.find(
-            (policy) => policy.instanceId === local && policy.peerInstanceId === remote,
-          ),
-          permissions = structuredClone(
-            before?.permissions ?? disabledFederationPermissions(),
-          );
-        permissions[direction].questions = input.allowed;
+          (policy) => policy.instanceId === local && policy.peerInstanceId === remote,
+        );
         writes.push(
           rowsD1(
             federationPolicies,
@@ -287,8 +276,10 @@ export async function questionSharing(
                 instanceId: local,
                 peerInstanceId: remote,
                 peerOrigin,
-                permissions,
-                revision: (before?.revision ?? 0) + 1,
+                sendQuestions: before ? before.sendQuestions : false,
+                receiveQuestions: before ? before.receiveQuestions : false,
+                [field]: allowed,
+                revision: before ? before.revision + 1 : 1,
               },
             ],
             true,
@@ -316,10 +307,10 @@ export async function questionSharing(
         peerOrigin = String(input.peerOrigin ?? '');
       if (
         typeof input.enabled !== 'boolean' ||
-        (peerOrigin === env.FEDERATION_ORIGIN && sourceInstanceId === instanceId)
+        (peerOrigin === federation.origin && sourceInstanceId === instanceId)
       )
         throw new OrganizationError('INVALID_QUESTION_IMPORT', 400);
-      if (peerOrigin !== env.FEDERATION_ORIGIN)
+      if (peerOrigin !== federation.origin)
         peerRequest(peerOrigin, [peerOrigin], INBOX_PATH, 'validation');
       const config = importConfiguration(input.config);
       const [before] = await db

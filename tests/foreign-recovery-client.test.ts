@@ -36,14 +36,14 @@ const saved = {
   operationId: 'd7c997cf-26e3-4051-a99b-1d0401e48d4f',
   target: {
     peerOrigin: 'https://source.quiz-relay.workers.dev',
-    sourceInstanceId: '186b2b2a-0a7c-42bc-bef9-17fe8b3222d7',
+    sourceOrganizationId: '186b2b2a-0a7c-42bc-bef9-17fe8b3222d7',
     hostInstanceId: '4ed56d67-fd75-4d02-8f0a-64966df2e897',
     mode: 'ranked' as const,
   },
 };
 const recovered: ForeignSession = {
   ...saved,
-  sourceInstanceId: saved.target.sourceInstanceId,
+  sourceOrganizationId: saved.target.sourceOrganizationId,
   actorId: 'foreign-actor',
   name: '参加者',
   instanceId: saved.target.hostInstanceId,

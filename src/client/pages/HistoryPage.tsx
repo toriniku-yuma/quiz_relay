@@ -29,7 +29,7 @@ export default function HistoryPage() {
             {foreign.account.organizationName}で自分の履歴を見る
           </a>
         </p>
-      ) : external ? null : instanceId || organization.data?.enabled === false ? (
+      ) : external ? null : instanceId ? (
         <ResultsPanel
           instanceId={instanceId}
           resultId={url.searchParams.get('result') ?? ''}
@@ -39,9 +39,7 @@ export default function HistoryPage() {
           インスタンスを選ぶ
         </a>
       )}
-      {(instanceId || organizationId) && (
-        <ForeignHistoryPanel instanceId={organizationId || instanceId} />
-      )}
+      {organizationId && <ForeignHistoryPanel />}
     </main>
   );
 }

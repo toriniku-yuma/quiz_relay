@@ -4,7 +4,6 @@ export const instancePermissions = ['questions', 'authors', 'users'] as const;
 export type InstancePermission = (typeof instancePermissions)[number];
 
 export type OrganizationOverview = {
-  enabled: boolean;
   organization?: { id: string; name: string };
   setup?: { subject: string; eligible: boolean };
   account?: {

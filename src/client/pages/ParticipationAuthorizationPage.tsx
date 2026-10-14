@@ -12,24 +12,19 @@ export default function ParticipationAuthorizationPage() {
     target = participationTarget(url, true),
     state = url.searchParams.get('state') ?? '';
   const sourceValid =
-    target?.sourceInstanceId === organization.data?.organization?.id ||
-    organization.data?.instances.some(
-      (instance) => instance.id === target?.sourceInstanceId,
-    );
+    !!target && target.sourceOrganizationId === organization.data?.organization?.id;
   const peer = organization.data?.account?.displayName;
-  const flow = url.searchParams.get('flow');
-  const automatic = flow === 'login' || flow === 'participation';
+  // participationTarget accepts only the login and participation flows.
+  const flow = url.searchParams.get('flow') === 'login' ? 'login' : 'participation';
   const model = useParticipationAuthorization(
     target,
     state,
     url.searchParams.get('operation') ?? '',
-    automatic
-      ? {
-          flow,
-          ready: !!auth.user && !!peer && !!sourceValid,
-          actor: auth.user?.id ?? '',
-        }
-      : undefined,
+    {
+      flow,
+      ready: !!auth.user && !!peer && sourceValid,
+      actor: auth.user?.id ?? '',
+    },
   );
   return (
     <main className="mx-auto max-w-2xl p-4 sm:p-8">
@@ -79,11 +74,6 @@ export default function ParticipationAuthorizationPage() {
             <p role="alert">指定された所属組織とログイン中の組織が一致しません。</p>
           )}
           {model.error && <p role="alert">{model.error}</p>}
-          {model.sent && (
-            <p role="status">
-              開催先へ本人確認を送りました。開催先の参加画面を確認してください。
-            </p>
-          )}
           {model.expired ? (
             <a
               className="font-bold underline"
@@ -91,7 +81,7 @@ export default function ParticipationAuthorizationPage() {
             >
               開催先に戻る
             </a>
-          ) : automatic && !model.error ? (
+          ) : !model.error ? (
             <p role="status">ログインを確認して開催先へ戻っています。</p>
           ) : (
             <Button
@@ -99,11 +89,7 @@ export default function ParticipationAuthorizationPage() {
               disabled={model.busy || !sourceValid}
               onClick={model.authorize}
             >
-              {model.busy
-                ? '確認しています'
-                : automatic
-                  ? '再試行'
-                  : 'このアカウントで参加する'}
+              {model.busy ? '確認しています' : '再試行'}
             </Button>
           )}
         </div>

@@ -17,7 +17,7 @@ import {
 import { rules } from '../game/rules.ts';
 
 // Explicit pending question rows let a single native batch publish their catalog.
-export type CatalogChanges = {
+type CatalogChanges = {
   submissions?: (typeof questionSubmissions.$inferSelect)[];
   questions?: (typeof questionVersions.$inferInsert)[];
   availability?: (typeof questionAvailability.$inferInsert)[];

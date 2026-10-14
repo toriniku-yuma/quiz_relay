@@ -17,20 +17,13 @@ export const resultsOverview: Handler<AuthEnv> = async (context) => {
   }
   if (!context.env.GAME_D1) return context.json({ code: 'RESULTS_UNAVAILABLE' }, 503);
   const db = connectD1(context.env.GAME_D1);
+  const organization = organizationDatabase(context.env);
   try {
-    let excludedActors: string[] = [];
-    if (context.get('instanceId')) {
-      const organization = organizationDatabase(context.env);
-      try {
-        excludedActors = await rankingExclusions(
-          organization.db,
-          context.get('organizationId'),
-          context.get('instanceId'),
-        );
-      } finally {
-        await organization.close();
-      }
-    }
+    const excludedActors = await rankingExclusions(
+      organization.db,
+      context.get('organizationId'),
+      context.get('instanceId'),
+    );
     const result = await readResults(
       db,
       context.get('instanceOwner'),
@@ -38,24 +31,19 @@ export const resultsOverview: Handler<AuthEnv> = async (context) => {
       excludedActors,
       query,
     );
-    if (context.get('instanceId') && result.ranking.length) {
-      const organization = organizationDatabase(context.env);
-      try {
-        const names = await currentProfileNames(
-          organization.db,
-          context.get('organizationId'),
-          result.ranking.map((row) => row.actorId),
-        );
-        result.ranking = result.ranking.map((row) => ({
-          ...row,
-          name: names.get(row.actorId) ?? row.name,
-        }));
-      } finally {
-        await organization.close();
-      }
-    }
+    const names = await currentProfileNames(
+      organization.db,
+      context.get('organizationId'),
+      result.ranking.map((row) => row.actorId),
+    );
+    result.ranking = result.ranking.map((row) => ({
+      ...row,
+      name: names.get(row.actorId) ?? row.name,
+    }));
     return context.json(result);
   } catch {
     return context.json({ code: 'RESULTS_UNAVAILABLE' }, 503);
+  } finally {
+    await organization.close();
   }
 };

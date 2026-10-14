@@ -47,12 +47,8 @@ export function gameHref(instanceId = '', view = '') {
   if (view) query.set('view', view);
   return `${GAME_PATH}${query.size ? `?${query}` : ''}`;
 }
-export function externalInstanceHref(
-  peerOrigin: string,
-  instanceId: string,
-  sourceInstanceId = '',
-) {
-  return `${EXTERNAL_PATH}?${new URLSearchParams({ peer: peerOrigin, instance: instanceId, ...(sourceInstanceId ? { source: sourceInstanceId } : {}) })}`;
+export function externalInstanceHref(peerOrigin: string, instanceId: string) {
+  return `${EXTERNAL_PATH}?${new URLSearchParams({ peer: peerOrigin, instance: instanceId })}`;
 }
 
 export function navigate(href: string, replace = false) {

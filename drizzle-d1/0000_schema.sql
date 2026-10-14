@@ -14,6 +14,7 @@ CREATE TABLE `quiz_game_account_withdrawals` (
 	`requested_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
 	`auth_deleted_at` text,
 	`erased_at` text,
+	`audit_erased_at` text,
 	`retry_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
 	`attempts` integer DEFAULT 0 NOT NULL,
 	`room_cursor` text,
@@ -41,11 +42,6 @@ CREATE TABLE `quiz_game_administrator_transfers` (
 );
 --> statement-breakpoint
 CREATE INDEX `d1_administratorTransfers_1` ON `quiz_game_administrator_transfers` (`target_id`,`state`);--> statement-breakpoint
-CREATE TABLE `quiz_game_catalog_operators` (
-	`role_name` text PRIMARY KEY NOT NULL,
-	`owner` text NOT NULL
-);
---> statement-breakpoint
 CREATE TABLE `quiz_game_competitions` (
 	`owner` text NOT NULL,
 	`competition_id` text NOT NULL,
@@ -61,6 +57,384 @@ CREATE TABLE `quiz_game_competitions` (
 	CONSTRAINT "competitions_competition_id_check" CHECK((length(competition_id) BETWEEN 1 AND 64 AND competition_id NOT GLOB '*[^a-zA-Z0-9_-]*')),
 	CONSTRAINT "competitions_players_per_match_check" CHECK((players_per_match >= 2) AND (players_per_match <= 4)),
 	CONSTRAINT "competitions_version_check" CHECK(version > 0)
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_database_revision` (
+	`id` integer PRIMARY KEY DEFAULT 1 NOT NULL,
+	`revision` integer DEFAULT 0 NOT NULL,
+	CONSTRAINT "database_revision_singleton" CHECK("quiz_database_revision"."id" = 1)
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_game_difficulty_actors` (
+	`owner` text NOT NULL,
+	`generation` text NOT NULL,
+	`band` integer NOT NULL,
+	`players` integer NOT NULL,
+	`rules_hash` text NOT NULL,
+	`band_revision` integer NOT NULL,
+	`actor_id` text NOT NULL,
+	PRIMARY KEY(`owner`, `generation`, `band`, `players`, `rules_hash`, `band_revision`, `actor_id`)
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_game_difficulty_samples` (
+	`owner` text NOT NULL,
+	`generation` text NOT NULL,
+	`band` integer NOT NULL,
+	`players` integer NOT NULL,
+	`rules_hash` text NOT NULL,
+	`band_revision` integer NOT NULL,
+	`trials` integer DEFAULT 0 NOT NULL,
+	`correct` integer DEFAULT 0 NOT NULL,
+	PRIMARY KEY(`owner`, `generation`, `band`, `players`, `rules_hash`, `band_revision`)
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_game_difficulty_trials` (
+	`owner` text NOT NULL,
+	`match_id` text NOT NULL,
+	`question_id` text NOT NULL,
+	`result_id` text NOT NULL,
+	`generation` text NOT NULL,
+	`band` integer NOT NULL,
+	`players` integer NOT NULL,
+	`rules_hash` text NOT NULL,
+	`band_revision` integer NOT NULL,
+	`correct` integer NOT NULL,
+	`actors` text NOT NULL,
+	PRIMARY KEY(`owner`, `match_id`, `question_id`),
+	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE INDEX `difficulty_trials_result` ON `quiz_game_difficulty_trials` (`result_id`);--> statement-breakpoint
+CREATE INDEX `difficulty_trials_generation` ON `quiz_game_difficulty_trials` (`owner`,`generation`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_actors` (
+	`actor_id` text PRIMARY KEY NOT NULL,
+	`peer_origin` text NOT NULL,
+	`source_actor_id` text NOT NULL,
+	`display_name` text,
+	FOREIGN KEY (`actor_id`) REFERENCES `quiz_game_organization_accounts`(`actor_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX `quiz_federation_actors_peer_origin_source_actor_id_unique` ON `quiz_federation_actors` (`peer_origin`,`source_actor_id`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_control_deliveries` (
+	`event_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`payload` text NOT NULL,
+	`payload_hash` text NOT NULL,
+	`message` text,
+	`attempts` integer DEFAULT 0 NOT NULL,
+	`next_attempt_at` integer DEFAULT 0 NOT NULL,
+	`lease_until` integer DEFAULT 0 NOT NULL,
+	`received_at` integer,
+	`applied_at` integer,
+	`error_code` text,
+	`quarantined` integer DEFAULT false NOT NULL,
+	PRIMARY KEY(`event_id`, `peer_origin`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_control_due` ON `quiz_federation_control_deliveries` (`applied_at`,`quarantined`,`next_attempt_at`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_control_inbox` (
+	`peer_origin` text NOT NULL,
+	`event_id` text NOT NULL,
+	`payload` text NOT NULL,
+	`payload_hash` text NOT NULL,
+	`message` text NOT NULL,
+	`received_at` integer NOT NULL,
+	`applied_at` integer,
+	`room_cursor` text,
+	`conflict_hash` text,
+	PRIMARY KEY(`peer_origin`, `event_id`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_control_apply` ON `quiz_federation_control_inbox` (`applied_at`,`received_at`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_deleted_instances` (
+	`peer_origin` text NOT NULL,
+	`instance_id` text NOT NULL,
+	`deleted_at` integer NOT NULL,
+	PRIMARY KEY(`peer_origin`, `instance_id`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_favorites` (
+	`actor_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`instance_id` text NOT NULL,
+	PRIMARY KEY(`actor_id`, `peer_origin`, `instance_id`),
+	FOREIGN KEY (`actor_id`) REFERENCES `quiz_game_organization_accounts`(`actor_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_login_sessions` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`peer_origin` text NOT NULL,
+	`source_organization_id` text NOT NULL,
+	`source_actor_id` text NOT NULL,
+	`display_name` text NOT NULL,
+	`organization_name` text NOT NULL,
+	`expires_at` integer NOT NULL,
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_login_expiry` ON `quiz_federation_login_sessions` (`expires_at`);--> statement-breakpoint
+CREATE INDEX `federation_login_actor` ON `quiz_federation_login_sessions` (`peer_origin`,`source_actor_id`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_metadata` (
+	`instance_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`payload` text NOT NULL,
+	`next_cursor` text,
+	`last_success_at` integer DEFAULT 0 NOT NULL,
+	`error_code` text,
+	PRIMARY KEY(`instance_id`, `peer_origin`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_metadata_jobs` (
+	`instance_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`next_attempt_at` integer DEFAULT 0 NOT NULL,
+	`attempt_id` text,
+	`lease_until` integer DEFAULT 0 NOT NULL,
+	`failures` integer DEFAULT 0 NOT NULL,
+	`error_code` text,
+	PRIMARY KEY(`instance_id`, `peer_origin`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_metadata_due` ON `quiz_federation_metadata_jobs` (`next_attempt_at`,`lease_until`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_nonces` (
+	`issuer` text NOT NULL,
+	`purpose` text NOT NULL,
+	`nonce` text NOT NULL,
+	`expires_at` integer NOT NULL,
+	PRIMARY KEY(`issuer`, `purpose`, `nonce`)
+);
+--> statement-breakpoint
+CREATE INDEX `federation_nonce_expiry` ON `quiz_federation_nonces` (`expires_at`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_participations` (
+	`peer_origin` text NOT NULL,
+	`reservation_id` text NOT NULL,
+	`actor_id` text NOT NULL,
+	`source_organization_id` text NOT NULL,
+	`host_instance_id` text NOT NULL,
+	`match_id` text NOT NULL,
+	`mode` text NOT NULL,
+	`authorized_at` integer NOT NULL,
+	PRIMARY KEY(`peer_origin`, `reservation_id`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`actor_id`) REFERENCES `quiz_game_organization_accounts`(`actor_id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_participation_actor` ON `quiz_federation_participations` (`actor_id`,`peer_origin`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_peer_keys` (
+	`origin` text NOT NULL,
+	`kid` text NOT NULL,
+	`public_key` text NOT NULL,
+	`created_at` text NOT NULL,
+	PRIMARY KEY(`origin`, `kid`),
+	FOREIGN KEY (`origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_peers` (
+	`origin` text PRIMARY KEY NOT NULL,
+	`name` text NOT NULL,
+	`kid` text NOT NULL,
+	`public_key` text NOT NULL,
+	`approved` integer DEFAULT false NOT NULL,
+	`discovered` integer DEFAULT false NOT NULL,
+	`participation_blocked` integer DEFAULT false NOT NULL,
+	`receive_ranked` integer DEFAULT true NOT NULL,
+	`receive_casual` integer DEFAULT true NOT NULL,
+	`revision` integer DEFAULT 1 NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_policies` (
+	`id` text PRIMARY KEY NOT NULL,
+	`instance_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`peer_instance_id` text NOT NULL,
+	`send_questions` integer DEFAULT false NOT NULL,
+	`receive_questions` integer DEFAULT false NOT NULL,
+	`revision` integer DEFAULT 1 NOT NULL,
+	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_policy_peer` ON `quiz_federation_policies` (`peer_origin`);--> statement-breakpoint
+CREATE UNIQUE INDEX `quiz_federation_policies_instance_id_peer_origin_peer_instance_id_unique` ON `quiz_federation_policies` (`instance_id`,`peer_origin`,`peer_instance_id`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_question_imports` (
+	`id` text PRIMARY KEY NOT NULL,
+	`instance_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`source_instance_id` text NOT NULL,
+	`config` text NOT NULL,
+	`revision` integer DEFAULT 1 NOT NULL,
+	`enabled` integer DEFAULT true NOT NULL,
+	`snapshot` text,
+	`cursor` text,
+	`active_snapshot` text,
+	`last_success_at` integer DEFAULT 0 NOT NULL,
+	`next_attempt_at` integer DEFAULT 0 NOT NULL,
+	`failures` integer DEFAULT 0 NOT NULL,
+	`error_code` text,
+	`attempt_id` text,
+	`lease_until` integer DEFAULT 0 NOT NULL,
+	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_question_import_due` ON `quiz_federation_question_imports` (`enabled`,`next_attempt_at`,`lease_until`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_question_links` (
+	`instance_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`source_instance_id` text NOT NULL,
+	`source_series_id` text NOT NULL,
+	`import_id` text NOT NULL,
+	`submission_id` text NOT NULL,
+	`source_question_id` text NOT NULL,
+	`source_hash` text NOT NULL,
+	`source_category` text NOT NULL,
+	`source_difficulty` integer NOT NULL,
+	`source_author_id` text NOT NULL,
+	`seen_snapshot` text NOT NULL,
+	`excluded` integer DEFAULT false NOT NULL,
+	`mapping_revision` integer DEFAULT 1 NOT NULL,
+	`mapping_hash` text DEFAULT '' NOT NULL,
+	`last_available_at` integer DEFAULT 0 NOT NULL,
+	`cache_purged_at` integer,
+	PRIMARY KEY(`instance_id`, `peer_origin`, `source_instance_id`, `source_series_id`),
+	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`import_id`) REFERENCES `quiz_federation_question_imports`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`submission_id`) REFERENCES `quiz_game_question_submissions`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_question_link_import` ON `quiz_federation_question_links` (`import_id`,`seen_snapshot`);--> statement-breakpoint
+CREATE INDEX `federation_question_cache_due` ON `quiz_federation_question_links` (`cache_purged_at`,`last_available_at`);--> statement-breakpoint
+CREATE UNIQUE INDEX `quiz_federation_question_links_submission_id_unique` ON `quiz_federation_question_links` (`submission_id`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_question_sources` (
+	`instance_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`source_instance_id` text NOT NULL,
+	`categories` text DEFAULT '[]' NOT NULL,
+	`last_success_at` integer DEFAULT 0 NOT NULL,
+	`next_attempt_at` integer DEFAULT 0 NOT NULL,
+	`lease_until` integer DEFAULT 0 NOT NULL,
+	`error_code` text,
+	PRIMARY KEY(`instance_id`, `peer_origin`, `source_instance_id`),
+	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_question_staging` (
+	`import_id` text NOT NULL,
+	`snapshot` text NOT NULL,
+	`series_id` text NOT NULL,
+	`payload` text NOT NULL,
+	`created_at` integer NOT NULL,
+	PRIMARY KEY(`import_id`, `snapshot`, `series_id`),
+	FOREIGN KEY (`import_id`) REFERENCES `quiz_federation_question_imports`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_reservation_closures` (
+	`peer_origin` text NOT NULL,
+	`operation_id` text NOT NULL,
+	`source_actor_id` text NOT NULL,
+	`confirmed` integer DEFAULT false NOT NULL,
+	`expires_at` integer NOT NULL,
+	PRIMARY KEY(`peer_origin`, `operation_id`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_closure_expiry` ON `quiz_federation_reservation_closures` (`expires_at`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_reservations` (
+	`id` text PRIMARY KEY NOT NULL,
+	`peer_origin` text NOT NULL,
+	`operation_id` text NOT NULL,
+	`request_hash` text NOT NULL,
+	`authorization_id` text DEFAULT '' NOT NULL,
+	`source_organization_id` text NOT NULL,
+	`source_actor_id` text NOT NULL,
+	`actor_id` text NOT NULL,
+	`instance_id` text NOT NULL,
+	`mode` text NOT NULL,
+	`display_name` text NOT NULL,
+	`room_id` text,
+	`match_id` text,
+	`state` text DEFAULT 'creating' NOT NULL,
+	`expires_at` integer NOT NULL,
+	`session_expires_at` integer DEFAULT 0 NOT NULL,
+	`allowed_until` integer DEFAULT 0 NOT NULL,
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`actor_id`) REFERENCES `quiz_game_organization_accounts`(`actor_id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_reservation_actor` ON `quiz_federation_reservations` (`instance_id`,`actor_id`,`allowed_until`);--> statement-breakpoint
+CREATE INDEX `federation_reservation_expiry` ON `quiz_federation_reservations` (`state`,`expires_at`);--> statement-breakpoint
+CREATE INDEX `federation_reservation_identity` ON `quiz_federation_reservations` (`peer_origin`,`source_actor_id`,`state`);--> statement-breakpoint
+CREATE UNIQUE INDEX `quiz_federation_reservations_peer_origin_operation_id_unique` ON `quiz_federation_reservations` (`peer_origin`,`operation_id`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_result_deliveries` (
+	`event_id` text PRIMARY KEY NOT NULL,
+	`result_id` text NOT NULL,
+	`instance_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`source_actor_id` text NOT NULL,
+	`payload` text NOT NULL,
+	`payload_hash` text NOT NULL,
+	`message` text,
+	`attempts` integer DEFAULT 0 NOT NULL,
+	`next_attempt_at` integer DEFAULT 0 NOT NULL,
+	`lease_until` integer DEFAULT 0 NOT NULL,
+	`received_at` integer,
+	`applied_at` integer,
+	`error_code` text,
+	`quarantined` integer DEFAULT false NOT NULL,
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_result_due` ON `quiz_federation_result_deliveries` (`received_at`,`quarantined`,`next_attempt_at`);--> statement-breakpoint
+CREATE UNIQUE INDEX `quiz_federation_result_deliveries_result_id_peer_origin_source_actor_id_unique` ON `quiz_federation_result_deliveries` (`result_id`,`peer_origin`,`source_actor_id`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_result_inbox` (
+	`peer_origin` text NOT NULL,
+	`event_id` text NOT NULL,
+	`actor_id` text NOT NULL,
+	`source_organization_id` text NOT NULL,
+	`payload` text NOT NULL,
+	`payload_hash` text NOT NULL,
+	`message` text NOT NULL,
+	`received_at` integer NOT NULL,
+	`applied_at` integer,
+	`finished_at` integer NOT NULL,
+	`conflict_hash` text,
+	PRIMARY KEY(`peer_origin`, `event_id`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`actor_id`) REFERENCES `quiz_game_organization_accounts`(`actor_id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_result_history` ON `quiz_federation_result_inbox` (`actor_id`,`source_organization_id`,`finished_at`,`event_id`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_retired_identities` (
+	`peer_origin` text NOT NULL,
+	`actor_id` text NOT NULL,
+	`retired_at` integer NOT NULL,
+	PRIMARY KEY(`peer_origin`, `actor_id`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_federation_sessions` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`reservation_id` text NOT NULL,
+	`expires_at` integer NOT NULL,
+	FOREIGN KEY (`reservation_id`) REFERENCES `quiz_federation_reservations`(`id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE INDEX `federation_session_expiry` ON `quiz_federation_sessions` (`expires_at`);--> statement-breakpoint
+CREATE TABLE `quiz_federation_targets` (
+	`source_organization_id` text NOT NULL,
+	`peer_origin` text NOT NULL,
+	`instance_id` text NOT NULL,
+	`payload` text NOT NULL,
+	`checked_at` integer NOT NULL,
+	PRIMARY KEY(`source_organization_id`, `peer_origin`, `instance_id`),
+	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `quiz_game_guest_sessions` (
@@ -130,6 +504,11 @@ CREATE TABLE `quiz_game_instances` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `quiz_game_instances_owner_unique` ON `quiz_game_instances` (`owner`);--> statement-breakpoint
 CREATE INDEX `d1_instances_1` ON `quiz_game_instances` (`organization_id`);--> statement-breakpoint
+CREATE TABLE `quiz_maintenance_checkpoints` (
+	`id` text PRIMARY KEY NOT NULL,
+	`completed_day` text NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE `quiz_game_match_results` (
 	`result_id` text PRIMARY KEY NOT NULL,
 	`owner` text NOT NULL,
@@ -235,6 +614,8 @@ CREATE TABLE `quiz_game_organizations` (
 	`singleton` integer DEFAULT true NOT NULL,
 	`name` text NOT NULL,
 	`identity_namespace` text NOT NULL,
+	`external_participation` text DEFAULT 'approved' NOT NULL,
+	`federation_revision` integer DEFAULT 1 NOT NULL,
 	CONSTRAINT "one_organization" CHECK("quiz_game_organizations"."singleton" = true),
 	CONSTRAINT "organization_name_length" CHECK(length(trim("quiz_game_organizations"."name")) BETWEEN 1 AND 80),
 	CONSTRAINT "organization_namespace_length" CHECK(length(trim("quiz_game_organizations"."identity_namespace")) BETWEEN 1 AND 256)
@@ -288,6 +669,7 @@ CREATE TABLE `quiz_game_question_categories` (
 	`instance_id` text NOT NULL,
 	`name` text NOT NULL,
 	`active` integer DEFAULT true NOT NULL,
+	`import_only` integer DEFAULT false NOT NULL,
 	`revision` integer DEFAULT 1 NOT NULL,
 	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action
 );
@@ -302,6 +684,7 @@ CREATE TABLE `quiz_game_question_difficulty` (
 	`fixed` integer DEFAULT false NOT NULL,
 	`revision` integer DEFAULT 1 NOT NULL,
 	`last_day` text,
+	`statistics_revision` integer DEFAULT 0 NOT NULL,
 	`cursor` text,
 	`stats` text DEFAULT '[]' NOT NULL,
 	`reason` text DEFAULT '自己申告' NOT NULL,
@@ -426,6 +809,7 @@ CREATE TABLE `quiz_game_question_submissions` (
 	`revision` integer DEFAULT 1 NOT NULL,
 	`status` text DEFAULT 'draft' NOT NULL,
 	`input` text NOT NULL,
+	`search_text` text DEFAULT '' NOT NULL,
 	`reason` text DEFAULT '' NOT NULL,
 	`published_id` text,
 	`stopped` integer DEFAULT false NOT NULL,
@@ -477,6 +861,21 @@ CREATE TABLE `quiz_game_result_players` (
 );
 --> statement-breakpoint
 CREATE INDEX `d1_resultPlayers_1` ON `quiz_game_result_players` (`actor_id`);--> statement-breakpoint
+CREATE TABLE `quiz_game_result_privacy_changes` (
+	`result_id` text PRIMARY KEY NOT NULL,
+	`previous_hash` text NOT NULL,
+	`payload_hash` text NOT NULL,
+	`payload` text NOT NULL,
+	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE no action
+);
+--> statement-breakpoint
+CREATE TABLE `quiz_game_result_privacy_jobs` (
+	`result_id` text PRIMARY KEY NOT NULL,
+	`due_at` text NOT NULL,
+	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+CREATE INDEX `result_privacy_due` ON `quiz_game_result_privacy_jobs` (`due_at`,`result_id`);--> statement-breakpoint
 CREATE TABLE `quiz_game_room_directory` (
 	`id` text PRIMARY KEY NOT NULL,
 	`instance_id` text NOT NULL,

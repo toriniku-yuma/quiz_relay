@@ -115,10 +115,7 @@ async function main() {
       );
       const expected = `https://quiz-relay-federation-${name}-test.quiz-relay.workers.dev`;
       assert(
-        node.vars.FEDERATION_ORIGIN === expected &&
-          node.vars.GAME_OWNER === expected &&
-          node.vars.AUTH_PROVIDER === 'clerk' &&
-          node.vars.PROBES_ENABLED === 'true',
+        node.vars.FEDERATION_ORIGIN === expected && node.vars.PROBES_ENABLED === 'true',
         'QA_TARGET_MISMATCH',
       );
       assert(
@@ -210,7 +207,7 @@ async function main() {
         const auth = await request(node, API_PATHS.publicAuthConfig);
         assert(
           auth.status === 200 &&
-            auth.body.provider === 'clerk' &&
+            Object.keys(auth.body).join() === 'publishableKey' &&
             auth.body.publishableKey === node.secrets.CLERK_PUBLISHABLE_KEY,
           'AUTH_CONFIG_MISMATCH',
         );

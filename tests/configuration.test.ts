@@ -22,6 +22,9 @@ it('JSON profiles validate and allow changing players, win target, mistakes and 
   expect(next.rules.mistakesToDisqualify).toBe(2);
   expect(next.rules.reconnectGraceMs).toBe(20000);
 });
+it('標準とローカルの設定は開発参加が読む同じ開催元へ反映する', () => {
+  expect(local.owner).toBe(defaults.owner);
+});
 it.each([1, 5, '2', null])('refuses unsupported player setting %s', (playersPerMatch) => {
   expect(() => validateMatchConfig({ ...local, playersPerMatch })).toThrow();
 });

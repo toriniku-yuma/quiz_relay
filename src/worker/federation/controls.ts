@@ -32,14 +32,13 @@ export async function planControlEvent(
   excludedPeer?: string,
 ) {
   const peers = await db.select().from(federationPeers);
-  const participations = await db
-    .select({ peerOrigin: federationParticipations.peerOrigin })
-    .from(federationParticipations)
-    .where(
-      payload.type === 'withdrawal'
-        ? eq(federationParticipations.actorId, payload.subjectId)
-        : eq(federationParticipations.sourceInstanceId, payload.subjectId),
-    );
+  const participations =
+    payload.type === 'withdrawal'
+      ? await db
+          .select({ peerOrigin: federationParticipations.peerOrigin })
+          .from(federationParticipations)
+          .where(eq(federationParticipations.actorId, payload.subjectId))
+      : [];
   const hash = await contentHash(payload);
   const delivered = await db
     .select({ peerOrigin: federationResultDeliveries.peerOrigin })
@@ -147,26 +146,16 @@ export async function receiveControlEvent(
                 ),
               )
               .limit(1);
-      const hosted = related.length
-        ? []
-        : payload.type === 'withdrawal'
-          ? await db
+      const hosted =
+        related.length || payload.type !== 'withdrawal'
+          ? []
+          : await db
               .select({ id: federationActors.actorId })
               .from(federationActors)
               .where(
                 and(
                   eq(federationActors.peerOrigin, peerOrigin),
                   eq(federationActors.sourceActorId, payload.subjectId),
-                ),
-              )
-              .limit(1)
-          : await db
-              .select({ id: federationReservations.id })
-              .from(federationReservations)
-              .where(
-                and(
-                  eq(federationReservations.peerOrigin, peerOrigin),
-                  eq(federationReservations.sourceInstanceId, payload.subjectId),
                 ),
               )
               .limit(1);

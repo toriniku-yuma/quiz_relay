@@ -32,14 +32,14 @@ export const getStatus: Handler<{ Bindings: Env }> = (context) =>
   });
 
 export const getDurableObject: Handler<{ Bindings: Env }> = async (context) =>
-  context.json(await context.env.PROBE.getByName('phase-0').snapshot());
+  context.json(await context.env.PROBE.getByName('verification').snapshot());
 
 export const incrementDurableObject: Handler<{ Bindings: Env }> = async (context) =>
-  context.json(await context.env.PROBE.getByName('phase-0').increment());
+  context.json(await context.env.PROBE.getByName('verification').increment());
 
 // CLI/test-only WebSocket: Authorization header required; token never appears in URL.
 export const openSocket: Handler<{ Bindings: Env }> = (context) =>
-  context.env.PROBE.getByName('phase-0').fetch(context.req.raw);
+  context.env.PROBE.getByName('verification').fetch(context.req.raw);
 
 export const checkSignature: Handler<{ Bindings: Env }> = async (context) =>
   context.json(await signatureProbe());

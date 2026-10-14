@@ -1,10 +1,8 @@
 import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { changeD1, type Database } from '../worker/db/d1.ts';
 import {
-  catalogOperators,
   competitions,
   difficultyActors,
-  difficultyBackfills,
   difficultySamples,
   difficultyTrials,
   federationMetadata,
@@ -16,9 +14,6 @@ import {
   federationQuestionStaging,
   federationReservations,
   federationSessions,
-  federationSharedCategories,
-  federationTargets,
-  informationEntries,
   instanceGrants,
   instanceRooms,
   instances,
@@ -108,18 +103,8 @@ async function eraseStoredInstance(db: Database, operationId: string) {
       federationMetadata,
     ])
       writes.push(db.delete(table).where(eq(table.instanceId, job.instanceId)));
-    writes.push(
-      db
-        .delete(federationTargets)
-        .where(eq(federationTargets.sourceInstanceId, job.instanceId)),
-    );
     const resultIds = sql`select ${matchResults.resultId} from ${matchResults} where ${matchResults.owner}=${job.owner}`;
-    for (const table of [
-      difficultyActors,
-      difficultySamples,
-      difficultyTrials,
-      difficultyBackfills,
-    ])
+    for (const table of [difficultyActors, difficultySamples, difficultyTrials])
       writes.push(db.delete(table).where(eq(table.owner, job.owner)));
     writes.push(
       db.delete(resultOutbox).where(sql`${resultOutbox.resultId} in (${resultIds})`),
@@ -134,7 +119,6 @@ async function eraseStoredInstance(db: Database, operationId: string) {
       questionAvailability,
       questionVersions,
       rulesetVersions,
-      catalogOperators,
     ])
       writes.push(db.delete(table).where(eq(table.owner, job.owner)));
     writes.push(
@@ -260,11 +244,9 @@ export async function eraseInstance(
   if (registered.length === erasureBatch.rooms) return false;
   const [auxiliary] = await db.all<{ pending: number }>(sql`select
     exists(select 1 from ${federationReservations} where ${federationReservations.instanceId}=${job.instanceId})
-    or exists(select 1 from ${informationEntries} where ${informationEntries.instanceId}=${job.instanceId})
     or exists(select 1 from ${federationMetadataJobs} where ${federationMetadataJobs.instanceId}=${job.instanceId})
     or exists(select 1 from ${federationQuestionImports} where ${federationQuestionImports.instanceId}=${job.instanceId})
-    or exists(select 1 from ${federationQuestionSources} where ${federationQuestionSources.instanceId}=${job.instanceId})
-    or exists(select 1 from ${federationSharedCategories} where ${federationSharedCategories.instanceId}=${job.instanceId}) as pending`);
+    or exists(select 1 from ${federationQuestionSources} where ${federationQuestionSources.instanceId}=${job.instanceId}) as pending`);
   if (auxiliary.pending) {
     await changeD1(db, async (writes) => {
       const [current] = await db.select().from(jobs).where(eq(jobs.id, operationId)),
@@ -296,18 +278,12 @@ export async function eraseInstance(
         db
           .delete(federationQuestionImports)
           .where(eq(federationQuestionImports.instanceId, job.instanceId)),
-        db
-          .delete(federationSharedCategories)
-          .where(eq(federationSharedCategories.instanceId, job.instanceId)),
         db.delete(federationSessions).where(sql`${federationSessions.reservationId} in
         (select ${federationReservations.id} from ${federationReservations}
           where ${federationReservations.instanceId}=${job.instanceId})`),
         db
           .delete(federationReservations)
           .where(eq(federationReservations.instanceId, job.instanceId)),
-        db
-          .delete(informationEntries)
-          .where(eq(informationEntries.instanceId, job.instanceId)),
         db
           .delete(federationMetadataJobs)
           .where(eq(federationMetadataJobs.instanceId, job.instanceId)),

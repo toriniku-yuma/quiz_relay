@@ -1,6 +1,7 @@
 import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { describe, expect, it, vi } from 'vitest';
+import catalogConfig from '../config/matchmaking.json';
 import type { Command, GameMessage } from '../src/shared/game';
 import type { Env } from '../src/worker/env';
 import { choicesFor, graphemes } from '../src/worker/game/questions';
@@ -503,8 +504,7 @@ it('local game loads DB questions once and resumes saved rooms without a DB fall
   const load = vi.mocked(loadMatchDefinition);
   const fixture = await load(runtime, {
     owner: 'https://example.test',
-    id: 'test',
-    version: 1,
+    profile: 'local',
   });
   load.mockClear();
   const dbQuestion = {
@@ -517,7 +517,10 @@ it('local game loads DB questions once and resumes saved rooms without a DB fall
   const input = { name: 'A', questionIndex: 0, players: 2 };
   const joined = await room.join(input, undefined);
   if (!joined.ok) throw new Error(joined.code);
-  expect(load).toHaveBeenCalledOnce();
+  expect(load).toHaveBeenCalledExactlyOnceWith(runtime, {
+    owner: catalogConfig.owner,
+    profile: runtime.GAME_CONFIG_PROFILE,
+  });
   const stored = await runInDurableObject(room, async (_instance, ctx) =>
     ctx.storage.get<{ state: State }>('room'),
   );

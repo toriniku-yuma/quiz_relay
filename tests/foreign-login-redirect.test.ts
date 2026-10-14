@@ -25,7 +25,7 @@ it('自動ログインの遷移でstateを保存し、戻り先・stateが一致
   vi.stubGlobal('location', { origin: 'https://host.quiz-relay.workers.dev', replace });
   const target = {
     peerOrigin: 'https://home.quiz-relay.workers.dev',
-    sourceInstanceId: crypto.randomUUID(),
+    sourceOrganizationId: crypto.randomUUID(),
     hostInstanceId: crypto.randomUUID(),
     mode: 'casual' as const,
   };
@@ -94,7 +94,7 @@ it('保存した部屋操作は本人・所属元・instance・参加操作IDが
   const session: ForeignSession = {
     reservationId: crypto.randomUUID(),
     operationId: pending?.operationId ?? '',
-    sourceInstanceId: account.organizationId,
+    sourceOrganizationId: account.organizationId,
     sourceActorId: account.sourceActorId,
     actorId: 'b'.repeat(64),
     homeOrigin: account.homeOrigin,
@@ -108,7 +108,7 @@ it('保存した部屋操作は本人・所属元・instance・参加操作IDが
   expect(readForeignRoomEntry(session)?.body.room).toBe(room);
   for (const changed of [
     { sourceActorId: 'c'.repeat(64) },
-    { sourceInstanceId: crypto.randomUUID() },
+    { sourceOrganizationId: crypto.randomUUID() },
     { operationId: crypto.randomUUID() },
     { instanceId: crypto.randomUUID() },
   ])

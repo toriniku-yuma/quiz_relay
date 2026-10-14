@@ -3,7 +3,8 @@ import { importJWK } from 'jose';
 import { API_PATHS } from '../src/shared/api-paths.ts';
 import { verifyDelivery } from '../src/worker/federation/signatures.ts';
 
-const origin = process.env.PROBE_ORIGIN || 'http://127.0.0.1:5173';
+const origin = process.env.PROBE_ORIGIN;
+assert(origin, 'Set PROBE_ORIGIN in .dev.vars');
 const target = new URL(origin);
 const [first, second] = target.hostname.split('.').map(Number);
 const isTailnetIp = first === 100 && second >= 64 && second <= 127;

@@ -14,12 +14,12 @@ import {
   validName,
 } from '../src/worker/organization/access';
 
-it('既存GAME_OWNERと検証済みsubjectによる本人IDを維持する', async () => {
-  expect(await actorForSubject('https://old.test', 'verified-subject')).toBe(
-    await contentHash({ home: 'https://old.test', subject: 'verified-subject' }),
+it('組織の識別名前空間と検証済みsubjectから本人IDを決める', async () => {
+  expect(await actorForSubject('https://namespace.test', 'verified-subject')).toBe(
+    await contentHash({ home: 'https://namespace.test', subject: 'verified-subject' }),
   );
-  expect(await actorForSubject('https://old.test', 'other-subject')).not.toBe(
-    await actorForSubject('https://old.test', 'verified-subject'),
+  expect(await actorForSubject('https://namespace.test', 'other-subject')).not.toBe(
+    await actorForSubject('https://namespace.test', 'verified-subject'),
   );
 });
 it('設置者指定なし・別人・非管理者は管理操作を拒否', () => {
@@ -34,7 +34,7 @@ it('準備中は一般ユーザーに非公開、権限は対象インスタン�
   expect(canViewInstance('preparing', true, [])).toBe(true);
   expect(canViewInstance('published', false, [])).toBe(true);
 });
-it('入力と内部ownerを限定し、旧HTTPS ownerの検証も維持する', () => {
+it('入力と内部ownerを限定し、HTTPS ownerも検証する', () => {
   const id = crypto.randomUUID();
   expect(validId(id)).toBe(id);
   expect(() => validId('../other')).toThrow();
@@ -48,7 +48,7 @@ it('入力と内部ownerを限定し、旧HTTPS ownerの検証も維持する', 
     validateRef({ owner: 'urn:uuid:unknown', id: 'rank', version: 1 }),
   ).toThrow();
   expect(() =>
-    validateRef({ owner: 'https://old.test/path', id: 'rank', version: 1 }),
+    validateRef({ owner: 'https://owner.test/path', id: 'rank', version: 1 }),
   ).toThrow();
   expect(instanceApiPath('/api/results/overview', id)).toBe(
     `/api/results/overview?instance=${id}`,

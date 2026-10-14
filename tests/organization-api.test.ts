@@ -31,7 +31,10 @@ vi.mock('../src/worker/organization/database', () => ({
   renameOrganization: mocks.renameOrganization,
   accountPermissions: vi.fn(),
 }));
-vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
+vi.mock('../src/worker/catalog/database', () => ({
+  loadMatchDefinition: mocks.load,
+  loadFixedVersion: mocks.load,
+}));
 vi.mock('../src/worker/results/read', () => ({ readResults: mocks.read }));
 vi.mock('../src/worker/organization/moderation', () => ({
   requireUnrestricted: mocks.restriction,
@@ -42,9 +45,8 @@ vi.mock('../src/worker/db/d1', () => ({
 }));
 const runtime: Env = {
   ...(env as unknown as Env),
-  ORGANIZATION_ENABLED: 'true',
   INITIAL_ADMIN_SUBJECT: 'test-installer',
-  GAME_OWNER: 'https://old.test',
+  GAME_CONFIG_PROFILE: 'api-profile',
 };
 const instanceId = crypto.randomUUID();
 const request = (path: string, headers: Record<string, string> = {}, body = '{}') =>
@@ -76,7 +78,7 @@ beforeEach(() => {
   });
   mocks.load.mockResolvedValue({ competition: {}, playersPerMatch: 2, rules: {} });
   mocks.read.mockResolvedValue({ ranking: [], history: [] });
-  mocks.overview.mockResolvedValue({ enabled: true, instances: [] });
+  mocks.overview.mockResolvedValue({ instances: [] });
   mocks.selection.mockResolvedValue({ ok: true });
 });
 
@@ -92,7 +94,7 @@ it('組織一覧は検証済みsubjectだけを使い、入力されたsubject�
     'verified',
     'test-installer',
     undefined,
-    'local',
+    'api-profile',
   );
   expect(response.headers.get('Cache-Control')).toBe('no-store');
 });
@@ -176,7 +178,7 @@ it.each([
       {
         method: 'POST',
         headers: { Origin: 'https://game.test', Authorization: 'Bearer token' },
-        body: JSON.stringify({ name: '運営者' }),
+        body: '{}',
       },
       isolated,
     );
@@ -184,7 +186,6 @@ it.each([
     expect(mocks.enter).toHaveBeenCalledWith(
       'operator',
       '運営者',
-      undefined,
       false,
       {
         id: instanceId,
@@ -219,7 +220,7 @@ it('対象権限のない一般ユーザーは準備中のAPIを利用できな�
   expect(mocks.read).not.toHaveBeenCalled();
   expect(mocks.load).not.toHaveBeenCalled();
 });
-it('組織DB障害時に旧owner経路へフォールバックせず、秘密を返さない', async () => {
+it('組織DB障害時は参加・結果APIを失敗させ、秘密を返さない', async () => {
   mocks.resolve.mockRejectedValue(new Error('private connection string'));
   const response = await request(`/api/results/overview?instance=${instanceId}`);
   expect(response.status).toBe(500);
@@ -227,7 +228,7 @@ it('組織DB障害時に旧owner経路へフォールバックせず、秘密を
   expect(mocks.read).not.toHaveBeenCalled();
 });
 
-it('参加名はリクエストで偽装できず、未登録でも既存試合への復帰はできる', async () => {
+it('参加名は登録名だけを使い、未登録でも既存試合への復帰はできる', async () => {
   const isolated = {
     ...runtime,
     MATCHMAKER: { getByName: () => ({ enter: mocks.enter }) },
@@ -242,11 +243,12 @@ it('参加名はリクエストで偽装できず、未登録でも既存試合�
       },
       isolated,
     );
-  expect((await enter('join', { name: '偽装名' })).status).toBe(200);
+  expect((await enter('join', { name: '偽装名' })).status).toBe(400);
+  expect(mocks.enter).not.toHaveBeenCalled();
+  expect((await enter('join', {})).status).toBe(200);
   expect(mocks.enter).toHaveBeenLastCalledWith(
     'old-actor',
     '登録名',
-    undefined,
     false,
     {
       id: instanceId,
@@ -258,7 +260,7 @@ it('参加名はリクエストで偽装できず、未登録でも既存試合�
   mocks.restriction.mockRejectedValue(
     new OrganizationError('PARTICIPATION_RESTRICTED', 409),
   );
-  const restricted = await enter('join', { name: '登録名' });
+  const restricted = await enter('join', {});
   expect(restricted.status).toBe(409);
   expect(await restricted.json()).toEqual({ code: 'PARTICIPATION_RESTRICTED' });
   expect((await enter('resume', {})).status).toBe(200);
@@ -268,7 +270,7 @@ it('参加名はリクエストで偽装できず、未登録でも既存試合�
     account: { ...context.account, displayName: null },
   });
   mocks.enter.mockClear();
-  const rejected = await enter('join', { name: '登録の迂回' });
+  const rejected = await enter('join', {});
   expect(rejected.status).toBe(409);
   expect(await rejected.json()).toEqual({ code: 'PROFILE_REQUIRED' });
   expect(mocks.enter).not.toHaveBeenCalled();
@@ -276,7 +278,6 @@ it('参加名はリクエストで偽装できず、未登録でも既存試合�
   expect(mocks.enter).toHaveBeenCalledWith(
     'old-actor',
     '',
-    undefined,
     true,
     {
       id: instanceId,

@@ -6,7 +6,7 @@ import {
 import { AUTHORIZE_PATH, CASUAL_PATH, GAME_PATH, ROOMS_PATH } from '../../app/paths';
 
 const storageKey = 'quiz-relay-foreign-authorization';
-export type ForeignAuthorization = {
+type ForeignAuthorization = {
   target: ParticipationTarget;
   flow: 'login' | 'participation';
   state: string;
@@ -32,7 +32,7 @@ export function readForeignAuthorization(
       value.startedAt > Date.now() ||
       value.startedAt < Date.now() - 600000 ||
       !participationOrigin(value.target?.peerOrigin) ||
-      !participationId(value.target.sourceInstanceId) ||
+      !participationId(value.target.sourceOrganizationId) ||
       !participationId(value.target.hostInstanceId) ||
       !['ranked', 'casual', 'room'].includes(value.target.mode)
     )
@@ -65,7 +65,7 @@ export function beginForeignAuthorization(
   const url = new URL(AUTHORIZE_PATH, target.peerOrigin);
   url.search = new URLSearchParams({
     host: location.origin,
-    source: target.sourceInstanceId,
+    source: target.sourceOrganizationId,
     instance: target.hostInstanceId,
     mode: target.mode,
     state: request.state,

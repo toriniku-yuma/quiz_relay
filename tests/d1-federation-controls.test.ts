@@ -48,6 +48,7 @@ const sourceOrigin = 'https://source.quiz-relay.workers.dev',
 const logout = vi.fn().mockResolvedValue(undefined),
   anonymize = vi.fn().mockResolvedValue(undefined);
 let source: Env, host: Env;
+const unlimited: RateLimit = { limit: async () => ({ success: true }) };
 beforeAll(async () => {
   await applyD1Migrations(runtime.GAME_D1, runtime.D1_MIGRATIONS);
   await applyD1Migrations(runtime.PEER_D1, runtime.D1_MIGRATIONS);
@@ -55,7 +56,7 @@ beforeAll(async () => {
     hostKeys = await generateKeyPair('EdDSA', { extractable: true });
   source = {
     ...env,
-    ORGANIZATION_ENABLED: 'true',
+    FEDERATION_LIMITER: unlimited,
     GAME_D1: runtime.GAME_D1,
     FEDERATION_ORIGIN: sourceOrigin,
     SIGNING_KID: 'source',
@@ -63,7 +64,7 @@ beforeAll(async () => {
   } as Env;
   host = {
     ...env,
-    ORGANIZATION_ENABLED: 'true',
+    FEDERATION_LIMITER: unlimited,
     GAME_D1: runtime.PEER_D1,
     FEDERATION_ORIGIN: hostOrigin,
     SIGNING_KID: 'host',
@@ -286,7 +287,7 @@ it('承認を解除しても参加済みの退会通知は届き、無関係な�
     `federation:${sourceOrigin}:${sourceActorId}`,
   );
   const [hostInstance] = await hostDb.select().from(instances).limit(1);
-  const sourceInstanceId = crypto.randomUUID();
+  const sourceOrganizationId = crypto.randomUUID();
   await changeD1(hostDb, async (writes) => {
     writes.push(
       hostDb.insert(federationActors).values({
@@ -300,7 +301,7 @@ it('承認を解除しても参加済みの退会通知は届き、無関係な�
         peerOrigin: sourceOrigin,
         operationId: crypto.randomUUID(),
         requestHash: 'known',
-        sourceInstanceId,
+        sourceOrganizationId,
         sourceActorId,
         actorId: account.actorId,
         instanceId: hostInstance.id,
@@ -366,16 +367,6 @@ it('承認を解除しても参加済みの退会通知は届き、無関係な�
           .where(eq(organizationAccounts.actorId, account.actorId))
       )[0].withdrawnAt,
     ).not.toBeNull();
-    expect(
-      (
-        await receive({
-          ...payload,
-          eventId: crypto.randomUUID(),
-          type: 'instance-deleted',
-          subjectId: sourceInstanceId,
-        })
-      ).status,
-    ).toBe(202);
   } finally {
     await changeD1(hostDb, async (writes) => {
       writes.push(

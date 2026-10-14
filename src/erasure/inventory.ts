@@ -11,30 +11,38 @@ export type InventoryEnv = {
   LOCAL_ROOM_INVENTORY?: string;
 };
 
-// Each call checks one bounded page. Network work stays outside the D1 batch.
-export async function reconcileRoomInventory(db: Database, env: InventoryEnv) {
-  const local: unknown =
-    env.LOCAL_ROOM_INVENTORY === undefined
-      ? undefined
-      : JSON.parse(env.LOCAL_ROOM_INVENTORY);
-  if (
-    local !== undefined &&
-    (!Array.isArray(local) ||
+// A local room list replaces the Cloudflare listing; otherwise all API settings are required.
+function inventorySource(env: InventoryEnv) {
+  if (env.LOCAL_ROOM_INVENTORY !== undefined) {
+    const local: unknown = JSON.parse(env.LOCAL_ROOM_INVENTORY);
+    if (
+      !Array.isArray(local) ||
       local.some((id) => typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) ||
-      new Set(local).size !== local.length)
-  )
-    throw new Error('INVALID_LOCAL_INVENTORY');
+      new Set(local).size !== local.length
+    )
+      throw new Error('INVALID_LOCAL_INVENTORY');
+    return { local: local as string[], cloud: null };
+  }
   if (
-    local === undefined &&
-    (!env.CLOUDFLARE_ACCOUNT_ID ||
-      !env.GAME_ROOM_NAMESPACE_ID ||
-      !env.DURABLE_OBJECTS_READ_TOKEN)
+    !env.CLOUDFLARE_ACCOUNT_ID ||
+    !env.GAME_ROOM_NAMESPACE_ID ||
+    !env.DURABLE_OBJECTS_READ_TOKEN
   )
     throw new Error('INVENTORY_CONFIGURATION_REQUIRED');
-  const key = Array.isArray(local)
-    ? 'local'
-    : `${env.CLOUDFLARE_ACCOUNT_ID}:${env.GAME_ROOM_NAMESPACE_ID}`;
-  const localHash = Array.isArray(local) ? await contentHash(local) : null;
+  return {
+    local: null,
+    cloud: {
+      accountId: env.CLOUDFLARE_ACCOUNT_ID,
+      namespaceId: env.GAME_ROOM_NAMESPACE_ID,
+      token: env.DURABLE_OBJECTS_READ_TOKEN,
+    },
+  };
+}
+// Each call checks one bounded page. Network work stays outside the D1 batch.
+export async function reconcileRoomInventory(db: Database, env: InventoryEnv) {
+  const { local, cloud } = inventorySource(env);
+  const key = cloud ? `${cloud.accountId}:${cloud.namespaceId}` : 'local';
+  const localHash = local ? await contentHash(local) : null;
   const scan = await changeD1(db, async (writes) => {
     const pending = await db
       .select()
@@ -83,7 +91,7 @@ export async function reconcileRoomInventory(db: Database, env: InventoryEnv) {
       result?: { id?: string }[];
       result_info?: { cursor?: string };
     };
-    if (Array.isArray(local)) {
+    if (local) {
       const offset = Number(scan.cursor ?? 0);
       if (!Number.isSafeInteger(offset) || offset < 0)
         throw new Error('INVALID_LOCAL_INVENTORY_CURSOR');
@@ -95,12 +103,12 @@ export async function reconcileRoomInventory(db: Database, env: InventoryEnv) {
       };
     } else {
       const url = new URL(
-        `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID ?? '')}/workers/durable_objects/namespaces/${encodeURIComponent(env.GAME_ROOM_NAMESPACE_ID ?? '')}/objects`,
+        `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloud.accountId)}/workers/durable_objects/namespaces/${encodeURIComponent(cloud.namespaceId)}/objects`,
       );
       url.searchParams.set('limit', '25');
       if (scan.cursor) url.searchParams.set('cursor', scan.cursor);
       const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${env.DURABLE_OBJECTS_READ_TOKEN}` },
+        headers: { Authorization: `Bearer ${cloud.token}` },
         redirect: 'error',
         signal: AbortSignal.timeout(15000),
       });

@@ -1,6 +1,5 @@
 import { env } from 'cloudflare:workers';
 import { beforeEach, expect, it, vi } from 'vitest';
-import { contentHash } from '../src/worker/catalog/hash';
 import type { Env } from '../src/worker/env';
 import app from '../src/worker/index';
 
@@ -10,20 +9,31 @@ vi.mock('../src/worker/results/read', () => ({ readResults: mocks.read }));
 vi.mock('../src/worker/db/d1', () => ({
   connectD1: () => ({}),
 }));
+vi.mock('../src/worker/organization/database', () => ({
+  organizationDatabase: () => ({ db: {}, close: async () => {} }),
+  resolveInstance: async (_db: unknown, subject: string) => ({
+    organization: { id: 'organization' },
+    account: { actorId: `actor:${subject}`, administrator: false, displayName: '本人' },
+    instance: { id: 'instance', owner: 'urn:uuid:instance', state: 'published' },
+    permissions: [],
+  }),
+}));
+vi.mock('../src/worker/organization/moderation', () => ({
+  rankingExclusions: async () => [],
+}));
+vi.mock('../src/worker/organization/profile', () => ({
+  currentProfileNames: async () => new Map(),
+}));
 beforeEach(() => {
   mocks.identity.mockReset();
   mocks.read.mockReset();
   mocks.identity.mockResolvedValue({ subject: 'self', displayName: '作問者' });
   mocks.read.mockResolvedValue({ history: [], ranking: [] });
 });
-const runtime = {
-  ...(env as unknown as Env),
-  ORGANIZATION_ENABLED: 'false',
-  GAME_OWNER: 'https://game.test',
-};
+const runtime = env as unknown as Env;
 const request = (headers: Record<string, string> = {}, body = '{}') =>
   app.request(
-    'https://game.test/api/results/overview',
+    'https://game.test/api/results/overview?instance=instance',
     { method: 'POST', headers: { Origin: 'https://game.test', ...headers }, body },
     runtime,
   );
@@ -43,13 +53,7 @@ it('履歴のactor・開催元をクライアント入力で変更できない',
   );
   expect(response.status).toBe(200);
   expect(response.headers.get('Cache-Control')).toBe('no-store');
-  expect(mocks.read).toHaveBeenCalledWith(
-    {},
-    runtime.GAME_OWNER,
-    await contentHash({ home: runtime.GAME_OWNER, subject: 'self' }),
-    [],
-    {},
-  );
+  expect(mocks.read).toHaveBeenCalledWith({}, 'urn:uuid:instance', 'actor:self', [], {});
 });
 it('DB停止は503。秘密やDB例外を応答へ出さない', async () => {
   mocks.read.mockRejectedValue(new Error('private database details'));
@@ -78,13 +82,9 @@ it('本人順位も入力のactor・開催元を使わず、認証された本�
     history: [],
     self: { rank: 104, rating: 980 },
   });
-  expect(mocks.read).toHaveBeenLastCalledWith(
-    {},
-    runtime.GAME_OWNER,
-    await contentHash({ home: runtime.GAME_OWNER, subject: 'self' }),
-    [],
-    { section: 'self' },
-  );
+  expect(mocks.read).toHaveBeenLastCalledWith({}, 'urn:uuid:instance', 'actor:self', [], {
+    section: 'self',
+  });
 });
 
 it('履歴の種別・追加取得・詳細指定は本人の読取へだけ渡す', async () => {
@@ -103,8 +103,8 @@ it('履歴の種別・追加取得・詳細指定は本人の読取へだけ渡�
     ).toBe(200);
     expect(mocks.read).toHaveBeenLastCalledWith(
       {},
-      runtime.GAME_OWNER,
-      await contentHash({ home: runtime.GAME_OWNER, subject: 'self' }),
+      'urn:uuid:instance',
+      'actor:self',
       [],
       query,
     );

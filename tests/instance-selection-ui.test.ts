@@ -32,7 +32,6 @@ beforeEach(() => {
 it('探す一覧は未追加先も表示し、追加済みの行で解除できる', () => {
   const organization = {
     data: {
-      enabled: true,
       organization: { id: 'organization', name: '組織' },
       account: { actorId: 'actor', administrator: false, displayName: '登録名' },
       addedInstanceIds: ['added'],
@@ -86,7 +85,6 @@ it.each([
   ({ instance, restrictions, modes }) => {
     const organization = {
       data: {
-        enabled: true,
         account: { actorId: 'actor', administrator: false, displayName: '登録名' },
         addedInstanceIds: [],
         sanctions: restrictions.length
@@ -143,7 +141,6 @@ it.each([
   ({ state, administrator }) => {
     const organization = {
       data: {
-        enabled: true,
         organization: { id: 'organization', name: '組織' },
         account: { actorId: 'actor', administrator },
         addedInstanceIds: ['unavailable'],
@@ -183,7 +180,6 @@ it.each([
 it('全件管理は未追加・利用不可の先も表示し、個人のお気に入り操作を混ぜない', () => {
   const organization = {
     data: {
-      enabled: true,
       organization: { id: 'organization', name: '組織' },
       account: { actorId: 'actor', administrator: true },
       addedInstanceIds: ['archived'],

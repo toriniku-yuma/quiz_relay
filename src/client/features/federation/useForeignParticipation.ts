@@ -5,9 +5,7 @@ import {
   type ParticipationTarget,
   participationId,
   participationOrigin,
-  validParticipationMessage,
 } from '../../../shared/participation';
-import { AUTHORIZE_PATH } from '../../app/paths';
 import { PlayRequestError, playMessages } from '../rooms/api';
 import { beginForeignAuthorization } from './redirect';
 
@@ -27,7 +25,7 @@ function readRecovery(): Recovery | null {
       !participationId(value.reservationId) ||
       !participationId(value.operationId) ||
       !participationOrigin(value.target?.peerOrigin) ||
-      !participationId(value.target.sourceInstanceId) ||
+      !participationId(value.target.sourceOrganizationId) ||
       !participationId(value.target.hostInstanceId) ||
       !['ranked', 'casual', 'room'].includes(value.target.mode)
     )
@@ -89,10 +87,9 @@ export async function foreignRequest<T>(
 export function useForeignParticipation(ready: boolean) {
   const [session, setSession] = useState<ForeignSession | null>(null),
     [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [peers, setPeers] = useState<{ origin: string; name: string }[] | null>(null);
+    [busy, setBusy] = useState(false);
   const [recovery, setRecovery] = useState(readRecovery);
-  const [openAdmission, setOpenAdmission] = useState(false);
+  const revision = useRef(0);
   const endSession = useCallback(() => {
     revision.current++;
     saveRecovery(null);
@@ -100,30 +97,6 @@ export function useForeignParticipation(ready: boolean) {
     setSession(null);
     setBusy(false);
     setError('');
-  }, []);
-  const attempt = useRef<{
-      target: ParticipationTarget;
-      state: string;
-      operationId: string;
-      popup: Window | null;
-    } | null>(null),
-    revision = useRef(0);
-  const loadPeers = useCallback(async () => {
-    try {
-      const response = await fetch(API_PATHS.participationSettings, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!response.ok) throw new Error('連携可能な所属元を取得できませんでした。');
-      const result = (await response.json()) as {
-        peers: { origin: string; name: string }[];
-        open?: boolean;
-      };
-      setPeers(result.peers);
-      setOpenAdmission(result.open === true);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : '所属元を取得できません。');
-    }
   }, []);
   useEffect(() => {
     if (!ready) return;
@@ -151,102 +124,8 @@ export function useForeignParticipation(ready: boolean) {
     return () => {
       active = false;
       revision.current++;
-      attempt.current?.popup?.close();
     };
   }, [ready]);
-  useEffect(() => {
-    async function received(event: MessageEvent) {
-      const current = attempt.current;
-      if (
-        !current ||
-        event.origin !== current.target.peerOrigin ||
-        event.source !== current.popup ||
-        !validParticipationMessage(event.data, current.state)
-      )
-        return;
-      const generation = ++revision.current;
-      try {
-        const exchanged = await foreignRequest<{ reservationId: string }>(
-          API_PATHS.participationExchange,
-          { ticket: event.data.ticket },
-        );
-        const result = await foreignRequest<ForeignSession>(
-          API_PATHS.participationSession,
-          {},
-          exchanged.reservationId,
-        );
-        if (revision.current !== generation) return;
-        const saved = {
-          reservationId: result.reservationId,
-          operationId: result.operationId,
-          target: current.target,
-        };
-        saveRecovery(saved);
-        setRecovery(saved);
-        setSession(result);
-        setError('');
-        current.popup?.close();
-        attempt.current = null;
-      } catch (error) {
-        if (revision.current === generation)
-          setError(error instanceof Error ? error.message : '本人確認に失敗しました。');
-      } finally {
-        if (revision.current === generation) setBusy(false);
-      }
-    }
-    const listener = (event: MessageEvent) => {
-      void received(event);
-    };
-    window.addEventListener('message', listener);
-    const check = setInterval(() => {
-      const current = attempt.current;
-      if (current?.popup?.closed) {
-        current.popup = null;
-        setBusy(false);
-        setError('本人確認の画面が閉じられました。もう一度開いて確認してください。');
-      }
-    }, 1000);
-    return () => {
-      window.removeEventListener('message', listener);
-      clearInterval(check);
-    };
-  }, []);
-  function begin(target: ParticipationTarget) {
-    if (
-      !peers ||
-      (!openAdmission && !peers.some((peer) => peer.origin === target.peerOrigin))
-    ) {
-      setError('所属元が現在承認されていません。連携情報を再取得してください。');
-      return;
-    }
-    const previous = attempt.current;
-    const operationId =
-      previous && JSON.stringify(previous.target) === JSON.stringify(target)
-        ? previous.operationId
-        : recovery && JSON.stringify(recovery.target) === JSON.stringify(target)
-          ? recovery.operationId
-          : crypto.randomUUID();
-    const state = crypto.randomUUID();
-    previous?.popup?.close();
-    const url = new URL(AUTHORIZE_PATH, target.peerOrigin);
-    url.search = new URLSearchParams({
-      host: location.origin,
-      source: target.sourceInstanceId,
-      instance: target.hostInstanceId,
-      mode: target.mode,
-      state,
-      operation: operationId,
-    }).toString();
-    const popup = window.open(url, `quiz-relay-${state}`);
-    attempt.current = { target, state, operationId, popup };
-    revision.current++;
-    setBusy(!!popup);
-    setError(
-      popup
-        ? ''
-        : '本人確認の画面を開けませんでした。このサイトのポップアップを許可して再試行してください。',
-    );
-  }
   async function cancel(forfeit: boolean) {
     if (!session) return;
     revision.current++;
@@ -290,7 +169,7 @@ export function useForeignParticipation(ready: boolean) {
       if (revision.current !== generation) return;
       if (
         session.homeOrigin !== target.peerOrigin ||
-        session.sourceInstanceId !== target.sourceInstanceId ||
+        session.sourceOrganizationId !== target.sourceOrganizationId ||
         session.instanceId !== target.hostInstanceId ||
         session.mode !== target.mode
       )
@@ -326,9 +205,6 @@ export function useForeignParticipation(ready: boolean) {
     session,
     error,
     busy,
-    peers,
-    loadPeers,
-    begin,
     cancel,
     endSession,
     recoveryTarget: recovery?.target,

@@ -28,6 +28,15 @@ beforeEach(() => {
   mocks.save.mockReset();
   vi.restoreAllMocks();
 });
+// A finished match room whose result is waiting to be saved.
+const finishedRoom = (state: State, owner: string) => ({
+  scope: { id: crypto.randomUUID(), owner },
+  generations: {},
+  state,
+  sessions: {},
+  resultRetryAt: 1,
+  lobby: { expires: 0, sessionExpires: 0, reservations: {}, closed: true },
+});
 
 it('承認済みレート：勝敗・引き分け・失格・未復帰・INVALIDと非ランク戦', () => {
   const { record } = resultFixture();
@@ -152,13 +161,20 @@ it('待機中の強制離脱では結果・レートを生成しない', () => {
   expect(state.completed).toBeUndefined();
   expect(state.players[0].forfeited).toBeUndefined();
 });
-it('旧DO・開発参加の結果は遡及保存しない', () => {
+it('開発参加の結果は保存せず、開始時刻や定義のない正式試合の結果は記録しない', () => {
   const { state, record } = resultFixture();
+  expect(
+    makeResultRecord({ ...state, matchKind: 'development' }, record.result),
+  ).toBeUndefined();
   delete state.startedAt;
-  expect(makeResultRecord(state, record.result)).toBeUndefined();
+  expect(() => makeResultRecord(state, record.result)).toThrow(
+    'RESULT_RECORD_INCOMPLETE',
+  );
   state.startedAt = 1000;
   delete state.definition;
-  expect(makeResultRecord(state, record.result)).toBeUndefined();
+  expect(() => makeResultRecord(state, record.result)).toThrow(
+    'RESULT_RECORD_INCOMPLETE',
+  );
 });
 
 it('D01/D02: DB停止・DO復帰・commit後応答消失でも同一原本で再試行し確定する', async () => {
@@ -170,7 +186,7 @@ it('D01/D02: DB停止・DO復帰・commit後応答消失でも同一原本で再
     .mockRejectedValueOnce(new Error('COMMITTED_RESPONSE_LOST'))
     .mockResolvedValue(undefined);
   await runInDurableObject(stub, async (_instance, ctx) => {
-    await ctx.storage.put('room', { state, sessions: {}, resultRetryAt: 1 });
+    await ctx.storage.put('room', finishedRoom(state, record.owner));
     await ctx.storage.setAlarm(Date.now() + 60000);
   });
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -190,7 +206,7 @@ it('D01/D02: DB停止・DO復帰・commit後応答消失でも同一原本で再
     }
     await runDurableObjectAlarm(stub);
     expect(mocks.save.mock.calls.length, `attempt ${attempt}`).toBe(attempt + 1);
-    expect(mocks.save.mock.calls[attempt][1]).toEqual(record);
+    expect(mocks.save.mock.calls[attempt].slice(1)).toEqual([record.owner, record]);
   }
   await runInDurableObject(stub, async (_instance, ctx) => {
     const room = await ctx.storage.get<{ state: typeof state }>('room');
@@ -207,7 +223,7 @@ it('内容競合は確定にせず原本を保持する', async () => {
   const { state, record } = resultFixture();
   mocks.save.mockRejectedValue(new ResultConflict());
   await runInDurableObject(stub, async (_instance, ctx) => {
-    await ctx.storage.put('room', { state, sessions: {}, resultRetryAt: 1 });
+    await ctx.storage.put('room', finishedRoom(state, record.owner));
     await ctx.storage.setAlarm(Date.now() + 60000);
   });
   await runDurableObjectAlarm(stub);
@@ -220,7 +236,7 @@ it('内容競合は確定にせず原本を保持する', async () => {
 
 it('DB応答待ちでもDOの同期処理を止めず、再試行期限を延長しない', async () => {
   const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
-  const { state } = resultFixture();
+  const { state, record } = resultFixture();
   let released = false;
   let started = false;
   mocks.save.mockImplementation(async () => {
@@ -228,7 +244,7 @@ it('DB応答待ちでもDOの同期処理を止めず、再試行期限を延長
     while (!released) await new Promise((resolve) => setTimeout(resolve, 5));
   });
   await runInDurableObject(stub, async (_instance, ctx) => {
-    await ctx.storage.put('room', { state, sessions: {}, resultRetryAt: 1 });
+    await ctx.storage.put('room', finishedRoom(state, record.owner));
     await ctx.storage.setAlarm(Date.now() + 60000);
   });
   const alarm = runDurableObjectAlarm(stub);
@@ -250,16 +266,15 @@ it('DB応答待ちでもDOの同期処理を止めず、再試行期限を延長
 it('追加インスタンスの結果は部屋に保存したownerで保存し、原本を変更しない', async () => {
   const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
   const { state, record } = resultFixture();
-  const scope = { id: crypto.randomUUID(), owner: 'https://second.test' };
-  record.owner = scope.owner;
-  record.definition.competition.owner = scope.owner;
+  const owner = 'https://second.test';
+  record.owner = owner;
+  record.definition.competition.owner = owner;
   state.completed = record;
   mocks.save.mockResolvedValue(undefined);
   await runInDurableObject(stub, async (_instance, ctx) => {
-    await ctx.storage.put('room', { state, scope, sessions: {}, resultRetryAt: 1 });
+    await ctx.storage.put('room', finishedRoom(state, owner));
     await ctx.storage.setAlarm(Date.now() + 60000);
   });
   await runDurableObjectAlarm(stub);
-  expect(mocks.save.mock.calls[0][0].GAME_OWNER).toBe(scope.owner);
-  expect(mocks.save.mock.calls[0][1]).toEqual(record);
+  expect(mocks.save.mock.calls[0].slice(1)).toEqual([owner, record]);
 });

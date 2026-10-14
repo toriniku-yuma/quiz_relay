@@ -3,7 +3,6 @@ import { eq, sql } from 'drizzle-orm';
 import { exportPKCS8, exportSPKI, generateKeyPair } from 'jose';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { expireSharedQuestions } from '../src/erasure/shared-questions';
-import { disabledFederationPermissions } from '../src/shared/federation';
 import type { QuestionSharingOverview } from '../src/shared/federation-questions';
 import { defaultQuestionSettings, emptyQuestion } from '../src/shared/questions';
 import { loadMatchDefinition } from '../src/worker/catalog/database';
@@ -59,6 +58,7 @@ let source: Env,
   hostOwner: string,
   importId: string,
   queryCount = 0;
+const unlimited: RateLimit = { limit: async () => ({ success: true }) };
 beforeAll(async () => {
   await applyD1Migrations(runtime.GAME_D1, runtime.D1_MIGRATIONS);
   await applyD1Migrations(runtime.PEER_D1, runtime.D1_MIGRATIONS);
@@ -77,8 +77,8 @@ beforeAll(async () => {
   });
   source = {
     ...env,
-    ORGANIZATION_ENABLED: 'true',
     GAME_CONFIG_PROFILE: 'local',
+    FEDERATION_LIMITER: unlimited,
     GAME_D1: runtime.PEER_D1,
     FEDERATION_ORIGIN: sourceOrigin,
     SIGNING_KID: 'source',
@@ -86,8 +86,8 @@ beforeAll(async () => {
   } as Env;
   host = {
     ...env,
-    ORGANIZATION_ENABLED: 'true',
     GAME_CONFIG_PROFILE: 'local',
+    FEDERATION_LIMITER: unlimited,
     GAME_D1: counted,
     FEDERATION_ORIGIN: hostOrigin,
     SIGNING_KID: 'host',
@@ -126,9 +126,6 @@ beforeAll(async () => {
   sourceCategory = crypto.randomUUID();
   hostCategory = crypto.randomUUID();
   importId = crypto.randomUUID();
-  const permissions = disabledFederationPermissions();
-  permissions.send.questions = true;
-  permissions.receive.questions = true;
   for (const [db, id, category, origin, key, kid] of [
     [
       sourceDb,
@@ -165,7 +162,8 @@ beforeAll(async () => {
           instanceId: id,
           peerOrigin: origin,
           peerInstanceId: id === sourceId ? hostId : sourceId,
-          permissions,
+          sendQuestions: true,
+          receiveQuestions: true,
         }),
       );
     });
@@ -242,12 +240,10 @@ it('インスタンス単位の共有許可・権限・固定ページ・クエ�
   ).toHaveLength(25);
   await changeD1(sourceDb, async (writes) => {
     const [policy] = await sourceDb.select().from(federationPolicies);
-    const permissions = structuredClone(policy.permissions);
-    permissions.send.questions = true;
     writes.push(
       sourceDb
         .update(federationPolicies)
-        .set({ permissions })
+        .set({ sendQuestions: true })
         .where(eq(federationPolicies.id, policy.id)),
     );
   });
@@ -266,7 +262,10 @@ it('インスタンス単位の共有許可・権限・固定ページ・クエ�
   const beforeRenew = await hostDb.select().from(questionSubmissions);
   expect((await sync()).pending).toBe(false);
   expect(await hostDb.select().from(questionSubmissions)).toEqual(beforeRenew);
-  const definition = await loadMatchDefinition({ ...host, GAME_OWNER: hostOwner });
+  const definition = await loadMatchDefinition(host, {
+    owner: hostOwner,
+    profile: 'local',
+  });
   expect(definition.questions).toHaveLength(27);
   expect(
     definition.questions.every((question) => question.categoryId === hostCategory),
@@ -476,10 +475,9 @@ it('個別除外と開催先補正を改訂・同期後も保持し、取得失�
     },
     'local',
   );
-  const fixed = await loadMatchDefinition({
-    ...host,
-    GAME_OWNER: hostOwner,
-    GAME_CONFIG_PROFILE: 'local-casual',
+  const fixed = await loadMatchDefinition(host, {
+    owner: hostOwner,
+    profile: 'local-casual',
   });
   expect(fixed.questions).toHaveLength(26);
   expect(
@@ -528,9 +526,9 @@ it('個別除外と開催先補正を改訂・同期後も保持し、取得失�
   ).toBe(1);
   vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
   await expect(syncQuestionImport(host, importId)).rejects.toThrow();
-  await expect(loadMatchDefinition({ ...host, GAME_OWNER: hostOwner })).rejects.toThrow(
-    'NO_RANKED_QUESTIONS',
-  );
+  await expect(
+    loadMatchDefinition(host, { owner: hostOwner, profile: 'local' }),
+  ).rejects.toThrow('NO_RANKED_QUESTIONS');
   expect(fixed.questions).toHaveLength(26);
   vi.mocked(globalThis.fetch).mockImplementation(async (input) =>
     app.request(input as Request, undefined, source),
@@ -538,19 +536,17 @@ it('個別除外と開催先補正を改訂・同期後も保持し、取得失�
   await complete();
   await changeD1(sourceDb, async (writes) => {
     const [policy] = await sourceDb.select().from(federationPolicies);
-    const permissions = structuredClone(policy.permissions);
-    permissions.send.questions = false;
     writes.push(
       sourceDb
         .update(federationPolicies)
-        .set({ permissions })
+        .set({ sendQuestions: false })
         .where(eq(federationPolicies.id, policy.id)),
     );
   });
   await expect(sync()).rejects.toThrow('FEDERATION_PEER_UNAVAILABLE');
-  await expect(loadMatchDefinition({ ...host, GAME_OWNER: hostOwner })).rejects.toThrow(
-    'NO_RANKED_QUESTIONS',
-  );
+  await expect(
+    loadMatchDefinition(host, { owner: hostOwner, profile: 'local' }),
+  ).rejects.toThrow('NO_RANKED_QUESTIONS');
   expect(
     (
       await hostDb
@@ -611,10 +607,9 @@ it('同じ組織内も明示許可を必要とし、元カテゴリの停止を�
   await configure({ id: localImport, peerOrigin: hostOrigin, sourceInstanceId: localId });
   for (let i = 0; i < 4; i++)
     if (!(await syncQuestionImport(host, localImport)).pending) break;
-  const definition = await loadMatchDefinition({
-    ...host,
-    GAME_OWNER: hostOwner,
-    GAME_CONFIG_PROFILE: 'local-casual',
+  const definition = await loadMatchDefinition(host, {
+    owner: hostOwner,
+    profile: 'local-casual',
   });
   expect(definition.questions).toHaveLength(1);
   await questionSharing(host, 'host-admin', {
@@ -623,9 +618,9 @@ it('同じ組織内も明示許可を必要とし、元カテゴリの停止を�
     sourceInstanceId: localId,
     allowed: false,
   });
-  await expect(loadMatchDefinition({ ...host, GAME_OWNER: hostOwner })).rejects.toThrow(
-    'NO_RANKED_QUESTIONS',
-  );
+  await expect(
+    loadMatchDefinition(host, { owner: hostOwner, profile: 'local' }),
+  ).rejects.toThrow('NO_RANKED_QUESTIONS');
   expect(definition.questions).toHaveLength(1);
 });
 
@@ -681,12 +676,10 @@ it('30日間未使用の共有本文だけを消去し、除外IDと過去版の
   ).rejects.toThrow('IMMUTABLE_CATALOG');
   await changeD1(sourceDb, async (writes) => {
     const [policy] = await sourceDb.select().from(federationPolicies);
-    const permissions = structuredClone(policy.permissions);
-    permissions.send.questions = true;
     writes.push(
       sourceDb
         .update(federationPolicies)
-        .set({ permissions })
+        .set({ sendQuestions: true })
         .where(eq(federationPolicies.id, policy.id)),
     );
   });
@@ -702,10 +695,9 @@ it('30日間未使用の共有本文だけを消去し、除外IDと過去版の
   expect(restored.cachePurgedAt).toBeNull();
   expect(
     (
-      await loadMatchDefinition({
-        ...host,
-        GAME_OWNER: hostOwner,
-        GAME_CONFIG_PROFILE: 'local-casual',
+      await loadMatchDefinition(host, {
+        owner: hostOwner,
+        profile: 'local-casual',
       })
     ).questions,
   ).toHaveLength(26);
@@ -717,28 +709,24 @@ it('複数の共有元を取り込み専用カテゴリへ集約し、通常投�
     jobId = crypto.randomUUID();
   await addInstance(hostDb, 'host-admin', { id: targetId, name: '取り込み専用の検証先' });
   await changeD1(hostDb, async (writes) => {
-    const permissions = disabledFederationPermissions();
-    permissions.receive.questions = true;
     writes.push(
       hostDb.insert(federationPolicies).values({
         id: crypto.randomUUID(),
         instanceId: targetId,
         peerOrigin: sourceOrigin,
         peerInstanceId: sourceId,
-        permissions,
+        receiveQuestions: true,
       }),
     );
   });
   await changeD1(sourceDb, async (writes) => {
-    const permissions = disabledFederationPermissions();
-    permissions.send.questions = true;
     writes.push(
       sourceDb.insert(federationPolicies).values({
         id: crypto.randomUUID(),
         instanceId: sourceId,
         peerOrigin: hostOrigin,
         peerInstanceId: targetId,
-        permissions,
+        sendQuestions: true,
       }),
     );
   });

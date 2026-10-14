@@ -2,7 +2,8 @@ import type { Context, Handler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AuthEnv } from '../auth/handlers.ts';
 import { loadMatchDefinition } from '../catalog/database.ts';
-import { OrganizationError, organizationEnabled } from '../organization/access.ts';
+import { matchRoomName } from '../game/room-names.ts';
+import { OrganizationError } from '../organization/access.ts';
 import { organizationDatabase, organizationIdentity } from '../organization/database.ts';
 import { requireUnrestricted } from '../organization/moderation.ts';
 
@@ -12,11 +13,8 @@ const roomId = (value: unknown): value is string =>
 
 export const matchConfig: Handler<AuthEnv> = async (context) => {
   const definition = await loadMatchDefinition(
-    {
-      ...context.env,
-      GAME_OWNER: context.get('instanceOwner'),
-    },
-    undefined,
+    context.env,
+    { owner: context.get('instanceOwner'), profile: context.env.GAME_CONFIG_PROFILE },
     context.get('actorId'),
   ).catch((error: unknown) => {
     if (
@@ -40,21 +38,16 @@ export const enterMatch: Handler<AuthEnv> = async (context) => {
     return context.json({ code: 'INVALID_SETUP' }, 400);
   const value = body as Record<string, unknown>;
   const resume = context.req.path.endsWith('/resume');
-  const organized = organizationEnabled(context.env);
-  const name = organized ? context.get('profileName') : value.name;
-  if (!resume && organized && !name)
-    return context.json({ code: 'PROFILE_REQUIRED' }, 409);
+  const name = context.get('profileName');
+  if (!resume && !name) return context.json({ code: 'PROFILE_REQUIRED' }, 409);
   if (
     (!resume &&
-      (Object.keys(value).some((key) => !['name', 'operationId'].includes(key)) ||
-        (value.operationId !== undefined && !roomId(value.operationId)) ||
-        typeof value.name !== 'string' ||
-        !value.name.trim() ||
-        (!organized && value.name.length > 24))) ||
+      (Object.keys(value).some((key) => key !== 'operationId') ||
+        (value.operationId !== undefined && !roomId(value.operationId)))) ||
     (resume && Object.keys(value).length !== 0)
   )
     return context.json({ code: 'INVALID_SETUP' }, 400);
-  if (!resume && organized) {
+  if (!resume) {
     const connection = organizationDatabase(context.env);
     try {
       await requireUnrestricted(
@@ -72,12 +65,9 @@ export const enterMatch: Handler<AuthEnv> = async (context) => {
     context.get('organizationId'),
   ).enter(
     context.get('actorId'),
-    resume ? '' : String(name).trim(),
-    undefined,
+    resume ? '' : String(name),
     resume,
-    context.get('instanceId')
-      ? { id: context.get('instanceId'), owner: context.get('instanceOwner') }
-      : undefined,
+    { id: context.get('instanceId'), owner: context.get('instanceOwner') },
     false,
     typeof value.operationId === 'string' ? value.operationId : undefined,
   );
@@ -121,13 +111,13 @@ export const cancelMatch: Handler<AuthEnv> = async (context) => {
     ? await maker.cancelAdmission(
         context.get('actorId'),
         body.operationId,
-        context.get('instanceId') || undefined,
+        context.get('instanceId'),
       )
     : await maker.cancel(
         context.get('actorId'),
         body.room,
         context.req.path.endsWith('/logout'),
-        context.get('instanceId') || undefined,
+        context.get('instanceId'),
       );
   if (!result.ok)
     return context.json(
@@ -150,11 +140,8 @@ export const matchSocket: Handler<AuthEnv> = async (context) => {
   if (!token) return context.json({ code: 'SESSION_REQUIRED' }, 401);
   const headers = new Headers(context.req.raw.headers);
   headers.set('X-Game-Session', token);
-  headers.set(
-    'X-Game-Instance',
-    organizationEnabled(context.env) ? (context.req.query('instance') ?? '') : '',
-  );
-  return context.env.GAME_ROOM.getByName(`1c:${room}`).fetch(
+  headers.set('X-Game-Instance', context.req.query('instance') ?? '');
+  return context.env.GAME_ROOM.getByName(matchRoomName(room)).fetch(
     new Request(context.req.raw, { headers }),
   );
 };
@@ -163,27 +150,27 @@ export const oversizedMatch = (context: Context<AuthEnv>) =>
   context.json({ code: 'INVALID_SETUP' }, 413);
 
 export const logoutActor: Handler<AuthEnv> = async (context) => {
-  let actor = context.get('actorId');
-  let organization = context.env.GAME_OWNER;
-  if (organizationEnabled(context.env)) {
-    const { db, close } = organizationDatabase(context.env);
-    try {
-      const identity = await organizationIdentity(db, context.get('subject'));
-      actor = identity.account.actorId;
-      organization = identity.organization.id;
-    } catch (error) {
-      if (!(error instanceof OrganizationError) || error.code !== 'SETUP_REQUIRED')
-        throw error;
-    } finally {
-      await close();
-    }
-  }
   const cookies = getCookie(context);
   const rooms = Object.keys(cookies)
     .filter((key) => key.startsWith('qr_match_'))
     .map((key) => key.slice('qr_match_'.length))
     .filter(roomId);
-  await context.env.MATCHMAKER.getByName(organization).logoutActor(actor, rooms);
+  const { db, close } = organizationDatabase(context.env);
+  let identity: Awaited<ReturnType<typeof organizationIdentity>> | null = null;
+  try {
+    identity = await organizationIdentity(db, context.get('subject'));
+  } catch (error) {
+    // Before organization setup no account exists, so no matchmaking session can exist.
+    if (!(error instanceof OrganizationError) || error.code !== 'SETUP_REQUIRED')
+      throw error;
+  } finally {
+    await close();
+  }
+  if (identity)
+    await context.env.MATCHMAKER.getByName(identity.organization.id).logoutActor(
+      identity.account.actorId,
+      rooms,
+    );
   for (const room of rooms)
     deleteCookie(context, `qr_match_${room}`, {
       path: '/api/matchmaking',

@@ -97,6 +97,9 @@ beforeAll(async () => {
     kid: 'host',
     publicKey: await exportSPKI(hostKeys.publicKey),
     approved: true,
+    participationBlocked: false,
+    receiveRanked: true,
+    receiveCasual: true,
     revision: 0,
   });
   await manageFederation(peerDb, 'host-admin', {
@@ -106,6 +109,9 @@ beforeAll(async () => {
     kid: 'source',
     publicKey: await exportSPKI(sourceKeys.publicKey),
     approved: true,
+    participationBlocked: false,
+    receiveRanked: true,
+    receiveCasual: true,
     revision: 0,
   });
 });

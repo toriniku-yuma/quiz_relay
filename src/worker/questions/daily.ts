@@ -12,7 +12,7 @@ import {
 } from '../db/schema.ts';
 import { publishQuestionCatalog } from './catalog.ts';
 import { estimateDifficulty } from './difficulty.ts';
-import { backfillDifficulty, readDifficultyStatistics } from './difficulty-statistics.ts';
+import { readDifficultyStatistics } from './difficulty-statistics.ts';
 import { QuestionPlan } from './plan.ts';
 
 export async function updateDifficultyInstance(
@@ -20,7 +20,6 @@ export async function updateDifficultyInstance(
   profile: string,
   input: { organizationId: string; instanceId: string; owner: string; now: number },
 ) {
-  if (!(await backfillDifficulty(db, input.owner))) return 0;
   const day = new Date(input.now).toISOString().slice(0, 10);
   return changeD1(db, async (writes) => {
     const [scope] = await db

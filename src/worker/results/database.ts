@@ -63,13 +63,13 @@ export async function commitD1Result(binding: D1Database, source: ResultRecord) 
   return commitResult(connectD1(binding), source);
 }
 
-export async function saveResult(env: Env, record: ResultRecord) {
-  if (record.owner !== env.GAME_OWNER) throw new ResultConflict();
+export async function saveResult(env: Env, owner: string, record: ResultRecord) {
+  if (record.owner !== owner) throw new ResultConflict();
   if (!env.GAME_D1) throw new Error('RESULT_DATABASE_NOT_CONFIGURED');
   await commitD1Result(env.GAME_D1, record);
 }
 
-export async function commitResult(db: Database, source: ResultRecord) {
+async function commitResult(db: Database, source: ResultRecord) {
   if (
     !canonicalize(source) ||
     source.players.length === 0 ||

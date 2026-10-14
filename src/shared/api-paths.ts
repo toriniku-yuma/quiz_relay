@@ -14,7 +14,6 @@ export const API_PATHS = {
   foreignLoginSession: '/api/v1/participation/login/session',
   foreignLoginLogout: '/api/v1/participation/login/logout',
   foreignLoginRooms: '/api/v1/participation/login/rooms',
-  participationSettings: '/api/v1/participation/settings',
   participationReservations: '/api/v1/participation/reservations',
   participationValidation: '/federation/v1/participation/validate',
   participationRelease: '/federation/v1/participation/release',

@@ -11,25 +11,24 @@ export function useParticipationAuthorization(
   target: ParticipationTarget | null,
   state: string,
   operationId: string,
-  automatic?: { flow: 'login' | 'participation'; ready: boolean; actor: string },
+  request: { flow: 'login' | 'participation'; ready: boolean; actor: string },
 ) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
-    [expired, setExpired] = useState(false),
-    [sent, setSent] = useState(false);
+    [expired, setExpired] = useState(false);
   const requestKey = JSON.stringify([
       target,
       state,
       operationId,
-      automatic?.flow,
-      automatic?.actor,
+      request.flow,
+      request.actor,
     ]),
     active = useRef(requestKey),
     inFlight = useRef<string | null>(null);
   active.current = requestKey;
   const authorize = useCallback(async () => {
     if (expired || inFlight.current === requestKey) return;
-    if (!target || (!automatic && !window.opener)) {
+    if (!target) {
       setError('開催先の参加画面から本人確認を開き直してください。');
       return;
     }
@@ -38,19 +37,13 @@ export function useParticipationAuthorization(
     setError('');
     try {
       const result = await organizationRequest<{ ticket: string }>(
-        automatic?.flow === 'login'
+        request.flow === 'login'
           ? API_PATHS.foreignLoginTickets
           : API_PATHS.participationTickets,
-        automatic?.flow === 'login' ? { ...target, state } : { ...target, operationId },
+        request.flow === 'login' ? { ...target, state } : { ...target, operationId },
       );
       if (active.current !== requestKey) return;
-      if (automatic) location.replace(foreignReturnUrl(target, state, result.ticket));
-      else
-        window.opener.postMessage(
-          { type: 'quiz-relay-participation', state, ticket: result.ticket },
-          target.peerOrigin,
-        );
-      setSent(true);
+      location.replace(foreignReturnUrl(target, state, result.ticket));
     } catch (error) {
       if (active.current !== requestKey) return;
       inFlight.current = null;
@@ -62,9 +55,9 @@ export function useParticipationAuthorization(
     } finally {
       if (active.current === requestKey) setBusy(false);
     }
-  }, [requestKey, target, automatic, state, operationId, expired]);
+  }, [requestKey, target, request.flow, state, operationId, expired]);
   useEffect(() => {
-    if (automatic?.ready && !error && !sent) void authorize();
-  }, [automatic?.ready, error, sent, authorize]);
-  return { busy, error, expired, sent, authorize };
+    if (request.ready && !error) void authorize();
+  }, [request.ready, error, authorize]);
+  return { busy, error, expired, authorize };
 }

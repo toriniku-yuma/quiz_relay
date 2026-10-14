@@ -5,6 +5,7 @@ import { resultsQuery } from '../../shared/results.ts';
 import { validateBroughtSet, validateRoomSettings } from '../../shared/rooms.ts';
 import { type AuthEnv, authenticate } from '../auth/handlers.ts';
 import { loadMatchDefinition } from '../catalog/database.ts';
+import { userRoomName } from '../game/room-names.ts';
 import { OrganizationError, validId } from '../organization/access.ts';
 import {
   createGuest,
@@ -77,10 +78,9 @@ async function casualDefinition(
 ) {
   await ensureCasualCatalog(env, instance.id);
   try {
-    return await loadMatchDefinition({
-      ...env,
-      GAME_OWNER: instance.owner,
-      GAME_CONFIG_PROFILE: `${env.GAME_CONFIG_PROFILE}-casual`,
+    return await loadMatchDefinition(env, {
+      owner: instance.owner,
+      profile: `${env.GAME_CONFIG_PROFILE}-casual`,
     });
   } catch (error) {
     if (
@@ -188,7 +188,6 @@ export const casual: Handler<AuthEnv> = async (httpContext) => {
   const result = await maker.enter(
     identity.actor.id,
     identity.actor.name,
-    undefined,
     httpContext.req.path === API_PATHS.casualResume,
     identity.scope,
     identity.actor.guest,
@@ -250,7 +249,7 @@ export const info: Handler<AuthEnv> = async (httpContext) => {
   const input = await body(httpContext),
     room = validId(input.room);
   const view = roomResult(
-    await httpContext.env.GAME_ROOM.getByName(`room:${room}`).userRoomInfo(
+    await httpContext.env.GAME_ROOM.getByName(userRoomName(room)).userRoomInfo(
       typeof input.invite === 'string' ? input.invite : '',
     ),
   );
@@ -279,7 +278,7 @@ export const list: Handler<AuthEnv> = async (httpContext) => {
   const rows = await roomIds(httpContext.env, instance.id);
   const results = await Promise.allSettled(
     rows.map((room) =>
-      httpContext.env.GAME_ROOM.getByName(`room:${room.id}`).userRoomInfo(),
+      httpContext.env.GAME_ROOM.getByName(userRoomName(room.id)).userRoomInfo(),
     ),
   );
   return httpContext.json({
@@ -320,7 +319,7 @@ export const roomActions: Handler<AuthEnv> = async (httpContext) => {
   }
   const existing = !creating;
   const identity = await context(httpContext, 'room', existing, creating);
-  const room = httpContext.env.GAME_ROOM.getByName(`room:${id}`),
+  const room = httpContext.env.GAME_ROOM.getByName(userRoomName(id)),
     maker = httpContext.env.MATCHMAKER.getByName(identity.instance.organizationId);
   if (creating) {
     const result = await maker.enterRoom(
@@ -399,7 +398,7 @@ export const socket: Handler<AuthEnv> = async (httpContext) => {
   const headers = new Headers(httpContext.req.raw.headers);
   headers.set('X-Game-Session', token);
   headers.set('X-Game-Instance', httpContext.req.query('instance') ?? '');
-  return httpContext.env.GAME_ROOM.getByName(`room:${room}`).fetch(
+  return httpContext.env.GAME_ROOM.getByName(userRoomName(room)).fetch(
     new Request(httpContext.req.raw, { headers }),
   );
 };

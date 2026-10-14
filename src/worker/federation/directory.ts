@@ -63,7 +63,7 @@ async function directory(
     .from(federationTargets)
     .where(
       and(
-        eq(federationTargets.sourceInstanceId, organization.id),
+        eq(federationTargets.sourceOrganizationId, organization.id),
         or(
           target
             ? and(
@@ -75,7 +75,7 @@ async function directory(
         ),
       ),
     );
-  // A newer direct read or listing replaces older permissions for the same host.
+  // A newer direct read or listing replaces older availability for the same host.
   const cachedMetadata = [
     ...metadata.map((cached) => ({
       ...cached,
@@ -86,7 +86,7 @@ async function directory(
           (remote) =>
             !targets.some(
               (row) =>
-                row.sourceInstanceId === cached.instanceId &&
+                row.sourceOrganizationId === cached.instanceId &&
                 row.peerOrigin === cached.peerOrigin &&
                 row.instanceId === remote.id &&
                 row.checkedAt >= cached.lastSuccessAt,
@@ -98,7 +98,7 @@ async function directory(
       .filter((row) => {
         const cached = metadata.find(
           (cached) =>
-            cached.instanceId === row.sourceInstanceId &&
+            cached.instanceId === row.sourceOrganizationId &&
             cached.peerOrigin === row.peerOrigin,
         );
         if (!cached || row.checkedAt >= cached.lastSuccessAt) return true;
@@ -111,7 +111,7 @@ async function directory(
         );
       })
       .map((row) => ({
-        instanceId: row.sourceInstanceId,
+        instanceId: row.sourceOrganizationId,
         peerOrigin: row.peerOrigin,
         payload: row.payload,
         lastSuccessAt: row.checkedAt,
@@ -136,9 +136,7 @@ async function directory(
       continue;
     for (const remote of cached.payload.instances) {
       if (!selected(cached.peerOrigin, remote.id)) continue;
-      const ranked = remote.ranked && remote.permissions.receive.ranked;
-      const casual = remote.casual && remote.permissions.receive.casual;
-      if (!ranked && !casual) continue;
+      if (!remote.ranked && !remote.casual) continue;
       const key = `${cached.peerOrigin}:${remote.id}`;
       const row = found.get(key) ?? {
         peerOrigin: cached.peerOrigin,
@@ -153,11 +151,9 @@ async function directory(
             favorite.instanceId === remote.id,
         ),
         available: true,
-        sources: [],
       };
-      row.ranked ||= ranked;
-      row.casual ||= casual;
-      row.sources = [{ id: organization.id, name: organization.name, ranked, casual }];
+      row.ranked ||= remote.ranked;
+      row.casual ||= remote.casual;
       found.set(key, row);
     }
   }
@@ -184,13 +180,11 @@ async function directory(
       casual: false,
       favorite: true,
       available: false,
-      sources: [],
     });
   }
   return {
     organizationId: organization.id,
     peers: peers.filter((peer) => peer.approved),
-    sources: [{ id: organization.id, name: organization.name }],
     instances: [...found.values()],
   };
 }

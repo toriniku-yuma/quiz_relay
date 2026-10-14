@@ -7,7 +7,6 @@ import app from '../src/worker/index';
 const runtime = env as unknown as Env;
 const bindings: Env = {
   MATCHMAKER: runtime.MATCHMAKER,
-  GAME_OWNER: runtime.GAME_OWNER,
   GAME_CONFIG_PROFILE: 'local',
   PROBE: runtime.PROBE,
   GAME_ROOM: runtime.GAME_ROOM,

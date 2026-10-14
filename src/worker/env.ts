@@ -9,8 +9,6 @@ export interface Env {
   FEDERATION_LIMITER?: RateLimit;
   PROBE: DurableObjectNamespace<Probe>;
   MATCHMAKER: DurableObjectNamespace<Matchmaker>;
-  GAME_OWNER: string;
-  ORGANIZATION_ENABLED?: string;
   QUESTION_DIFFICULTY_ENABLED?: string;
   INITIAL_ADMIN_SUBJECT?: string;
   GAME_CONFIG_PROFILE: string;

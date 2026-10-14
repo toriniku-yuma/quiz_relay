@@ -15,20 +15,57 @@ import type { State } from '../src/worker/game/state';
 import app from '../src/worker/index';
 import { questionProvenance, questions } from './fixtures/questions';
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), identity: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  load: vi.fn(),
+  identity: vi.fn(),
+  instance: { organizationId: '', id: '', owner: 'https://game.test' },
+}));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
-vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
+vi.mock('../src/worker/organization/moderation', () => ({
+  requireUnrestricted: vi.fn(),
+}));
+vi.mock('../src/worker/catalog/database', () => ({
+  loadMatchDefinition: mocks.load,
+  loadFixedVersion: mocks.load,
+}));
 vi.mock('../src/worker/auth/clerk', () => ({ authenticateClerk: mocks.identity }));
 vi.mock('../src/worker/organization/database', () => ({
   allowedInstanceActors: async (_env: unknown, _scope: unknown, actors: string[]) =>
     actors,
+  organizationDatabase: () => ({ db: {}, close: async () => {} }),
+  resolveInstance: async () => ({
+    organization: { id: mocks.instance.organizationId },
+    account: { actorId: 'user-1-actor', administrator: false, displayName: '参加者' },
+    instance: {
+      id: mocks.instance.id,
+      owner: mocks.instance.owner,
+      state: 'published',
+      rankedPauseReason: null,
+    },
+    permissions: [],
+  }),
 }));
-const runtime: Env = { ...(env as unknown as Env), ORGANIZATION_ENABLED: 'false' };
+const runtime = env as unknown as Env;
 const owner = 'https://game.test';
+const rankedScope = { id: crypto.randomUUID(), owner };
+const generationOf = (actor: string) => `generation-${actor}`;
+const emptyQueue = () => ({
+  actors: {},
+  foreign: {},
+  foreignIntent: {},
+  foreignDepartures: {},
+  foreignChecked: {},
+  withdrawals: {},
+  loggingOut: {},
+  switches: {},
+  rates: {},
+});
 let definition: MatchDefinition;
 beforeEach(async () => {
   mocks.load.mockReset();
   mocks.identity.mockReset();
+  mocks.instance.organizationId = crypto.randomUUID();
+  mocks.instance.id = rankedScope.id;
   const config = { ...rules, showSelections: true };
   const manifest = questions.map((question) => ({
     ...question,
@@ -46,10 +83,7 @@ beforeEach(async () => {
     manifestHash: await contentHash(manifest),
     playersPerMatch: 4,
   });
-  mocks.load.mockImplementation(async (_env, ref) => ({
-    ...structuredClone(definition),
-    competition: ref ?? definition.competition,
-  }));
+  mocks.load.mockImplementation(async () => structuredClone(definition));
   mocks.identity.mockResolvedValue({ subject: 'user-1', displayName: '作問者' });
 });
 
@@ -64,13 +98,13 @@ async function state(
 async function socket(
   stub: DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>,
   token: string,
-  instanceId = '',
+  instanceId = rankedScope.id,
 ) {
   const response = await stub.fetch('https://game.test', {
     headers: {
       Upgrade: 'websocket',
       'X-Game-Session': token,
-      ...(instanceId ? { 'X-Game-Instance': instanceId } : {}),
+      'X-Game-Instance': instanceId,
     },
   });
   if (!response.webSocket) throw new Error(`Upgrade failed ${response.status}`);
@@ -89,7 +123,6 @@ it('カジュアルは実力帯なしで自動開始し、存在しない部屋�
       const entered = await queue.enter(
         `casual-${i}`,
         `参加者${i}`,
-        undefined,
         false,
         scope,
         i >= 2,
@@ -98,14 +131,14 @@ it('カジュアルは実力帯なしで自動開始し、存在しない部屋�
       admissions.push(entered);
       sockets.push(
         await socket(
-          runtime.GAME_ROOM.getByName(`1c:${entered.room}`),
+          runtime.GAME_ROOM.getByName(`match:${entered.room}`),
           entered.token,
           scope.id,
         ),
       );
     }
     expect(new Set(admissions.map((admission) => admission.room)).size).toBe(1);
-    const saved = await state(runtime.GAME_ROOM.getByName(`1c:${admissions[0].room}`));
+    const saved = await state(runtime.GAME_ROOM.getByName(`match:${admissions[0].room}`));
     expect(saved?.phase).toBe('REVEALING');
     expect(saved?.matchKind).toBe('casual');
     expect(saved?.players.filter((player) => player.guest)).toHaveLength(2);
@@ -115,7 +148,7 @@ it('カジュアルは実力帯なしで自動開始し、存在しない部屋�
         .every(([settings]) => settings.GAME_CONFIG_PROFILE.endsWith('-casual')),
     ).toBe(true);
     expect(
-      await queue.enter('casual-0', '参加者0', undefined, false, {
+      await queue.enter('casual-0', '参加者0', false, {
         ...scope,
         mode: undefined,
       }),
@@ -150,7 +183,6 @@ it('2人のカジュアルマッチは登録ユーザーとゲストの接続で
   const first = await queue.enter(
     'registered',
     '登録ユーザー',
-    undefined,
     false,
     scope,
     false,
@@ -159,7 +191,6 @@ it('2人のカジュアルマッチは登録ユーザーとゲストの接続で
   const second = await queue.enter(
     'guest',
     'ゲスト',
-    undefined,
     false,
     scope,
     true,
@@ -167,7 +198,7 @@ it('2人のカジュアルマッチは登録ユーザーとゲストの接続で
   );
   if (!first.ok || !second.ok) throw new Error('setup');
   expect(second.room).toBe(first.room);
-  const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${first.room}`);
   const firstSocket = await socket(room, first.token, scope.id),
     secondSocket = await socket(room, second.token, scope.id);
   try {
@@ -186,24 +217,15 @@ it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試�
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const scope = { id: crypto.randomUUID(), owner };
   const operationId = crypto.randomUUID();
-  const first = await queue.enter(
-    'switch-a',
-    'A',
-    undefined,
-    false,
-    scope,
-    false,
-    operationId,
-  );
+  const first = await queue.enter('switch-a', 'A', false, scope, false, operationId);
   if (!first.ok) throw new Error(first.code);
-  const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${first.room}`);
   const sockets = [await socket(room, first.token, scope.id)];
   try {
     for (let i = 1; i < 4; i++) {
       const entry = await queue.enter(
         `switch-${i}`,
         `P${i}`,
-        undefined,
         false,
         scope,
         false,
@@ -213,21 +235,13 @@ it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試�
       sockets.push(await socket(room, entry.token, scope.id));
     }
     const other = { ...scope, mode: 'casual' as const };
-    expect(await queue.enter('switch-a', '', undefined, true, other)).toMatchObject({
+    expect(await queue.enter('switch-a', '', true, other)).toMatchObject({
       ok: false,
       code: 'OTHER_INSTANCE_ACTIVE',
     });
     expect((await state(room))?.players[0].forfeited).toBeUndefined();
     const replacementId = crypto.randomUUID();
-    const second = await queue.enter(
-      'switch-a',
-      'A',
-      undefined,
-      false,
-      other,
-      false,
-      replacementId,
-    );
+    const second = await queue.enter('switch-a', 'A', false, other, false, replacementId);
     if (!second.ok) throw new Error(second.code);
     expect(second.room).not.toBe(first.room);
     expect((await state(room))?.phase).toBe('REVEALING');
@@ -237,21 +251,13 @@ it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試�
       disqualified: true,
     });
     expect(
-      await queue.enter('switch-a', 'A', undefined, false, other, false, replacementId),
+      await queue.enter('switch-a', 'A', false, other, false, replacementId),
     ).toEqual(second);
     expect(
-      await queue.enter(
-        'switch-a',
-        'changed',
-        undefined,
-        false,
-        other,
-        false,
-        replacementId,
-      ),
+      await queue.enter('switch-a', 'changed', false, other, false, replacementId),
     ).toMatchObject({ ok: false, code: 'OPERATION_CONFLICT' });
     expect(
-      await queue.enter('switch-a', 'A', undefined, false, scope, false, operationId),
+      await queue.enter('switch-a', 'A', false, scope, false, operationId),
     ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
     expect(await queue.cancel('switch-a', first.room, false, scope.id)).toMatchObject({
       ok: false,
@@ -274,9 +280,8 @@ it('旧離脱が未確認なら2枠を保持し3つ目を拒否し、Alarmで再
   const first = await queue.enter(
     'a',
     'A',
-    undefined,
     false,
-    undefined,
+    rankedScope,
     false,
     crypto.randomUUID(),
   );
@@ -308,23 +313,14 @@ it('旧離脱が未確認なら2枠を保持し3つ目を拒否し、Alarmで再
     const second = await queue.enter(
       'a',
       'A',
-      undefined,
       false,
-      undefined,
+      rankedScope,
       false,
       crypto.randomUUID(),
     );
     expect(second.ok).toBe(true);
     expect(
-      await queue.enter(
-        'a',
-        'A',
-        undefined,
-        false,
-        undefined,
-        false,
-        crypto.randomUUID(),
-      ),
+      await queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID()),
     ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
     unavailable = false;
     await runDurableObjectAlarm(queue);
@@ -336,17 +332,7 @@ it('旧離脱が未確認なら2枠を保持し3つ目を拒否し、Alarmで再
       ),
     ).toEqual({});
     expect(
-      (
-        await queue.enter(
-          'a',
-          'A',
-          undefined,
-          false,
-          undefined,
-          false,
-          crypto.randomUUID(),
-        )
-      ).ok,
+      (await queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID())).ok,
     ).toBe(true);
   } finally {
     restore();
@@ -359,15 +345,14 @@ it('切替結果不明→ログアウト→新待機取消の後も、元の進�
   const first = await queue.enter(
     'a',
     'A',
-    undefined,
     false,
-    undefined,
+    rankedScope,
     false,
     crypto.randomUUID(),
   );
-  const partner = await queue.enter('b', 'B');
+  const partner = await queue.enter('b', 'B', false, rankedScope);
   if (!first.ok || !partner.ok) throw new Error('setup');
-  const oldRoom = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const oldRoom = runtime.GAME_ROOM.getByName(`match:${first.room}`);
   const sockets = [
     await socket(oldRoom, first.token),
     await socket(oldRoom, partner.token),
@@ -396,21 +381,15 @@ it('切替結果不明→ログアウト→新待機取消の後も、元の進�
   });
   try {
     expect(
-      await queue.enter(
-        'a',
-        'A',
-        undefined,
-        false,
-        undefined,
-        false,
-        crypto.randomUUID(),
-      ),
+      await queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID()),
     ).toMatchObject({ ok: false, code: 'GAME_DATABASE_UNAVAILABLE' });
     restore();
     await queue.logoutActor('a');
     expect((await state(oldRoom))?.phase).toBe('REVEALING');
-    expect(await queue.cancel('a', lostRoom)).toMatchObject({ ok: true });
-    const resumed = await queue.enter('a', '', undefined, true);
+    expect(await queue.cancel('a', lostRoom, false, rankedScope.id)).toMatchObject({
+      ok: true,
+    });
+    const resumed = await queue.enter('a', '', true, rankedScope);
     if (!resumed.ok) throw new Error(resumed.code);
     expect(resumed.room).toBe(first.room);
     expect(resumed.token).not.toBe(first.token);
@@ -431,16 +410,47 @@ it.each([2, 3, 4])(
     try {
       for (let i = 0; i < count; i++)
         expect(
-          (await stub.reserve(`actor-${i}`, `P${i}`, `token-${i}`, definition)).ok,
+          (
+            await stub.reserve(
+              `actor-${i}`,
+              `P${i}`,
+              `token-${i}`,
+              definition,
+              rankedScope,
+              generationOf(`actor-${i}`),
+            )
+          ).ok,
         ).toBe(true);
-      expect((await stub.reserve('extra', 'extra', 'extra', definition)).ok).toBe(false);
+      expect(
+        (
+          await stub.reserve(
+            'extra',
+            'extra',
+            'extra',
+            definition,
+            rankedScope,
+            generationOf('extra'),
+          )
+        ).ok,
+      ).toBe(false);
       sockets.push(await socket(stub, 'token-0'), await socket(stub, 'token-0'));
       expect((await state(stub))?.phase).toBe('WAITING');
       for (let i = 1; i < count; i++) sockets.push(await socket(stub, `token-${i}`));
       expect((await state(stub))?.phase).toBe('REVEALING');
       expect(mocks.load).toHaveBeenCalledOnce();
       expect(await stub.cancelReservation('actor-0')).toBe(false);
-      expect((await stub.reserve('new-actor', 'N', 'new', definition)).ok).toBe(false);
+      expect(
+        (
+          await stub.reserve(
+            'new-actor',
+            'N',
+            'new',
+            definition,
+            rankedScope,
+            generationOf('new-actor'),
+          )
+        ).ok,
+      ).toBe(false);
       await evictDurableObject(stub);
       expect((await state(stub))?.players).toHaveLength(count);
     } finally {
@@ -451,17 +461,23 @@ it.each([2, 3, 4])(
 
 it('M01: cancellation frees slots and invalidates the old cookie before a replacement joins', async () => {
   const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'old', definition);
+  await stub.reserve('a', 'A', 'old', definition, rankedScope, generationOf('a'));
   expect(await stub.cancelReservation('a')).toBe(true);
   expect((await stub.lobbyStatus())?.actors).toEqual([]);
   expect(
     (
       await stub.fetch('https://game.test', {
-        headers: { Upgrade: 'websocket', 'X-Game-Session': 'old' },
+        headers: {
+          Upgrade: 'websocket',
+          'X-Game-Session': 'old',
+          'X-Game-Instance': rankedScope.id,
+        },
       })
     ).status,
   ).toBe(401);
-  expect((await stub.reserve('b', 'B', 'new', definition)).ok).toBe(true);
+  expect(
+    (await stub.reserve('b', 'B', 'new', definition, rankedScope, generationOf('b'))).ok,
+  ).toBe(true);
 });
 
 it.each(['ranked', 'casual'] as const)(
@@ -469,7 +485,7 @@ it.each(['ranked', 'casual'] as const)(
   async (kind) => {
     definition.kind = kind;
     const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-    await room.reserve('a', 'A', 'token-a', definition, undefined, 'generation-a');
+    await room.reserve('a', 'A', 'token-a', definition, rankedScope, 'generation-a');
     const firstSocket = await socket(room, 'token-a'),
       secondSocket = await socket(room, 'token-a');
     try {
@@ -489,7 +505,7 @@ it.each(['ranked', 'casual'] as const)(
       expect((await state(room))?.result).toBeNull();
       await evictDurableObject(room);
       expect(
-        await room.reserve('a', 'A', 'token-a', definition, undefined, 'generation-a'),
+        await room.reserve('a', 'A', 'token-a', definition, rankedScope, 'generation-a'),
       ).toMatchObject({ ok: false });
     } finally {
       firstSocket.close();
@@ -501,10 +517,13 @@ it.each(['ranked', 'casual'] as const)(
 it('部屋ID未確定の取消を参加前・DB読込中に保存し、後発の別操作を巻き込まない', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const first = crypto.randomUUID();
-  expect(await queue.cancelAdmission('a', first)).toMatchObject({ ok: true });
-  expect(
-    await queue.enter('a', 'A', undefined, false, undefined, false, first),
-  ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
+  expect(await queue.cancelAdmission('a', first, rankedScope.id)).toMatchObject({
+    ok: true,
+  });
+  expect(await queue.enter('a', 'A', false, rankedScope, false, first)).toMatchObject({
+    ok: false,
+    code: 'STALE_REQUEST',
+  });
   let released = false;
   let started = false;
   mocks.load.mockImplementationOnce(async () => {
@@ -514,31 +533,33 @@ it('部屋ID未確定の取消を参加前・DB読込中に保存し、後発の
   });
   const slow = crypto.randomUUID(),
     fast = crypto.randomUUID();
-  const pending = queue.enter('a', 'A', undefined, false, undefined, false, slow);
+  const pending = queue.enter('a', 'A', false, rankedScope, false, slow);
   await vi.waitFor(() => expect(started).toBe(true));
-  expect(await queue.cancelAdmission('a', slow)).toMatchObject({ ok: true });
-  const successor = await queue.enter('a', 'A', undefined, false, undefined, false, fast);
+  expect(await queue.cancelAdmission('a', slow, rankedScope.id)).toMatchObject({
+    ok: true,
+  });
+  const successor = await queue.enter('a', 'A', false, rankedScope, false, fast);
   released = true;
   expect(await pending).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
   expect(successor.ok).toBe(true);
-  expect(await queue.enter('a', '', undefined, true)).toEqual(successor);
+  expect(await queue.enter('a', '', true, rankedScope)).toEqual(successor);
 });
 
 it('切断済み待機者の古い台帳は、新参加者2人の同じ待機先への割当を妨げない', async () => {
   definition.playersPerMatch = 2;
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const old = await queue.enter('old', 'Old');
+  const old = await queue.enter('old', 'Old', false, rankedScope);
   if (!old.ok) throw new Error(old.code);
-  const room = runtime.GAME_ROOM.getByName(`1c:${old.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${old.room}`);
   const oldSocket = await socket(room, old.token);
   await runInDurableObject(room, async (instance, ctx) =>
     instance.webSocketClose(ctx.getWebSockets()[0]),
   );
-  const firstAdmission = await queue.enter('a', 'A'),
-    secondAdmission = await queue.enter('b', 'B');
+  const firstAdmission = await queue.enter('a', 'A', false, rankedScope),
+    secondAdmission = await queue.enter('b', 'B', false, rankedScope);
   if (!firstAdmission.ok || !secondAdmission.ok) throw new Error('setup');
   expect(secondAdmission.room).toBe(firstAdmission.room);
-  const current = runtime.GAME_ROOM.getByName(`1c:${firstAdmission.room}`);
+  const current = runtime.GAME_ROOM.getByName(`match:${firstAdmission.room}`);
   const connections = [
     await socket(current, firstAdmission.token),
     await socket(current, secondAdmission.token),
@@ -554,15 +575,7 @@ it('切断済み待機者の古い台帳は、新参加者2人の同じ待機先
 it('切替中の旧待機も操作IDで閉じ、後発予約拒否で旧待機を復活させない', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const oldOperation = crypto.randomUUID();
-  const old = await queue.enter(
-    'a',
-    'A',
-    undefined,
-    false,
-    undefined,
-    false,
-    oldOperation,
-  );
+  const old = await queue.enter('a', 'A', false, rankedScope, false, oldOperation);
   if (!old.ok) throw new Error(old.code);
   let release = false,
     entered = false;
@@ -585,27 +598,21 @@ it('切替中の旧待機も操作IDで閉じ、後発予約拒否で旧待機�
     );
     restore = () => spy.mockRestore();
   });
-  const pending = queue.enter(
-    'a',
-    'A',
-    undefined,
-    false,
-    undefined,
-    false,
-    crypto.randomUUID(),
-  );
+  const pending = queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID());
   try {
     await vi.waitFor(() => expect(entered).toBe(true));
-    expect(await queue.cancelAdmission('a', oldOperation)).toMatchObject({ ok: true });
+    expect(await queue.cancelAdmission('a', oldOperation, rankedScope.id)).toMatchObject({
+      ok: true,
+    });
     expect(
-      (await runtime.GAME_ROOM.getByName(`1c:${old.room}`).lobbyStatus())?.actors,
+      (await runtime.GAME_ROOM.getByName(`match:${old.room}`).lobbyStatus())?.actors,
     ).toEqual([]);
   } finally {
     release = true;
   }
   await pending;
   restore();
-  expect(await queue.enter('a', '', undefined, true)).toMatchObject({
+  expect(await queue.enter('a', '', true, rankedScope)).toMatchObject({
     ok: false,
     code: 'NO_ACTIVE_MATCH',
   });
@@ -614,45 +621,35 @@ it('切替中の旧待機も操作IDで閉じ、後発予約拒否で旧待機�
 it('取消応答が失われても同じ操作は復活せず、開始済みなら取消せず復帰できる', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const operationId = crypto.randomUUID();
-  const first = await queue.enter(
-    'a',
-    'A',
-    undefined,
-    false,
-    undefined,
-    false,
-    operationId,
-  );
+  const first = await queue.enter('a', 'A', false, rankedScope, false, operationId);
   if (!first.ok) throw new Error(first.code);
-  expect(await queue.cancelAdmission('a', operationId)).toMatchObject({ ok: true });
+  expect(await queue.cancelAdmission('a', operationId, rankedScope.id)).toMatchObject({
+    ok: true,
+  });
   await evictDurableObject(queue);
-  expect(await queue.cancelAdmission('a', operationId)).toMatchObject({ ok: true });
+  expect(await queue.cancelAdmission('a', operationId, rankedScope.id)).toMatchObject({
+    ok: true,
+  });
   expect(
-    await queue.enter('a', 'A', undefined, false, undefined, false, operationId),
+    await queue.enter('a', 'A', false, rankedScope, false, operationId),
   ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
   definition.playersPerMatch = 2;
   const startedOperation = crypto.randomUUID();
-  const next = await queue.enter(
-    'a',
-    'A',
-    undefined,
-    false,
-    undefined,
-    false,
-    startedOperation,
-  );
-  const other = await queue.enter('b', 'B');
+  const next = await queue.enter('a', 'A', false, rankedScope, false, startedOperation);
+  const other = await queue.enter('b', 'B', false, rankedScope);
   if (!next.ok || !other.ok) throw new Error('setup');
-  const room = runtime.GAME_ROOM.getByName(`1c:${next.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${next.room}`);
   const firstSocket = await socket(room, next.token),
     secondSocket = await socket(room, other.token);
   try {
-    expect(await queue.cancelAdmission('a', startedOperation)).toMatchObject({
+    expect(
+      await queue.cancelAdmission('a', startedOperation, rankedScope.id),
+    ).toMatchObject({
       ok: false,
       code: 'MATCH_STARTED',
     });
     expect((await state(room))?.players[0].forfeited).toBeUndefined();
-    expect(await queue.enter('a', '', undefined, true)).toEqual(next);
+    expect(await queue.enter('a', '', true, rankedScope)).toEqual(next);
     await runInDurableObject(room, async (instance, ctx) => {
       const ws = ctx
         .getWebSockets()
@@ -673,15 +670,7 @@ it('取消応答が失われても同じ操作は復活せず、開始済みな�
 it('待機取消のDO応答消失は閉鎖世代を保持し、再起動後のAlarmで同じ取消を完了する', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const operationId = crypto.randomUUID();
-  const admitted = await queue.enter(
-    'a',
-    'A',
-    undefined,
-    false,
-    undefined,
-    false,
-    operationId,
-  );
+  const admitted = await queue.enter('a', 'A', false, rankedScope, false, operationId);
   if (!admitted.ok) throw new Error(admitted.code);
   let restore = () => {};
   await runInDurableObject(queue, async (instance) => {
@@ -703,7 +692,7 @@ it('待機取消のDO応答消失は閉鎖世代を保持し、再起動後のAl
     restore = () => spy.mockRestore();
   });
   try {
-    expect(await queue.cancelAdmission('a', operationId)).toMatchObject({
+    expect(await queue.cancelAdmission('a', operationId, rankedScope.id)).toMatchObject({
       ok: false,
       code: 'GAME_DATABASE_UNAVAILABLE',
     });
@@ -722,9 +711,8 @@ it('待機取消のDO応答消失は閉鎖世代を保持し、再起動後のAl
   const next = await queue.enter(
     'a',
     'A',
-    undefined,
     false,
-    undefined,
+    rankedScope,
     false,
     crypto.randomUUID(),
   );
@@ -739,40 +727,48 @@ it('待機取消のDO応答消失は閉鎖世代を保持し、再起動後のAl
     ),
   ).toBeDefined();
   expect(
-    await queue.enter('a', 'A', undefined, false, undefined, false, operationId),
+    await queue.enter('a', 'A', false, rankedScope, false, operationId),
   ).toMatchObject({ ok: false, code: 'STALE_REQUEST' });
   await evictDurableObject(queue);
   await runDurableObjectAlarm(queue);
-  expect(await queue.enter('a', '', undefined, true)).toMatchObject({
+  expect(await queue.enter('a', '', true, rankedScope)).toMatchObject({
     ok: true,
     room: next.room,
   });
   expect(
-    (await state(runtime.GAME_ROOM.getByName(`1c:${admitted.room}`)))?.result,
+    (await state(runtime.GAME_ROOM.getByName(`match:${admitted.room}`)))?.result,
   ).toBeNull();
-  await queue.cancel('a', next.room);
+  await queue.cancel('a', next.room, false, rankedScope.id);
 });
 
 it('M01/G14: failed DB revalidation cannot start or expose a question', async () => {
   definition.playersPerMatch = 2;
   const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'a', definition);
-  await stub.reserve('b', 'B', 'b', definition);
+  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
+  await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
   const connection = await socket(stub, 'a');
   try {
     mocks.load.mockRejectedValueOnce(new Error('DB_OFFLINE'));
     expect(
       (
         await stub.fetch('https://game.test', {
-          headers: { Upgrade: 'websocket', 'X-Game-Session': 'b' },
+          headers: {
+            Upgrade: 'websocket',
+            'X-Game-Session': 'b',
+            'X-Game-Instance': rankedScope.id,
+          },
         })
       ).status,
     ).toBe(503);
     expect((await state(stub))?.phase).toBe('WAITING');
     expect((await state(stub))?.revealed).toBe(0);
-    mocks.load.mockRejectedValueOnce(new Error('QUESTION_UNAVAILABLE'));
+    mocks.load.mockRejectedValueOnce(new Error('DEFINITION_NOT_FOUND'));
     await stub.fetch('https://game.test', {
-      headers: { Upgrade: 'websocket', 'X-Game-Session': 'b' },
+      headers: {
+        Upgrade: 'websocket',
+        'X-Game-Session': 'b',
+        'X-Game-Instance': rankedScope.id,
+      },
     });
     expect((await stub.lobbyStatus())?.closed).toBe(true);
   } finally {
@@ -782,7 +778,7 @@ it('M01/G14: failed DB revalidation cannot start or expose a question', async ()
 
 it('M01: unconnected reservation and hard waiting lifetime survive eviction and expire via alarm', async () => {
   const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'a', definition);
+  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
   await runInDurableObject(stub, async (_instance, ctx) => {
     const room = await ctx.storage.get<{
       lobby: { reservations: Record<string, number> };
@@ -806,28 +802,28 @@ it('M01: unconnected reservation and hard waiting lifetime survive eviction and 
 
 it('M01/M03: matching is idempotent on resume, rejects duplicate join, and isolates definition versions', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const first = await queue.enter('a', 'A', definition.competition);
+  const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
-  expect((await queue.enter('a', 'A', definition.competition)).ok).toBe(false);
+  expect((await queue.enter('a', 'A', false, rankedScope)).ok).toBe(false);
   await evictDurableObject(queue);
-  expect(await queue.enter('a', '', definition.competition, true)).toEqual(first);
-  const second = await queue.enter('b', 'B', definition.competition);
+  expect(await queue.enter('a', '', true, rankedScope)).toEqual(first);
+  const second = await queue.enter('b', 'B', false, rankedScope);
   if (!second.ok) throw new Error(second.code);
   expect(second.room).toBe(first.room);
-  const other = await queue.enter('c', 'C', { ...definition.competition, version: 2 });
+  mocks.load.mockResolvedValueOnce({
+    ...structuredClone(definition),
+    competition: { ...definition.competition, version: 2 },
+  });
+  const other = await queue.enter('c', 'C', false, rankedScope);
   if (!other.ok) throw new Error(other.code);
   expect(other.room).not.toBe(first.room);
-  expect((await queue.cancel('a', 'wrong-room')).ok).toBe(false);
-  expect((await queue.cancel('a', first.room)).ok).toBe(true);
-  expect((await queue.enter('a', '', definition.competition, true)).ok).toBe(false);
+  expect((await queue.cancel('a', 'wrong-room', false, rankedScope.id)).ok).toBe(false);
+  expect((await queue.cancel('a', first.room, false, rankedScope.id)).ok).toBe(true);
+  expect((await queue.enter('a', '', true, rankedScope)).ok).toBe(false);
 });
 
 it('A04: identity is server verified; unauthenticated and cross-origin requests fail before matching', async () => {
-  const bindings = {
-    ...runtime,
-    GAME_OWNER: owner,
-    GAME_CONFIG_PROFILE: 'local',
-  };
+  const bindings = runtime;
   expect(
     (
       await app.request(
@@ -865,7 +861,7 @@ it('A04: identity is server verified; unauthenticated and cross-origin requests 
     {
       method: 'POST',
       headers: { Origin: owner, Authorization: 'Bearer valid' },
-      body: JSON.stringify({ name: 'A', actorId: 'forged' }),
+      body: JSON.stringify({ actorId: 'forged' }),
     },
     bindings,
   );
@@ -876,7 +872,7 @@ it('M01: concurrent queue admissions never exceed capacity or create duplicate m
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const admissions = await Promise.all(
     Array.from({ length: 10 }, (_, i) =>
-      queue.enter(`actor-${i}`, `P${i}`, definition.competition),
+      queue.enter(`actor-${i}`, `P${i}`, false, rankedScope),
     ),
   );
   const counts = new Map<string, number>();
@@ -886,8 +882,8 @@ it('M01: concurrent queue admissions never exceed capacity or create duplicate m
   }
   expect([...counts.values()].sort()).toEqual([2, 4, 4]);
   const duplicates = await Promise.all([
-    queue.enter('duplicate', 'D', definition.competition),
-    queue.enter('duplicate', 'D', definition.competition),
+    queue.enter('duplicate', 'D', false, rankedScope),
+    queue.enter('duplicate', 'D', false, rankedScope),
   ]);
   expect(duplicates.filter((result) => result.ok)).toHaveLength(1);
 });
@@ -897,38 +893,45 @@ it('M01: lost reservation response resumes the persisted room/token after evicti
   const room = crypto.randomUUID();
   await runInDurableObject(queue, async (_instance, ctx) => {
     await ctx.storage.put('queue', {
-      rates: {},
+      ...emptyQueue(),
       actors: {
         a: {
           created: Date.now(),
           room,
           token: 'pending-token',
+          generation: 'pending-generation',
           name: 'A',
-          key: JSON.stringify(definition.competition),
+          guest: false,
+          key: JSON.stringify([rankedScope.id, 'ranked', definition.competition]),
           pending: definition,
+          scope: rankedScope,
         },
       },
     });
   });
   await evictDurableObject(queue);
-  const result = await queue.enter('a', '', definition.competition, true);
+  const result = await queue.enter('a', '', true, rankedScope);
   expect(result).toMatchObject({ ok: true, room, token: 'pending-token' });
-  expect((await runtime.GAME_ROOM.getByName(`1c:${room}`).lobbyStatus())?.actors).toEqual(
-    ['a'],
-  );
+  expect(
+    (await runtime.GAME_ROOM.getByName(`match:${room}`).lobbyStatus())?.actors,
+  ).toEqual(['a']);
 });
 
 it('M01: cancellation racing the final connection has a single outcome', async () => {
   definition.playersPerMatch = 2;
   const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'a', definition);
-  await stub.reserve('b', 'B', 'b', definition);
+  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
+  await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
   const first = await socket(stub, 'a');
   let last: WebSocket | undefined;
   try {
     const [response, cancelled] = await Promise.all([
       stub.fetch('https://game.test', {
-        headers: { Upgrade: 'websocket', 'X-Game-Session': 'b' },
+        headers: {
+          Upgrade: 'websocket',
+          'X-Game-Session': 'b',
+          'X-Game-Instance': rankedScope.id,
+        },
       }),
       stub.cancelReservation('a'),
     ]);
@@ -946,22 +949,28 @@ it('M01: cancellation racing the final connection has a single outcome', async (
 it('A04: logout revokes old sockets/cookies and authenticated resume restores the same actor', async () => {
   definition.playersPerMatch = 2;
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const firstAdmission = await queue.enter('a', 'A', definition.competition);
-  const secondAdmission = await queue.enter('b', 'B', definition.competition);
+  const firstAdmission = await queue.enter('a', 'A', false, rankedScope);
+  const secondAdmission = await queue.enter('b', 'B', false, rankedScope);
   if (!firstAdmission.ok || !secondAdmission.ok) throw new Error('join');
-  const stub = runtime.GAME_ROOM.getByName(`1c:${firstAdmission.room}`);
+  const stub = runtime.GAME_ROOM.getByName(`match:${firstAdmission.room}`);
   const first = await socket(stub, firstAdmission.token);
   const second = await socket(stub, secondAdmission.token);
   try {
-    expect((await queue.cancel('a', firstAdmission.room, true)).ok).toBe(true);
+    expect((await queue.cancel('a', firstAdmission.room, true, rankedScope.id)).ok).toBe(
+      true,
+    );
     expect(
       (
         await stub.fetch('https://game.test', {
-          headers: { Upgrade: 'websocket', 'X-Game-Session': firstAdmission.token },
+          headers: {
+            Upgrade: 'websocket',
+            'X-Game-Session': firstAdmission.token,
+            'X-Game-Instance': rankedScope.id,
+          },
         })
       ).status,
     ).toBe(401);
-    const resumed = await queue.enter('a', '', definition.competition, true);
+    const resumed = await queue.enter('a', '', true, rankedScope);
     if (!resumed.ok) throw new Error(resumed.code);
     expect(resumed.room).toBe(firstAdmission.room);
     expect(resumed.token).not.toBe(firstAdmission.token);
@@ -973,12 +982,7 @@ it('A04: logout revokes old sockets/cookies and authenticated resume restores th
 });
 
 it('A04: public Auth settings need no probe token; join issues HttpOnly session without disclosing game data', async () => {
-  const bindings = {
-    ...runtime,
-    GAME_OWNER: owner,
-    GAME_CONFIG_PROFILE: 'local',
-    PROBES_ENABLED: 'false',
-  };
+  const bindings = { ...runtime, PROBES_ENABLED: 'false' };
   const config = await app.request('https://game.test/api/auth/config', {}, bindings);
   expect(config.status).toBe(200);
   expect(Object.keys(await config.json()).sort()).toEqual(['publishableKey']);
@@ -987,7 +991,7 @@ it('A04: public Auth settings need no probe token; join issues HttpOnly session 
     {
       method: 'POST',
       headers: { Origin: owner, Authorization: 'Bearer valid' },
-      body: JSON.stringify({ name: 'A' }),
+      body: '{}',
     },
     bindings,
   );
@@ -1005,7 +1009,7 @@ it('A04: public Auth settings need no probe token; join issues HttpOnly session 
     {
       method: 'POST',
       headers: { Origin: owner, Authorization: 'Bearer valid' },
-      body: JSON.stringify({ name: 'different-name' }),
+      body: '{}',
     },
     bindings,
   );
@@ -1029,7 +1033,7 @@ it.each<[string, number, () => Promise<null>]>([
     {
       method: 'POST',
       headers: { Origin: 'https://game.test', Authorization: 'Bearer invalid' },
-      body: JSON.stringify({ name: 'A' }),
+      body: '{}',
     },
     runtime,
   );
@@ -1040,8 +1044,8 @@ it.each<[string, number, () => Promise<null>]>([
 it('review: heartbeats sent during slow DB revalidation keep the waiting player connected', async () => {
   definition.playersPerMatch = 2;
   const stub = runtime.GAME_ROOM.getByName(`review-delay:${crypto.randomUUID()}`);
-  await stub.reserve('a', 'A', 'a', definition);
-  await stub.reserve('b', 'B', 'b', definition);
+  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
+  await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
   const first = await socket(stub, 'a');
   const heartbeat = setInterval(
     () => first.send(JSON.stringify({ type: 'sync', matchId: null, lastSeq: null })),
@@ -1054,7 +1058,11 @@ it('review: heartbeats sent during slow DB revalidation keep the waiting player 
       return structuredClone(definition);
     });
     const response = await stub.fetch('https://game.test', {
-      headers: { Upgrade: 'websocket', 'X-Game-Session': 'b' },
+      headers: {
+        Upgrade: 'websocket',
+        'X-Game-Session': 'b',
+        'X-Game-Instance': rankedScope.id,
+      },
     });
     last = response.webSocket ?? undefined;
     last?.accept();
@@ -1071,8 +1079,8 @@ it.each(['cancel-requester', 'cancel-peer', 'expire', 'another-start'])(
   async (scenario) => {
     definition.playersPerMatch = 2;
     const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-    await stub.reserve('a', 'A', 'a', definition);
-    await stub.reserve('b', 'B', 'b', definition);
+    await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
+    await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
     const first = await socket(stub, 'a');
     let released = false;
     let failure: Error | undefined;
@@ -1082,7 +1090,11 @@ it.each(['cancel-requester', 'cancel-peer', 'expire', 'another-start'])(
       return structuredClone(definition);
     });
     const pending = stub.fetch('https://game.test', {
-      headers: { Upgrade: 'websocket', 'X-Game-Session': 'b' },
+      headers: {
+        Upgrade: 'websocket',
+        'X-Game-Session': 'b',
+        'X-Game-Instance': rankedScope.id,
+      },
     });
     let last: WebSocket | undefined;
     let concurrent: WebSocket | undefined;
@@ -1101,7 +1113,7 @@ it.each(['cancel-requester', 'cancel-peer', 'expire', 'another-start'])(
         });
       if (scenario === 'another-start') {
         concurrent = await socket(stub, 'b');
-        failure = new Error('QUESTION_UNAVAILABLE');
+        failure = new Error('DEFINITION_NOT_FOUND');
       }
       released = true;
       const response = await pending;
@@ -1124,7 +1136,7 @@ it.each(['cancel-requester', 'cancel-peer', 'expire', 'another-start'])(
 
 it('DB admission wait allows another actor to resume and cancel before the DB responds', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const first = await queue.enter('a', 'A', definition.competition);
+  const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
   let released = false;
   let started = false;
@@ -1133,20 +1145,20 @@ it('DB admission wait allows another actor to resume and cancel before the DB re
     while (!released) await new Promise((resolve) => setTimeout(resolve, 5));
     return structuredClone(definition);
   });
-  const pending = queue.enter('b', 'B', definition.competition);
+  const pending = queue.enter('b', 'B', false, rankedScope);
   try {
     await vi.waitFor(() => expect(started).toBe(true));
-    expect(await queue.enter('a', '', definition.competition, true)).toEqual(first);
-    expect((await queue.cancel('a', first.room)).ok).toBe(true);
+    expect(await queue.enter('a', '', true, rankedScope)).toEqual(first);
+    expect((await queue.cancel('a', first.room, false, rankedScope.id)).ok).toBe(true);
     expect(
-      (await runtime.GAME_ROOM.getByName(`1c:${first.room}`).lobbyStatus())?.actors,
+      (await runtime.GAME_ROOM.getByName(`match:${first.room}`).lobbyStatus())?.actors,
     ).toEqual([]);
     await runDurableObjectAlarm(queue);
   } finally {
     released = true;
   }
   expect((await pending).ok).toBe(true);
-  expect((await queue.enter('a', '', definition.competition, true)).ok).toBe(false);
+  expect((await queue.enter('a', '', true, rankedScope)).ok).toBe(false);
 });
 
 it('DB admission rechecks a membership created by a later request for the same actor', async () => {
@@ -1158,32 +1170,32 @@ it('DB admission rechecks a membership created by a later request for the same a
     while (!released) await new Promise((resolve) => setTimeout(resolve, 5));
     return structuredClone(definition);
   });
-  const pending = queue.enter('a', 'Slow', definition.competition);
+  const pending = queue.enter('a', 'Slow', false, rankedScope);
   let completed: Awaited<typeof pending>;
   try {
     await vi.waitFor(() => expect(started).toBe(true));
-    completed = await queue.enter('a', 'Fast', definition.competition);
+    completed = await queue.enter('a', 'Fast', false, rankedScope);
     expect(completed.ok).toBe(true);
   } finally {
     released = true;
   }
   expect(await pending).toEqual({ ok: false, code: 'ALREADY_JOINED' });
   if (!completed.ok) throw new Error(completed.code);
-  expect(await queue.enter('a', '', definition.competition, true)).toEqual(completed);
+  expect(await queue.enter('a', '', true, rankedScope)).toEqual(completed);
   expect(
-    (await runtime.GAME_ROOM.getByName(`1c:${completed.room}`).lobbyStatus())?.actors,
+    (await runtime.GAME_ROOM.getByName(`match:${completed.room}`).lobbyStatus())?.actors,
   ).toEqual(['a']);
 });
 
 it('failed DB admissions retain rate accounting without blocking later resume', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const first = await queue.enter('a', 'A', definition.competition);
+  const first = await queue.enter('a', 'A', false, rankedScope);
   mocks.load.mockRejectedValueOnce(new Error('database offline'));
-  expect(await queue.enter('b', 'B', definition.competition)).toEqual({
+  expect(await queue.enter('b', 'B', false, rankedScope)).toEqual({
     ok: false,
     code: 'GAME_DATABASE_UNAVAILABLE',
   });
-  expect(await queue.enter('a', '', definition.competition, true)).toEqual(first);
+  expect(await queue.enter('a', '', true, rankedScope)).toEqual(first);
   await runInDurableObject(queue, async (_instance, ctx) => {
     const saved = await ctx.storage.get<{ rates: Record<string, { count: number }> }>(
       'queue',
@@ -1200,9 +1212,9 @@ it('DB admission failure returns HTTP 503 without issuing a room cookie', async 
     {
       method: 'POST',
       headers: { Origin: owner, Authorization: 'Bearer valid' },
-      body: JSON.stringify({ name: 'A' }),
+      body: '{}',
     },
-    { ...runtime, GAME_OWNER: `https://${crypto.randomUUID()}.invalid` },
+    runtime,
   );
   expect(response.status).toBe(503);
   expect(await response.json()).toEqual({ code: 'GAME_DATABASE_UNAVAILABLE' });
@@ -1218,17 +1230,17 @@ it('a stale DB response cannot recreate membership after a newer admission is ca
     while (!released) await new Promise((resolve) => setTimeout(resolve, 5));
     return structuredClone(definition);
   });
-  const pending = queue.enter('a', 'Slow', definition.competition);
+  const pending = queue.enter('a', 'Slow', false, rankedScope);
   try {
     await vi.waitFor(() => expect(started).toBe(true));
-    const fast = await queue.enter('a', 'Fast', definition.competition);
+    const fast = await queue.enter('a', 'Fast', false, rankedScope);
     if (!fast.ok) throw new Error(fast.code);
-    expect((await queue.cancel('a', fast.room)).ok).toBe(true);
+    expect((await queue.cancel('a', fast.room, false, rankedScope.id)).ok).toBe(true);
   } finally {
     released = true;
   }
   expect(await pending).toEqual({ ok: false, code: 'STALE_REQUEST' });
-  expect(await queue.enter('a', '', definition.competition, true)).toEqual({
+  expect(await queue.enter('a', '', true, rankedScope)).toEqual({
     ok: false,
     code: 'NO_ACTIVE_MATCH',
   });
@@ -1239,29 +1251,15 @@ it('組織内A/Bの同時参加は一つ、他のactorの待機列はインス�
   const firstCompetition = { id: crypto.randomUUID(), owner };
   const secondCompetition = { id: crypto.randomUUID(), owner };
   const results = await Promise.all([
-    queue.enter('same', 'S', definition.competition, false, firstCompetition),
-    queue.enter('same', 'S', definition.competition, false, secondCompetition),
+    queue.enter('same', 'S', false, firstCompetition),
+    queue.enter('same', 'S', false, secondCompetition),
   ]);
   expect(results.filter((result) => result.ok)).toHaveLength(1);
-  const first = await queue.enter(
-    'first',
-    'A',
-    definition.competition,
-    false,
-    firstCompetition,
-  );
-  const second = await queue.enter(
-    'second',
-    'B',
-    definition.competition,
-    false,
-    secondCompetition,
-  );
+  const first = await queue.enter('first', 'A', false, firstCompetition);
+  const second = await queue.enter('second', 'B', false, secondCompetition);
   if (!first.ok || !second.ok) throw new Error('join');
   expect(first.room).not.toBe(second.room);
-  expect(
-    await queue.enter('first', '', undefined, true, secondCompetition),
-  ).toMatchObject({
+  expect(await queue.enter('first', '', true, secondCompetition)).toMatchObject({
     ok: false,
     code: 'OTHER_INSTANCE_ACTIVE',
     instanceId: firstCompetition.id,
@@ -1272,9 +1270,7 @@ it('組織内A/Bの同時参加は一つ、他のactorの待機列はインス�
     ok: false,
   });
   await evictDurableObject(queue);
-  expect(await queue.enter('first', '', undefined, true, firstCompetition)).toEqual(
-    first,
-  );
+  expect(await queue.enter('first', '', true, firstCompetition)).toEqual(first);
 });
 
 it('取消済みの世代は、部屋が未作成でも遅延した予約を再成立させない', async () => {
@@ -1332,15 +1328,9 @@ it('終端後に未保存結果を残したまま組織参加枠を解放する'
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const firstCompetition = { id: crypto.randomUUID(), owner };
   const secondCompetition = { id: crypto.randomUUID(), owner };
-  const first = await queue.enter(
-    'a',
-    'A',
-    definition.competition,
-    false,
-    firstCompetition,
-  );
+  const first = await queue.enter('a', 'A', false, firstCompetition);
   if (!first.ok) throw new Error(first.code);
-  const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${first.room}`);
   await runInDurableObject(room, async (_instance, ctx) => {
     const saved = await ctx.storage.get<{ state: State; resultRetryAt?: number }>('room');
     if (!saved) throw new Error('room');
@@ -1349,27 +1339,25 @@ it('終端後に未保存結果を残したまま組織参加枠を解放する'
     saved.resultRetryAt = Date.now() + 60000;
     await ctx.storage.put('room', saved);
   });
-  expect(
-    (await queue.enter('a', 'A', definition.competition, false, secondCompetition)).ok,
-  ).toBe(true);
+  expect((await queue.enter('a', 'A', false, secondCompetition)).ok).toBe(true);
   expect((await state(room))?.phase).toBe('FINISHED');
 });
 
 it('候補0の検出で待機を解除し、候補復旧後は本人の再参加だけを受け付ける', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const scope = { id: crypto.randomUUID(), owner };
-  const first = await queue.enter('a', 'A', definition.competition, false, scope);
+  const first = await queue.enter('a', 'A', false, scope);
   if (!first.ok) throw new Error(first.code);
   mocks.load.mockRejectedValueOnce(new Error('NO_RANKED_QUESTIONS'));
   await runDurableObjectAlarm(queue);
   expect(
-    (await runtime.GAME_ROOM.getByName(`1c:${first.room}`).lobbyStatus())?.closed,
+    (await runtime.GAME_ROOM.getByName(`match:${first.room}`).lobbyStatus())?.closed,
   ).toBe(true);
-  expect(await queue.enter('a', '', undefined, true, scope)).toEqual({
+  expect(await queue.enter('a', '', true, scope)).toEqual({
     ok: false,
     code: 'NO_ACTIVE_MATCH',
   });
-  const next = await queue.enter('a', 'A', definition.competition, false, scope);
+  const next = await queue.enter('a', 'A', false, scope);
   expect(next.ok).toBe(true);
   if (next.ok) expect(next.room).not.toBe(first.room);
 });
@@ -1394,13 +1382,7 @@ it('部屋照合が失敗しても別インスタンスへの参加枠を解放�
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const firstCompetition = { id: crypto.randomUUID(), owner };
   const secondCompetition = { id: crypto.randomUUID(), owner };
-  const first = await queue.enter(
-    'a',
-    'A',
-    definition.competition,
-    false,
-    firstCompetition,
-  );
+  const first = await queue.enter('a', 'A', false, firstCompetition);
   if (!first.ok) throw new Error(first.code);
   let restore = () => {};
   await runInDurableObject(queue, async (instance) => {
@@ -1417,16 +1399,14 @@ it('部屋照合が失敗しても別インスタンスへの参加枠を解放�
     restore = () => spy.mockRestore();
   });
   try {
-    expect(
-      await queue.enter('a', 'A', definition.competition, false, secondCompetition),
-    ).toMatchObject({
+    expect(await queue.enter('a', 'A', false, secondCompetition)).toMatchObject({
       ok: false,
       code: 'OTHER_INSTANCE_ACTIVE',
     });
   } finally {
     restore();
   }
-  expect(await queue.enter('a', '', undefined, true, firstCompetition)).toEqual(first);
+  expect(await queue.enter('a', '', true, firstCompetition)).toEqual(first);
 });
 
 it('レビューR01: logout応答消失中の復帰でも進行中の組織参加枠を保持する', async () => {
@@ -1434,10 +1414,10 @@ it('レビューR01: logout応答消失中の復帰でも進行中の組織参�
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   const scope = { id: crypto.randomUUID(), owner };
   const other = { id: crypto.randomUUID(), owner };
-  const first = await queue.enter('a', 'A', definition.competition, false, scope);
-  const second = await queue.enter('b', 'B', definition.competition, false, scope);
+  const first = await queue.enter('a', 'A', false, scope);
+  const second = await queue.enter('b', 'B', false, scope);
   if (!first.ok || !second.ok) throw new Error('setup');
-  const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${first.room}`);
   const connections: WebSocket[] = [];
   for (const entry of [first, second]) {
     const response = await room.fetch('https://game.test', {
@@ -1482,12 +1462,13 @@ it('レビューR01: logout応答消失中の復帰でも進行中の組織参�
   const logout = queue.cancel('a', first.room, true, scope.id);
   try {
     await vi.waitFor(() => expect(reached).toBe(true));
-    const resumed = await queue.enter('a', '', definition.competition, true, scope);
+    const resumed = await queue.enter('a', '', true, scope);
     expect(resumed.ok).toBe(true);
     if (resumed.ok) expect(resumed.token).not.toBe(first.token);
-    expect(
-      await queue.enter('a', 'A', definition.competition, false, other),
-    ).toMatchObject({ ok: false, code: 'OTHER_INSTANCE_ACTIVE' });
+    expect(await queue.enter('a', 'A', false, other)).toMatchObject({
+      ok: false,
+      code: 'OTHER_INSTANCE_ACTIVE',
+    });
     expect((await state(room))?.phase).toBe('REVEALING');
     expect((await state(room))?.players.map((player) => player.id)).toContain('a');
   } finally {
@@ -1502,9 +1483,9 @@ it.each(['room', 'organization'])(
   'レビューR02/R04: 終端回収後の%sログアウトも旧tokenを失効させる',
   async (kind) => {
     const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-    const first = await queue.enter('a', 'A', definition.competition);
+    const first = await queue.enter('a', 'A', false, rankedScope);
     if (!first.ok) throw new Error(first.code);
-    const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+    const room = runtime.GAME_ROOM.getByName(`match:${first.room}`);
     await runInDurableObject(room, async (_instance, ctx) => {
       const saved = await ctx.storage.get<{ state: State; resultRetryAt?: number }>(
         'room',
@@ -1515,20 +1496,24 @@ it.each(['room', 'organization'])(
       saved.resultRetryAt = Date.now() + 60000;
       await ctx.storage.put('room', saved);
     });
-    expect(await queue.enter('a', '', definition.competition, true)).toMatchObject({
+    expect(await queue.enter('a', '', true, rankedScope)).toMatchObject({
       ok: false,
       code: 'NO_ACTIVE_MATCH',
     });
     await evictDurableObject(queue);
     expect(
       kind === 'room'
-        ? await queue.cancel('a', first.room, true)
+        ? await queue.cancel('a', first.room, true, rankedScope.id)
         : await queue.logoutActor('a'),
     ).toEqual({ ok: true });
     expect(
       (
         await room.fetch('https://game.test', {
-          headers: { Upgrade: 'websocket', 'X-Game-Session': first.token },
+          headers: {
+            Upgrade: 'websocket',
+            'X-Game-Session': first.token,
+            'X-Game-Instance': rankedScope.id,
+          },
         })
       ).status,
     ).toBe(401);
@@ -1550,12 +1535,13 @@ it('レビューR03: 通常要求で回収期限を延ばさず、終了済み64
           token: `token-${i}`,
           generation: `generation-${i}`,
           name: 'Old',
+          guest: false,
           created: 0,
           scope,
         },
       ]),
     );
-    await ctx.storage.put('queue', { actors, rates: {} });
+    await ctx.storage.put('queue', { ...emptyQueue(), actors });
     await ctx.storage.setAlarm(before);
     const oldRooms = new Set<string>(Object.values(actors).map((entry) => entry.room));
     const target = instance as unknown as {
@@ -1578,9 +1564,7 @@ it('レビューR03: 通常要求で回収期限を延ばさず、終了済み64
     restore = () => spy.mockRestore();
   });
   try {
-    expect(
-      (await queue.enter('new', 'New', definition.competition, false, scope)).ok,
-    ).toBe(true);
+    expect((await queue.enter('new', 'New', false, scope)).ok).toBe(true);
     expect(
       await runInDurableObject(queue, async (_instance, ctx) => ctx.storage.getAlarm()),
     ).toBe(before);
@@ -1591,7 +1575,7 @@ it('レビューR03: 通常要求で回収期限を延ばさず、終了済み64
 
 it('レビューR10: 故障した部屋を保持して、正常な別室への参加は受け付ける', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const first = await queue.enter('a', 'A', definition.competition);
+  const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
   let restore = () => {};
   await runInDurableObject(queue, async (instance) => {
@@ -1611,10 +1595,10 @@ it('レビューR10: 故障した部屋を保持して、正常な別室への�
     restore = () => spy.mockRestore();
   });
   try {
-    const joined = await queue.enter('b', 'B', definition.competition);
+    const joined = await queue.enter('b', 'B', false, rankedScope);
     expect(joined.ok).toBe(true);
     if (joined.ok) expect(joined.room).not.toBe(first.room);
-    expect(await queue.enter('a', 'A', definition.competition)).toMatchObject({
+    expect(await queue.enter('a', 'A', false, rankedScope)).toMatchObject({
       ok: false,
       code: 'ALREADY_JOINED',
     });
@@ -1653,13 +1637,13 @@ it('DEV01: an older logout cannot release the admission lock of a pending newer 
       releases[0]();
       await first;
       await vi.waitFor(() => expect(releases).toHaveLength(2));
-      expect(await instance.enter('a', 'A', definition.competition)).toMatchObject({
+      expect(await instance.enter('a', 'A', false, rankedScope)).toMatchObject({
         ok: false,
         code: 'LOGOUT_PENDING',
       });
       releases[1]();
       await second;
-      expect((await instance.enter('a', 'A', definition.competition)).ok).toBe(true);
+      expect((await instance.enter('a', 'A', false, rankedScope)).ok).toBe(true);
     } finally {
       for (const release of releases) release();
       await Promise.allSettled([first, second]);
@@ -1670,7 +1654,7 @@ it('DEV01: an older logout cannot release the admission lock of a pending newer 
 
 it('DEV01: failed logout remains blocked across eviction and a retry revokes the old token', async () => {
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const first = await queue.enter('a', 'A', definition.competition);
+  const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
   await runInDurableObject(queue, async (instance) => {
     const target = instance as unknown as {
@@ -1691,20 +1675,24 @@ it('DEV01: failed logout remains blocked across eviction and a retry revokes the
     }
   });
   await evictDurableObject(queue);
-  expect(await queue.enter('a', 'A', definition.competition)).toMatchObject({
+  expect(await queue.enter('a', 'A', false, rankedScope)).toMatchObject({
     ok: false,
     code: 'LOGOUT_PENDING',
   });
   expect(await queue.logoutActor('a')).toEqual({ ok: true });
-  const room = runtime.GAME_ROOM.getByName(`1c:${first.room}`);
+  const room = runtime.GAME_ROOM.getByName(`match:${first.room}`);
   expect(
     (
       await room.fetch('https://game.test', {
-        headers: { Upgrade: 'websocket', 'X-Game-Session': first.token },
+        headers: {
+          Upgrade: 'websocket',
+          'X-Game-Session': first.token,
+          'X-Game-Instance': rankedScope.id,
+        },
       })
     ).status,
   ).toBe(401);
-  expect((await queue.enter('a', 'A', definition.competition)).ok).toBe(true);
+  expect((await queue.enter('a', 'A', false, rankedScope)).ok).toBe(true);
 });
 
 it('DEV02: maximum-size question definition persists without embedding it in the queue', async () => {
@@ -1724,7 +1712,7 @@ it('DEV02: maximum-size question definition persists without embedding it in the
   const bytes = new TextEncoder().encode(JSON.stringify(definition)).length;
   const started = Date.now();
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const result = await queue.enter('a', 'A', definition.competition);
+  const result = await queue.enter('a', 'A', false, rankedScope);
   expect(result.ok).toBe(true);
   const queueBytes = await runInDurableObject(
     queue,
@@ -1733,7 +1721,7 @@ it('DEV02: maximum-size question definition persists without embedding it in the
   );
   expect(queueBytes).toBeLessThan(4096);
   await evictDurableObject(queue);
-  expect(await queue.enter('a', '', definition.competition, true)).toEqual(result);
+  expect(await queue.enter('a', '', true, rankedScope)).toEqual(result);
   console.log(
     JSON.stringify({
       check: 'DEV02 max definition',
@@ -1749,7 +1737,7 @@ it('DEV02: rate-account capacity rejects overflow and recovers after expiry', as
   const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
   await runInDurableObject(queue, async (_instance, ctx) => {
     await ctx.storage.put('queue', {
-      actors: {},
+      ...emptyQueue(),
       rates: Object.fromEntries(
         Array.from({ length: 1024 }, (_, i) => [
           `actor-${i}`,
@@ -1758,7 +1746,7 @@ it('DEV02: rate-account capacity rejects overflow and recovers after expiry', as
       ),
     });
   });
-  expect(await queue.enter('overflow', 'New', definition.competition)).toEqual({
+  expect(await queue.enter('overflow', 'New', false, rankedScope)).toEqual({
     ok: false,
     code: 'RATE_LIMIT',
   });
@@ -1777,5 +1765,5 @@ it('DEV02: rate-account capacity rejects overflow and recovers after expiry', as
     );
     await ctx.storage.put('queue', saved);
   });
-  expect((await queue.enter('overflow', 'New', definition.competition)).ok).toBe(true);
+  expect((await queue.enter('overflow', 'New', false, rankedScope)).ok).toBe(true);
 });

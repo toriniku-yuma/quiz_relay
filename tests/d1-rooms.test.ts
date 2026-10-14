@@ -2,7 +2,7 @@ import { applyD1Migrations, env } from 'cloudflare:test';
 import { and, eq } from 'drizzle-orm';
 import { beforeAll, expect, it } from 'vitest';
 import { emptyQuestion } from '../src/shared/questions';
-import { loadMatchDefinition } from '../src/worker/catalog/database';
+import { loadFixedVersion, loadMatchDefinition } from '../src/worker/catalog/database';
 import { validateDefinition } from '../src/worker/catalog/definition';
 import { changeD1, connectD1, rowsD1 } from '../src/worker/db/d1';
 import {
@@ -10,6 +10,7 @@ import {
   organizationAccounts,
   personalQuestionSets,
   questionAvailability,
+  questionSets,
   questionSettings,
   questionSubmissions,
   questionVersions,
@@ -266,8 +267,8 @@ it('出題用1001問を分割して保存し、人数設定の新しい版だけ
     );
   });
   await ensureCasualCatalog(environment, instance.id);
-  const activeEnvironment = { ...environment, GAME_OWNER: instance.owner };
-  const before = await loadMatchDefinition(activeEnvironment);
+  const ranked = { owner: instance.owner, profile: 'local' };
+  const before = await loadMatchDefinition(environment, ranked);
   expect(before.questions).toHaveLength(1001);
   const config = { enabled: true, players: 2, casualGuests: true, roomGuests: true };
   const input = {
@@ -279,18 +280,18 @@ it('出題用1001問を分割して保存し、人数設定の新しい版だけ
   };
   await saveCasualSettings(environment, 'admin', input);
   await saveCasualSettings(environment, 'admin', input);
-  expect((await loadMatchDefinition(activeEnvironment)).playersPerMatch).toBe(3);
+  expect((await loadMatchDefinition(environment, ranked)).playersPerMatch).toBe(3);
   expect(
     (
-      await loadMatchDefinition({
-        ...activeEnvironment,
-        GAME_CONFIG_PROFILE: 'local-casual',
+      await loadMatchDefinition(environment, {
+        owner: instance.owner,
+        profile: 'local-casual',
       })
     ).playersPerMatch,
   ).toBe(2);
-  const historical = await loadMatchDefinition(activeEnvironment, before.competition);
-  expect(historical.playersPerMatch).toBe(4);
-  expect(historical.manifestHash).toBe(before.manifestHash);
+  expect((await loadFixedVersion(environment, before.competition)).playersPerMatch).toBe(
+    4,
+  );
   await expect(
     saveCasualSettings(environment, 'other', {
       ...input,
@@ -351,15 +352,22 @@ it('プロフィールと新しい作問者表示を原子保存し、転載の�
   await changeD1(db, async (writes) => {
     await publishQuestionCatalog(db, writes, instance.id, instance.owner, 'local');
   });
-  const activeEnvironment = { ...environment, GAME_OWNER: instance.owner };
-  const old = await loadMatchDefinition(activeEnvironment);
+  const ranked = { owner: instance.owner, profile: 'local' };
+  const old = await loadMatchDefinition(environment, ranked);
   await saveProfile(db, subject, { displayName: '作問者B', revision: 1 }, 'local');
-  const next = await loadMatchDefinition(activeEnvironment);
+  const next = await loadMatchDefinition(environment, ranked);
   expect(next.selection?.authorNames?.[question.id]).toBe('作問者B');
-  expect(
-    (await loadMatchDefinition(activeEnvironment, old.competition)).selection
-      ?.authorNames?.[question.id],
-  ).toBe('作問者A');
+  const [oldSet] = await db
+    .select({ selection: questionSets.selection })
+    .from(questionSets)
+    .where(
+      and(
+        eq(questionSets.owner, old.questionSet.owner),
+        eq(questionSets.setId, old.questionSet.id),
+        eq(questionSets.version, old.questionSet.version),
+      ),
+    );
+  expect(oldSet.selection?.authorNames?.[question.id]).toBe('作問者A');
   await expect(
     saveProfile(db, 'other', { displayName: '作問者B', revision: 0 }, 'local'),
   ).rejects.toThrow('DISPLAY_NAME_TAKEN');
@@ -383,7 +391,9 @@ it('プロフィールと新しい作問者表示を原子保存し、転載の�
   });
   await saveProfile(db, subject, { displayName: '作問者C', revision: 2 }, 'local');
   expect(
-    (await loadMatchDefinition(activeEnvironment)).selection?.authorNames?.[question.id],
+    (await loadMatchDefinition(environment, ranked)).selection?.authorNames?.[
+      question.id
+    ],
   ).toBe('原著者');
 });
 

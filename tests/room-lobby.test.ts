@@ -211,7 +211,7 @@ it('8回答者＋専任。準備完了・部屋主開始、未出題内容はロ
     await start(room.stub);
     const fixed = await read(room.stub);
     if (!fixed?.match) throw new Error('match');
-    const game = runtime.GAME_ROOM.getByName(`1c:${fixed.match.id}`);
+    const game = runtime.GAME_ROOM.getByName(`match:${fixed.match.id}`);
     for (let i = 1; i <= 8; i++)
       games.push(await socket(game, fixed.match.tokens[actor(i).id], false));
     expect((await childState(game))?.phase).toBe('REVEALING');
@@ -295,7 +295,7 @@ it('未知の開始応答を再送しても子は1試合。再接続・次試合
     expect(await room.stub.mutateUserRoom(actor(0), request)).toEqual(first);
     const parent = await read(room.stub);
     if (!parent?.match) throw new Error('match');
-    const child = runtime.GAME_ROOM.getByName(`1c:${parent.match.id}`);
+    const child = runtime.GAME_ROOM.getByName(`match:${parent.match.id}`);
     await runInDurableObject(child, async (_instance, ctx) => {
       const saved = await ctx.storage.get<{ state: State }>('room');
       if (!saved) throw new Error('room');
@@ -336,7 +336,7 @@ it('未知の開始応答を再送しても子は1試合。再接続・次試合
       await room.stub.cancelReservation(actor(0).id, true, 'generation-0', 'token-0'),
     ).toBe(true);
     for (const trial of [parent.match, next.match]) {
-      const response = await runtime.GAME_ROOM.getByName(`1c:${trial.id}`).fetch(
+      const response = await runtime.GAME_ROOM.getByName(`match:${trial.id}`).fetch(
         'https://room.test',
         {
           headers: {
@@ -359,7 +359,7 @@ it('開始の応答不明をalarmで回復し、失効を先に受けた子sessi
     const id = crypto.randomUUID(),
       operationId = crypto.randomUUID();
     const tokens = { [actor(0).id]: 'fixed-0', [actor(1).id]: 'fixed-1' };
-    const child = runtime.GAME_ROOM.getByName(`1c:${id}`);
+    const child = runtime.GAME_ROOM.getByName(`match:${id}`);
     await child.cancelReservation(actor(0).id, true, undefined, tokens[actor(0).id]);
     await runInDurableObject(room.stub, async (_instance, ctx) => {
       const stored = await ctx.storage.get<UserRoom>('user-room');
@@ -416,7 +416,7 @@ it('開始後に子へ接続できなくても予約失効後に同じロビー�
     await start(room.stub);
     const parent = await read(room.stub);
     if (!parent?.match) throw new Error('match');
-    const child = runtime.GAME_ROOM.getByName(`1c:${parent.match.id}`);
+    const child = runtime.GAME_ROOM.getByName(`match:${parent.match.id}`);
     await runInDurableObject(child, async (_instance, ctx) => {
       const saved = await ctx.storage.get<{
         lobby: { reservations: Record<string, number> };
@@ -573,7 +573,7 @@ it('500問の持込を保存・開始・DO復帰しても内容を維持する',
     expect((await read(room.stub))?.original).toEqual(questions);
     const saved = await read(room.stub);
     if (!saved?.match) throw new Error('match');
-    const child = runtime.GAME_ROOM.getByName(`1c:${saved.match.id}`);
+    const child = runtime.GAME_ROOM.getByName(`match:${saved.match.id}`);
     await evictDurableObject(child);
     expect((await childState(child))?.questions).toHaveLength(500);
     await runInDurableObject(child, async (_instance, ctx) => {
@@ -601,15 +601,10 @@ it('500問の持込を保存・開始・DO復帰しても内容を維持する',
       stored.state.completed = makeResultRecord(stored.state, stored.state.result);
       await ctx.storage.transaction((tx) => writeStored(tx, 'room', stored));
     });
-    const previousChunks = await runInDurableObject(child, async (_instance, ctx) => [
-      ...(await ctx.storage.list({ prefix: 'value:room:' })).keys(),
-    ]);
-    expect(previousChunks.length).toBeGreaterThan(0);
     await child.registerInventory({ id: scope.id, owner: scope.owner });
     await runInDurableObject(child, async (_instance, ctx) => {
       const restored = await readStored<{ scope: typeof scope }>(ctx.storage, 'room');
       expect(restored?.scope.mode).toBe('room');
-      expect((await ctx.storage.get(previousChunks)).size).toBe(0);
     });
     const before = (await childState(child))?.completed;
     await evictDurableObject(child);

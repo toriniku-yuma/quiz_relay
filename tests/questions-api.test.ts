@@ -23,11 +23,7 @@ vi.mock('../src/worker/questions/database', async (original) => ({
 vi.mock('../src/worker/questions/reports', () => ({
   verifiedReportedQuestion: mocks.verified,
 }));
-const runtime = {
-  ...env,
-  GAME_OWNER: 'https://game.test',
-  GAME_CONFIG_PROFILE: 'local',
-} as unknown as Env;
+const runtime = { ...env, GAME_CONFIG_PROFILE: 'local' } as unknown as Env;
 const instance = crypto.randomUUID();
 const request = (body: object | string, headers: Record<string, string> = {}) =>
   app.request(

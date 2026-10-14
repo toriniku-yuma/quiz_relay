@@ -3,15 +3,13 @@ import type { Handler } from 'hono';
 import type { AuthEnv } from '../auth/handlers.ts';
 import { instances, matchResults } from '../db/schema.ts';
 import { readInvestigation } from '../results/investigation.ts';
-import { OrganizationError, organizationEnabled, validId } from './access.ts';
+import { OrganizationError, validId } from './access.ts';
 import { bulkSanctions } from './bulk.ts';
 import { organizationDatabase } from './database.ts';
 import { moderationOverview, mutateSanction, personalModeration } from './moderation.ts';
 import { moderationWorkflow } from './workflow.ts';
 
 export const manageUsers: Handler<AuthEnv> = async (context) => {
-  if (!organizationEnabled(context.env))
-    throw new OrganizationError('ORGANIZATION_UNAVAILABLE', 503);
   const input: unknown = await context.req.json().catch(() => null);
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new OrganizationError('INVALID_SANCTION', 400);

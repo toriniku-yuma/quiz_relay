@@ -103,5 +103,4 @@ export const resultReasons: Record<string, string> = {
   target_reached: '指定正解数に到達',
   connections: '復帰期限切れ',
   disqualifications: '未失格者が1人以下',
-  seven_correct: '7問先取',
 };

@@ -1,1 +1,0 @@
-ALTER TABLE `quiz_federation_peers` ADD `participation_blocked` integer DEFAULT false NOT NULL;

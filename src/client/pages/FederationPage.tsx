@@ -16,7 +16,7 @@ export default function FederationPage() {
   return (
     <main className="mx-auto max-w-5xl p-4 md:p-8">
       <h1 tabIndex={-1} className="mb-4 text-3xl font-bold outline-none">
-        {instanceId ? '問題・結果の共有設定' : '外部組織との連携'}
+        {instanceId ? '問題共有・結果配送' : '外部組織との連携'}
       </h1>
       {instance && <p>{instance.name}</p>}
       {!allowed ? (

@@ -42,7 +42,7 @@ export function beginForeignRoomEntry(
   beginForeignAuthorization(
     {
       peerOrigin: account.homeOrigin,
-      sourceInstanceId: account.organizationId,
+      sourceOrganizationId: account.organizationId,
       hostInstanceId: instanceId,
       mode: 'room',
     },
@@ -66,7 +66,7 @@ export function readForeignRoomEntry(session: ForeignSession) {
       value.createdAt > Date.now() ||
       value.createdAt < Date.now() - 600000 ||
       value.homeOrigin !== session.homeOrigin ||
-      value.sourceOrganizationId !== session.sourceInstanceId ||
+      value.sourceOrganizationId !== session.sourceOrganizationId ||
       value.sourceActorId !== session.sourceActorId ||
       value.instanceId !== session.instanceId ||
       value.operationId !== session.operationId

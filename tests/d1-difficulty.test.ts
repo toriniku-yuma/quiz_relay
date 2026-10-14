@@ -19,12 +19,11 @@ import type { Env } from '../src/worker/env';
 import { addInstance, setupOrganization } from '../src/worker/organization/database';
 import { saveProfile } from '../src/worker/organization/profile';
 import { updateDifficultyInstance } from '../src/worker/questions/daily';
+import { wilson } from '../src/worker/questions/difficulty';
 import {
   appendResultTrials,
-  backfillDifficulty,
   readDifficultyStatistics,
 } from '../src/worker/questions/difficulty-statistics';
-import { questionStatistics } from '../src/worker/questions/statistics';
 import { questionMutation } from '../src/worker/questions/write';
 import { commitD1Result } from '../src/worker/results/database';
 import type { ResultRecord } from '../src/worker/results/record';
@@ -77,11 +76,10 @@ async function target() {
     revision: 1,
   });
   const [instance] = await db.select().from(instances).where(eq(instances.id, id));
-  const definition = await loadMatchDefinition({
-    GAME_D1: runtime.GAME_D1,
-    GAME_OWNER: instance.owner,
-    GAME_CONFIG_PROFILE: 'local',
-  } as Env);
+  const definition = await loadMatchDefinition({ GAME_D1: runtime.GAME_D1 } as Env, {
+    owner: instance.owner,
+    profile: 'local',
+  });
   const [level] = await db
     .select()
     .from(questionDifficulty)
@@ -151,7 +149,7 @@ async function target() {
     submissionId: String(saved.id),
   };
 }
-async function saveRecords(records: ResultRecord[], incremental = true) {
+async function saveRecords(records: ResultRecord[]) {
   const rows = await Promise.all(
     records.map(async (record) => ({
       resultId: record.result.id,
@@ -164,10 +162,10 @@ async function saveRecords(records: ResultRecord[], incremental = true) {
   );
   await changeD1(db, async (writes) => {
     writes.push(rowsD1(matchResults, rows));
-    if (incremental) appendResultTrials(writes, records);
+    appendResultTrials(writes, records);
   });
 }
-it('完了試合の集計は読取り集計と一致し、同じ試合の再送を二重に数えない', async () => {
+it('完了試合を出題ごとに集計し、同じ試合の再送を二重に数えない', async () => {
   const t = await target(),
     [record] = t.records(1, true);
   await commitD1Result(runtime.GAME_D1, record);
@@ -175,9 +173,19 @@ it('完了試合の集計は読取り集計と一致し、同じ試合の再送�
   const groups = await readDifficultyStatistics(db, t.instance.owner, [
     t.level.generation,
   ]);
-  expect(groups.get(t.level.generation)).toEqual(
-    questionStatistics([record, record], t.level.generation),
-  );
+  const players = record.players.length;
+  expect(groups.get(t.level.generation)).toEqual([
+    {
+      band: 0,
+      players,
+      rulesHash: record.definition.rulesHash,
+      bandRevision: 1,
+      trials: 1,
+      correct: 1,
+      participants: players,
+      ...wilson({ trials: 1, correct: 1, participants: players }),
+    },
+  ]);
   expect(
     await db
       .select()
@@ -185,38 +193,9 @@ it('完了試合の集計は読取り集計と一致し、同じ試合の再送�
       .where(eq(difficultyTrials.owner, t.instance.owner)),
   ).toHaveLength(1);
 });
-it('旧履歴の初回集計は5試合ずつ再開し、既に集計された試合を加算しない', async () => {
-  const t = await target(),
-    records = t.records(11);
-  await saveRecords(records, false);
-  await changeD1(db, async (writes) => {
-    appendResultTrials(writes, [records[0]]);
-  });
-  expect(await backfillDifficulty(db, t.instance.owner)).toBe(false);
-  expect(
-    (
-      await db
-        .select()
-        .from(difficultySamples)
-        .where(eq(difficultySamples.owner, t.instance.owner))
-    )[0].trials,
-  ).toBe(5);
-  expect(await backfillDifficulty(db, t.instance.owner)).toBe(false);
-  expect(await backfillDifficulty(db, t.instance.owner)).toBe(true);
-  expect(await backfillDifficulty(db, t.instance.owner)).toBe(true);
-  expect(
-    (
-      await db
-        .select()
-        .from(difficultySamples)
-        .where(eq(difficultySamples.owner, t.instance.owner))
-    )[0].trials,
-  ).toBe(11);
-});
 it('50出題・20人以上の根拠で1段階だけ更新し、同日の再実行と新実績なしの翌日は維持する', async () => {
   const t = await target();
   await saveRecords(t.records(60));
-  while (!(await backfillDifficulty(db, t.instance.owner))) {}
   expect(await t.update()).toBe(1);
   expect(await t.current()).toMatchObject({
     current: 1,
@@ -241,7 +220,6 @@ it('50出題・20人以上の根拠で1段階だけ更新し、同日の再実�
 it('固定した難易度と設定版の異なる実績を自動判定に混ぜない', async () => {
   const t = await target();
   await saveRecords(t.records(60));
-  while (!(await backfillDifficulty(db, t.instance.owner))) {}
   await changeD1(db, async (writes) => {
     writes.push(
       db

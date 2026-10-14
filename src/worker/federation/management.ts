@@ -1,10 +1,9 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { exportSPKI, importSPKI } from 'jose';
 import {
-  disabledFederationPermissions,
   FEDERATION_FRESH_MS,
   type FederationOverview,
-  federationPermissions,
+  type QuestionSharingPolicy,
 } from '../../shared/federation.ts';
 import { changeD1, type Database, readD1, rowsD1 } from '../db/d1.ts';
 import {
@@ -183,7 +182,6 @@ export async function manageFederation(
       'kid',
       'publicKey',
       'approved',
-      'discovered',
       'participationBlocked',
       'receiveRanked',
       'receiveCasual',
@@ -204,9 +202,17 @@ export async function manageFederation(
       typeof input.approved !== 'boolean'
     )
       throw new OrganizationError('INVALID_PEER_KEY', 400);
-    for (const field of ['participationBlocked', 'receiveRanked', 'receiveCasual'])
-      if (input[field] !== undefined && typeof input[field] !== 'boolean')
-        throw new OrganizationError('INVALID_FEDERATION_REQUEST', 400);
+    if (
+      typeof input.participationBlocked !== 'boolean' ||
+      typeof input.receiveRanked !== 'boolean' ||
+      typeof input.receiveCasual !== 'boolean'
+    )
+      throw new OrganizationError('INVALID_FEDERATION_REQUEST', 400);
+    const admission = {
+      participationBlocked: input.participationBlocked,
+      receiveRanked: input.receiveRanked,
+      receiveCasual: input.receiveCasual,
+    };
     let publicKey: string;
     try {
       publicKey = await exportSPKI(await importSPKI(input.publicKey, 'EdDSA'));
@@ -243,20 +249,9 @@ export async function manageFederation(
               name,
               kid: String(input.kid),
               publicKey,
-              approved: Boolean(input.approved),
-              discovered: existing?.discovered ?? false,
-              participationBlocked:
-                (input.participationBlocked as boolean | undefined) ??
-                existing?.participationBlocked ??
-                false,
-              receiveRanked:
-                (input.receiveRanked as boolean | undefined) ??
-                existing?.receiveRanked ??
-                true,
-              receiveCasual:
-                (input.receiveCasual as boolean | undefined) ??
-                existing?.receiveCasual ??
-                true,
+              approved: input.approved as boolean,
+              discovered: existing ? existing.discovered : false,
+              ...admission,
               revision: expected + 1,
             },
           ],
@@ -331,7 +326,8 @@ export async function manageFederation(
           instanceId,
           peerOrigin: peer.origin,
           peerInstanceId,
-          permissions: disabledFederationPermissions(),
+          sendQuestions: false,
+          receiveQuestions: false,
         }),
       );
       return { ok: true, id };
@@ -345,14 +341,20 @@ export async function manageFederation(
       if (!value || typeof value !== 'object' || Array.isArray(value))
         throw new OrganizationError('INVALID_FEDERATION_REQUEST', 400);
       const row = value as Record<string, unknown>;
-      exact(row, ['id', 'revision', 'permissions']);
-      let permissions: ReturnType<typeof federationPermissions>;
-      try {
-        permissions = federationPermissions(row.permissions);
-      } catch {
+      if (
+        Object.keys(row).sort().join(',') !== 'id,receiveQuestions,revision,sendQuestions'
+      )
+        throw new OrganizationError('INVALID_FEDERATION_REQUEST', 400);
+      if (
+        typeof row.sendQuestions !== 'boolean' ||
+        typeof row.receiveQuestions !== 'boolean'
+      )
         throw new OrganizationError('INVALID_PERMISSIONS', 400);
-      }
-      return { id: validId(row.id), revision: revision(row.revision), permissions };
+      const sharing: QuestionSharingPolicy = {
+        sendQuestions: row.sendQuestions,
+        receiveQuestions: row.receiveQuestions,
+      };
+      return { id: validId(row.id), revision: revision(row.revision), sharing };
     });
     if (new Set(items.map((row) => row.id)).size !== items.length)
       throw new OrganizationError('INVALID_FEDERATION_REQUEST', 400);
@@ -376,16 +378,15 @@ export async function manageFederation(
           return { id: row.id, ok: false, code: 'FEDERATION_TARGET_UNAVAILABLE' };
         if (current.revision !== row.revision)
           return { id: row.id, ok: false, code: 'FEDERATION_CONFLICT' };
-        accepted.push({
-          ...current,
-          permissions: row.permissions,
-          revision: current.revision + 1,
-        });
+        accepted.push({ ...current, ...row.sharing, revision: current.revision + 1 });
         return {
           id: row.id,
           ok: true,
-          before: current.permissions,
-          after: row.permissions,
+          before: {
+            sendQuestions: current.sendQuestions,
+            receiveQuestions: current.receiveQuestions,
+          },
+          after: row.sharing,
           revision: current.revision + 1,
         };
       });

@@ -20,7 +20,7 @@ export type QuestionInput = {
   tags: string[];
   difficulty: number;
 };
-export type QuestionIssue = { path: string; message: string };
+type QuestionIssue = { path: string; message: string };
 export const normalizeTag = (value: string) =>
   value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase();
 

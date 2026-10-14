@@ -1,30 +1,30 @@
 import { useState } from 'react';
 import {
-  disabledFederationPermissions,
   FEDERATION_FRESH_MS,
-  type FederationPermissions,
+  type QuestionSharingPolicy,
 } from '../../../shared/federation';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import { federationRequest, type useFederation } from './useFederation';
 
-const labels = {
-  ranked: 'ランク参加',
-  casual: 'カジュアル・部屋参加',
-  questions: '問題共有',
-  results: '結果共有',
-};
-const federationCapabilities = ['questions', 'results'] as const;
+const directions = [
+  { field: 'sendQuestions', label: 'このインスタンスから問題を送出' },
+  { field: 'receiveQuestions', label: 'このインスタンスへ問題を受入' },
+] as const;
+const sharingText = (sharing: QuestionSharingPolicy | undefined) =>
+  [sharing?.sendQuestions ? '送出' : '', sharing?.receiveQuestions ? '受入' : '']
+    .filter(Boolean)
+    .join('・') || 'すべてオフ';
 type Preview = {
   results: {
     id: string;
     ok: boolean;
-    before?: FederationPermissions;
-    after?: FederationPermissions;
+    before?: QuestionSharingPolicy;
+    after?: QuestionSharingPolicy;
     code?: string;
   }[];
 };
-type PolicyChange = { id: string; revision: number; permissions: FederationPermissions };
+type PolicyChange = QuestionSharingPolicy & { id: string; revision: number };
 export default function FederationPolicies({
   instanceId,
   federation,
@@ -35,8 +35,11 @@ export default function FederationPolicies({
   const [origin, setOrigin] = useState('');
   const [peerInstanceId, setPeerInstanceId] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
-  const [permissions, setPermissions] = useState(disabledFederationPermissions);
-  const [fields, setFields] = useState<string[]>([]);
+  const [sharing, setSharing] = useState<QuestionSharingPolicy>({
+    sendQuestions: false,
+    receiveQuestions: false,
+  });
+  const [fields, setFields] = useState<(keyof QuestionSharingPolicy)[]>([]);
   const [preview, setPreview] = useState<(Preview & { items: PolicyChange[] }) | null>(
     null,
   );
@@ -44,16 +47,18 @@ export default function FederationPolicies({
   const [error, setError] = useState('');
   const policies =
     federation.data?.policies.filter((row) => row.instanceId === instanceId) ?? [];
-  const items = policies
+  const items: PolicyChange[] = policies
     .filter((row) => selected.includes(row.id))
-    .map((row) => {
-      const changed = structuredClone(row.permissions);
-      for (const direction of ['send', 'receive'] as const)
-        for (const capability of federationCapabilities)
-          if (fields.includes(`${direction}.${capability}`))
-            changed[direction][capability] = permissions[direction][capability];
-      return { id: row.id, revision: row.revision, permissions: changed };
-    });
+    .map((row) => ({
+      id: row.id,
+      revision: row.revision,
+      sendQuestions: fields.includes('sendQuestions')
+        ? sharing.sendQuestions
+        : row.sendQuestions,
+      receiveQuestions: fields.includes('receiveQuestions')
+        ? sharing.receiveQuestions
+        : row.receiveQuestions,
+    }));
   const metadata = federation.data?.metadata.find(
     (row) => row.instanceId === instanceId && row.peerOrigin === origin,
   );
@@ -66,9 +71,9 @@ export default function FederationPolicies({
       ? (metadata?.payload.instances ?? [])
       : [];
   return (
-    <Panel title="インスタンスごとの共有許可">
+    <Panel title="インスタンスごとの問題共有">
       <p className="my-3">
-        問題・結果の共有対象を選び、送出・受入を設定します。外部ユーザーの対戦参加は、組織の承認と参加制限で設定します。
+        問題共有の相手インスタンスを選び、送出・受入を設定します。外部ユーザーの対戦参加は、組織の承認と参加制限で設定します。
       </p>
       {job?.errorCode && (
         <p role="alert" className="my-3">
@@ -219,20 +224,7 @@ export default function FederationPolicies({
                   ?.name ?? '相手インスタンス'}
               </span>
             </label>
-            <p className="mt-2">
-              送出：
-              {federationCapabilities
-                .filter((key) => policy.permissions.send[key])
-                .map((key) => labels[key])
-                .join('・') || 'すべてオフ'}
-            </p>
-            <p>
-              受入：
-              {federationCapabilities
-                .filter((key) => policy.permissions.receive[key])
-                .map((key) => labels[key])
-                .join('・') || 'すべてオフ'}
-            </p>
+            <p className="mt-2">問題共有：{sharingText(policy)}</p>
           </li>
         ))}
       </ul>
@@ -241,51 +233,41 @@ export default function FederationPolicies({
         className="grid gap-3"
       >
         <legend className="mb-3 font-bold">選択した対象への変更</legend>
-        {(['send', 'receive'] as const).map((direction) => (
-          <div key={direction} className="grid gap-2">
-            <p className="font-bold">
-              {direction === 'send'
-                ? 'このインスタンスから送出'
-                : 'このインスタンスへ受入'}
-            </p>
-            {federationCapabilities.map((capability) => (
-              <div key={capability} className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={fields.includes(`${direction}.${capability}`)}
-                    onChange={(event) => {
-                      const field = `${direction}.${capability}`;
-                      setFields((current) =>
-                        event.target.checked
-                          ? [...current, field]
-                          : current.filter((value) => value !== field),
-                      );
-                      setPreview(null);
-                    }}
-                  />
-                  {labels[capability]}を変更
-                </label>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    disabled={!fields.includes(`${direction}.${capability}`)}
-                    checked={permissions[direction][capability]}
-                    onChange={(event) => {
-                      setPermissions((current) => ({
-                        ...current,
-                        [direction]: {
-                          ...current[direction],
-                          [capability]: event.target.checked,
-                        },
-                      }));
-                      setPreview(null);
-                    }}
-                  />
-                  許可する
-                </label>
-              </div>
-            ))}
+        {directions.map(({ field, label }) => (
+          <div key={field} className="grid gap-2">
+            <p className="font-bold">{label}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={fields.includes(field)}
+                  onChange={(event) => {
+                    setFields((current) =>
+                      event.target.checked
+                        ? [...current, field]
+                        : current.filter((value) => value !== field),
+                    );
+                    setPreview(null);
+                  }}
+                />
+                変更する
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  disabled={!fields.includes(field)}
+                  checked={sharing[field]}
+                  onChange={(event) => {
+                    setSharing((current) => ({
+                      ...current,
+                      [field]: event.target.checked,
+                    }));
+                    setPreview(null);
+                  }}
+                />
+                許可する
+              </label>
+            </div>
           </div>
         ))}
         <Button
@@ -318,21 +300,11 @@ export default function FederationPolicies({
                 {policies.find((policy) => policy.id === row.id)?.peerInstanceId}：
                 {row.ok ? '更新可能' : '更新できません。一覧を再取得してください。'}
               </p>
-              {row.ok &&
-                (['send', 'receive'] as const).map((direction) => (
-                  <p key={direction}>
-                    {direction === 'send' ? '送出' : '受入'}：
-                    {federationCapabilities
-                      .filter((key) => row.before?.[direction][key])
-                      .map((key) => labels[key])
-                      .join('・') || 'すべてオフ'}{' '}
-                    →{' '}
-                    {federationCapabilities
-                      .filter((key) => row.after?.[direction][key])
-                      .map((key) => labels[key])
-                      .join('・') || 'すべてオフ'}
-                  </p>
-                ))}
+              {row.ok && (
+                <p>
+                  問題共有：{sharingText(row.before)} → {sharingText(row.after)}
+                </p>
+              )}
             </div>
           ))}
           <Button

@@ -11,6 +11,7 @@ import { type MatchDefinition, validateDefinition } from '../catalog/definition.
 import { contentHash } from '../catalog/hash.ts';
 import type { Env } from '../env.ts';
 import { refreshParticipationAccess } from '../federation/participation.ts';
+import { matchRoomName } from '../game/room-names.ts';
 import { deleteStored, readStored, writeStored } from '../game/storage.ts';
 import { failureCode } from '../http/handlers.ts';
 import type { InstanceScope } from '../matchmaking/Matchmaker.ts';
@@ -121,7 +122,7 @@ export class RoomLobby {
     return result.value;
   }
   private child(id: string) {
-    return this.env.GAME_ROOM.getByName(`1c:${id}`);
+    return this.env.GAME_ROOM.getByName(matchRoomName(id));
   }
   async read() {
     return readStored<UserRoom>(this.ctx.storage, 'user-room');
@@ -184,12 +185,12 @@ export class RoomLobby {
     generation: string,
     password: string,
     invite: string,
-    scope?: InstanceScope,
+    scope: InstanceScope,
   ) {
     const initial = await this.read();
     if (!initial || initial.closed) return { ok: false as const, code: 'ROOM_CLOSED' };
     if (
-      scope?.id !== initial.scope.id ||
+      scope.id !== initial.scope.id ||
       scope.owner !== initial.scope.owner ||
       scope.mode !== 'room'
     )

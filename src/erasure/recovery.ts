@@ -71,6 +71,8 @@ export async function restorePrivacyJournal(db: Database, input: unknown) {
       job.organizationId !== journal.organizationId ||
       !job.deletedAt ||
       !Number.isFinite(Date.parse(job.deletedAt)) ||
+      !job.acceptedAt ||
+      !Number.isFinite(Date.parse(job.acceptedAt)) ||
       !Number.isFinite(Date.parse(job.requestedAt)) ||
       !job.owner ||
       !job.name ||
@@ -175,6 +177,7 @@ export async function restorePrivacyJournal(db: Database, input: unknown) {
           previous.name !== job.name ||
           previous.operatorId !== job.operatorId ||
           previous.requestedAt !== job.requestedAt ||
+          (previous.acceptedAt && previous.acceptedAt !== job.acceptedAt) ||
           (previous.deletedAt && previous.deletedAt !== job.deletedAt))
       )
         throw new Error('DELETION_RECEIPT_CONFLICT');
@@ -188,7 +191,7 @@ export async function restorePrivacyJournal(db: Database, input: unknown) {
         operatorId: job.operatorId,
         requestedAt: job.requestedAt,
         deletedAt: job.deletedAt,
-        acceptedAt: previous?.acceptedAt ?? job.acceptedAt ?? job.deletedAt,
+        acceptedAt: job.acceptedAt,
         checkCursor: null,
         roomCursor: null,
         inventoryPending: true,

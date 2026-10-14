@@ -186,7 +186,7 @@ export async function verifyDelivery(
   return delivery;
 }
 
-// 0B probe only: no production inbox or event authorization is exposed.
+// Verification probe only: no production inbox or event authorization is exposed.
 export async function signatureProbe() {
   const keys = await generateKeyPair('EdDSA', { extractable: true });
   const now = Math.floor(Date.now() / 1000);

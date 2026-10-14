@@ -19,14 +19,14 @@ import {
   origin,
   parseCanonical,
 } from './signatures.ts';
-import { federationDatabase } from './transport.ts';
+import { federationConfig, federationDatabase } from './transport.ts';
 
-export type ParticipationTicket = {
+type ParticipationTicket = {
   protocolVersion: 1;
   iss: string;
   sub: string;
   aud: string;
-  sourceInstanceId: string;
+  sourceOrganizationId: string;
   hostInstanceId: string;
   mode: 'ranked' | 'casual' | 'room';
   matchId: string;
@@ -45,7 +45,7 @@ function claims(value: unknown): ParticipationTicket {
   const ticket = value as ParticipationTicket;
   if (
     Object.keys(ticket).sort().join(',') !==
-      'aud,authorizationId,exp,hostInstanceId,iat,iss,jti,matchId,mode,protocolVersion,reservationId,sourceInstanceId,sub' ||
+      'aud,authorizationId,exp,hostInstanceId,iat,iss,jti,matchId,mode,protocolVersion,reservationId,sourceOrganizationId,sub' ||
     ticket.protocolVersion !== 1 ||
     !/^[a-f0-9]{64}$/.test(ticket.sub) ||
     !['ranked', 'casual', 'room'].includes(ticket.mode)
@@ -54,7 +54,7 @@ function claims(value: unknown): ParticipationTicket {
   origin(ticket.iss);
   origin(ticket.aud);
   for (const id of [
-    ticket.sourceInstanceId,
+    ticket.sourceOrganizationId,
     ticket.hostInstanceId,
     ticket.matchId,
     ticket.reservationId,
@@ -72,13 +72,13 @@ function claims(value: unknown): ParticipationTicket {
   return ticket;
 }
 export async function signParticipationTicket(env: Env, ticket: ParticipationTicket) {
-  federationDatabase(env);
+  const config = federationConfig(env);
   claims(ticket);
   return new CompactSign(encoder.encode(canonical(ticket)))
     .setProtectedHeader(
-      JSON.parse(canonical({ alg: 'EdDSA', kid: env.SIGNING_KID, typ: type })),
+      JSON.parse(canonical({ alg: 'EdDSA', kid: config.kid, typ: type })),
     )
-    .sign(await importPKCS8(env.SIGNING_PRIVATE_KEY ?? '', 'EdDSA'));
+    .sign(await importPKCS8(config.privateKey, 'EdDSA'));
 }
 type TicketIdentity = { iss: string; aud: string; iat: number; exp: number };
 async function verifyTicket<T extends TicketIdentity>(
@@ -119,7 +119,7 @@ async function verifyTicket<T extends TicketIdentity>(
     const ticket = parse(parseCanonical(decoder.decode(verified.payload))),
       now = Math.floor(Date.now() / 1000);
     if (
-      ticket.aud !== env.FEDERATION_ORIGIN ||
+      ticket.aud !== federationConfig(env).origin ||
       ticket.iat > now + CLOCK_SKEW ||
       now >= ticket.exp + CLOCK_SKEW
     )
@@ -139,7 +139,7 @@ function loginClaims(value: unknown): ForeignLoginTicket {
   const ticket = value as ForeignLoginTicket;
   if (
     Object.keys(ticket).sort().join(',') !==
-      'aud,exp,hostInstanceId,iat,iss,jti,mode,name,organizationName,protocolVersion,sourceInstanceId,state,sub' ||
+      'aud,exp,hostInstanceId,iat,iss,jti,mode,name,organizationName,protocolVersion,sourceOrganizationId,state,sub' ||
     ticket.protocolVersion !== 1 ||
     !/^[a-f0-9]{64}$/.test(ticket.sub) ||
     !['ranked', 'casual', 'room'].includes(ticket.mode) ||
@@ -151,7 +151,7 @@ function loginClaims(value: unknown): ForeignLoginTicket {
   origin(ticket.iss);
   origin(ticket.aud);
   for (const id of [
-    ticket.sourceInstanceId,
+    ticket.sourceOrganizationId,
     ticket.hostInstanceId,
     ticket.state,
     ticket.jti,
@@ -167,13 +167,13 @@ function loginClaims(value: unknown): ForeignLoginTicket {
   return ticket;
 }
 export async function signForeignLoginTicket(env: Env, ticket: ForeignLoginTicket) {
-  federationDatabase(env);
+  const config = federationConfig(env);
   loginClaims(ticket);
   return new CompactSign(encoder.encode(canonical(ticket)))
     .setProtectedHeader(
-      JSON.parse(canonical({ alg: 'EdDSA', kid: env.SIGNING_KID, typ: loginType })),
+      JSON.parse(canonical({ alg: 'EdDSA', kid: config.kid, typ: loginType })),
     )
-    .sign(await importPKCS8(env.SIGNING_PRIVATE_KEY ?? '', 'EdDSA'));
+    .sign(await importPKCS8(config.privateKey, 'EdDSA'));
 }
 export const verifyForeignLoginTicket = (env: Env, message: unknown) =>
   verifyTicket(env, message, loginType, loginClaims);

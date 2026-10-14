@@ -28,7 +28,6 @@ const environment: Env = {
   CLERK_PUBLISHABLE_KEY: 'pk_test_fixture',
   CLERK_SECRET_KEY: 'sk_test_fixture',
   INITIAL_ADMIN_SUBJECT: 'runtime-admin',
-  ORGANIZATION_ENABLED: 'true',
   GAME_CONFIG_PROFILE: 'local',
 };
 const db = connectD1(runtime.GAME_D1);
@@ -72,7 +71,7 @@ it('通常APIで作った組織に、対戦DOがD1へ保存した結果と本人
         .where(eq(instances.id, instance.id)),
     );
   });
-  const { organization, account } = await organizationIdentity(db, 'runtime-admin');
+  const { account } = await organizationIdentity(db, 'runtime-admin');
   const other = await organizationIdentity(db, 'runtime-other');
   const { state } = resultFixture();
   const now = Date.now();
@@ -90,16 +89,12 @@ it('通常APIで作った組織に、対戦DOがD1へ保存した結果と本人
   await runInDurableObject(room, async (object, context) => {
     await context.storage.transaction((transaction) =>
       writeStored(transaction, 'room', {
-        registered: true,
-        scope: {
-          id: instance.id,
-          organizationId: organization.id,
-          owner: instance.owner,
-          mode: 'ranked',
-        },
+        scope: { id: instance.id, owner: instance.owner },
+        generations: {},
         state,
         sessions: {},
         resultRetryAt: 1,
+        lobby: { expires: 0, sessionExpires: 0, reservations: {}, closed: true },
       }),
     );
     await object.alarm();

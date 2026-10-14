@@ -11,6 +11,7 @@ const blank: FederationPeer = {
   kid: '',
   publicKey: '',
   approved: false,
+  discovered: false,
   participationBlocked: false,
   receiveRanked: true,
   receiveCasual: true,
@@ -44,8 +45,8 @@ export default function PeerSettings({
               <p>
                 参加許可：
                 {[
-                  peer.receiveRanked !== false ? 'ランク' : '',
-                  peer.receiveCasual !== false ? 'カジュアル・部屋' : '',
+                  peer.receiveRanked ? 'ランク' : '',
+                  peer.receiveCasual ? 'カジュアル・部屋' : '',
                 ]
                   .filter(Boolean)
                   .join('・') || 'なし'}
@@ -62,18 +63,7 @@ export default function PeerSettings({
         onSubmit={async (event) => {
           event.preventDefault();
           const peer = await federation.preparePeer(origin);
-          if (peer)
-            setDraft({
-              origin: peer.origin,
-              name: peer.name,
-              kid: peer.kid,
-              publicKey: peer.publicKey,
-              revision: peer.revision,
-              approved: peer.approved,
-              participationBlocked: peer.participationBlocked,
-              receiveRanked: peer.receiveRanked,
-              receiveCasual: peer.receiveCasual,
-            });
+          if (peer) setDraft(peer);
         }}
       >
         <TextField
@@ -95,9 +85,22 @@ export default function PeerSettings({
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
-              void federation.mutate({ operation: 'peer', ...draft }).then((saved) => {
-                if (saved) setDraft(blank);
-              });
+              void federation
+                .mutate({
+                  operation: 'peer',
+                  origin: draft.origin,
+                  name: draft.name,
+                  kid: draft.kid,
+                  publicKey: draft.publicKey,
+                  approved: draft.approved,
+                  participationBlocked: draft.participationBlocked,
+                  receiveRanked: draft.receiveRanked,
+                  receiveCasual: draft.receiveCasual,
+                  revision: draft.revision,
+                })
+                .then((saved) => {
+                  if (saved) setDraft(blank);
+                });
             }}
           >
             <TextField
@@ -122,7 +125,7 @@ export default function PeerSettings({
             <label className="flex items-center gap-3">
               <input
                 type="checkbox"
-                checked={draft.participationBlocked ?? false}
+                checked={draft.participationBlocked}
                 onChange={(event) =>
                   setDraft({ ...draft, participationBlocked: event.target.checked })
                 }
@@ -137,7 +140,7 @@ export default function PeerSettings({
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
-                  checked={draft.receiveRanked ?? true}
+                  checked={draft.receiveRanked}
                   onChange={(event) =>
                     setDraft({ ...draft, receiveRanked: event.target.checked })
                   }
@@ -147,7 +150,7 @@ export default function PeerSettings({
               <label className="flex items-center gap-3">
                 <input
                   type="checkbox"
-                  checked={draft.receiveCasual ?? true}
+                  checked={draft.receiveCasual}
                   onChange={(event) =>
                     setDraft({ ...draft, receiveCasual: event.target.checked })
                   }

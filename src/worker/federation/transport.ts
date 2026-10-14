@@ -78,16 +78,31 @@ export async function expireFederationNonces(db: Database) {
       sql`(${federationNonces.issuer},${federationNonces.purpose},${federationNonces.nonce}) in (select ${federationNonces.issuer},${federationNonces.purpose},${federationNonces.nonce} from ${federationNonces} where ${federationNonces.expiresAt}<${now} order by ${federationNonces.expiresAt} limit 100)`,
     );
 }
-export function federationDatabase(env: Env) {
-  if (
-    !env.GAME_D1 ||
-    !env.FEDERATION_ORIGIN ||
-    !env.SIGNING_KID ||
-    !env.SIGNING_PRIVATE_KEY
-  )
+// Federation is off only when none of its settings exist; a partial setting fails.
+export function federationEnabled(env: Env) {
+  if (!env.FEDERATION_ORIGIN && !env.SIGNING_KID && !env.SIGNING_PRIVATE_KEY)
+    return false;
+  federationConfig(env);
+  return true;
+}
+export function federationConfig(env: Env) {
+  if (!env.FEDERATION_ORIGIN || !env.SIGNING_KID || !env.SIGNING_PRIVATE_KEY)
     throw new OrganizationError('FEDERATION_NOT_CONFIGURED', 503);
-  origin(env.FEDERATION_ORIGIN);
+  return {
+    origin: origin(env.FEDERATION_ORIGIN),
+    kid: env.SIGNING_KID,
+    privateKey: env.SIGNING_PRIVATE_KEY,
+  };
+}
+export function federationDatabase(env: Env) {
+  if (!env.GAME_D1) throw new OrganizationError('FEDERATION_NOT_CONFIGURED', 503);
+  federationConfig(env);
   return connectD1(env.GAME_D1);
+}
+function federationLimiter(env: Env) {
+  if (!env.FEDERATION_LIMITER)
+    throw new OrganizationError('FEDERATION_NOT_CONFIGURED', 503);
+  return env.FEDERATION_LIMITER;
 }
 export async function receiveDelivery(
   request: Request,
@@ -96,7 +111,9 @@ export async function receiveDelivery(
   max = MAX_MESSAGE_BYTES,
   expected?: { issuer?: string; replyTo?: string; participation?: boolean },
 ) {
-  const db = federationDatabase(env);
+  const db = federationDatabase(env),
+    config = federationConfig(env),
+    limiter = federationLimiter(env);
   let envelope: unknown;
   try {
     envelope = parseCanonical(await boundedText(request, max));
@@ -139,9 +156,7 @@ export async function receiveDelivery(
   if (!peer && admission) {
     const [organization] = await db.select().from(organizations).limit(1);
     if (organization?.externalParticipation === 'unblocked') {
-      const limiter = env.FEDERATION_LIMITER ?? env.API_LIMITER;
       if (
-        limiter &&
         !(
           await limiter.limit({
             key: `discovery-ip:${request.headers.get('CF-Connecting-IP') ?? 'local'}`,
@@ -187,7 +202,7 @@ export async function receiveDelivery(
   try {
     const delivery = await verifyDelivery(message, {
       issuer,
-      audience: env.FEDERATION_ORIGIN ?? '',
+      audience: config.origin,
       kid: peer.kid,
       key: await importSPKI(peer.publicKey, 'EdDSA'),
       now: Math.floor(Date.now() / 1000),
@@ -196,8 +211,7 @@ export async function receiveDelivery(
       maxBytes: max,
       replyTo: expected?.replyTo,
       consumeNonce: async (nonce, until) => {
-        const limiter = env.FEDERATION_LIMITER ?? env.API_LIMITER;
-        if (limiter && !(await limiter.limit({ key: `peer:${issuer}` })).success)
+        if (!(await limiter.limit({ key: `peer:${issuer}` })).success)
           throw new OrganizationError('RATE_LIMIT', 429);
         return consumeNonce(
           db,
@@ -234,14 +248,14 @@ export async function signedDelivery(
   body: unknown,
   options: { nonce?: string; replyTo?: string } = {},
 ) {
-  federationDatabase(env);
-  const now = Math.floor(Date.now() / 1000);
+  const config = federationConfig(env),
+    now = Math.floor(Date.now() / 1000);
   const bodyValue = JSON.parse(JSON.stringify(body)) as Delivery['body'];
   return signDelivery(
     {
       protocolVersion: 1,
       messageType,
-      issuer: env.FEDERATION_ORIGIN ?? '',
+      issuer: config.origin,
       audience: peerOrigin,
       issuedAt: now,
       expiresAt: now + DELIVERY_TTL,
@@ -252,8 +266,8 @@ export async function signedDelivery(
       bodyHash: await bodyHash(bodyValue),
       body: bodyValue,
     },
-    await importPKCS8(env.SIGNING_PRIVATE_KEY ?? '', 'EdDSA'),
-    env.SIGNING_KID ?? '',
+    await importPKCS8(config.privateKey, 'EdDSA'),
+    config.kid,
   );
 }
 export async function requestPeer(
@@ -322,7 +336,7 @@ export async function requestPeer(
     throw error;
   }
   return receiveDelivery(
-    new Request(`${env.FEDERATION_ORIGIN}${path}`, {
+    new Request(`${federationConfig(env).origin}${path}`, {
       method: 'POST',
       body: await boundedText(response, max),
     }),

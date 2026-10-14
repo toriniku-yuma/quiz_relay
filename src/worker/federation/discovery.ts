@@ -6,29 +6,30 @@ import { externalInstanceUrl } from '../../shared/external-instance.ts';
 import { changeD1, rowsD1 } from '../db/d1.ts';
 import { federationPeerKeys, federationPeers, federationTargets } from '../db/schema.ts';
 import type { Env } from '../env.ts';
-import {
-  OrganizationError,
-  requireAdministrator,
-  validId,
-} from '../organization/access.ts';
+import { OrganizationError, requireAdministrator } from '../organization/access.ts';
 import { organizationIdentity } from '../organization/database.ts';
 import { externalInstanceDirectory } from './directory.ts';
 import { peerRequest, rejectRedirect } from './egress.ts';
 import { METADATA_PATH, parseMetadata } from './metadata.ts';
 import { participationSource } from './participation-source.ts';
-import { boundedText, federationDatabase, requestPeer } from './transport.ts';
+import {
+  boundedText,
+  federationConfig,
+  federationDatabase,
+  requestPeer,
+} from './transport.ts';
 
 export function publicPeerKey(env: Env) {
-  federationDatabase(env);
+  const config = federationConfig(env);
   return {
-    origin: env.FEDERATION_ORIGIN,
-    kid: env.SIGNING_KID,
-    publicKey: createPublicKey(env.SIGNING_PRIVATE_KEY ?? '')
+    origin: config.origin,
+    kid: config.kid,
+    publicKey: createPublicKey(config.privateKey)
       .export({ type: 'spki', format: 'pem' })
       .toString(),
   };
 }
-export async function fetchPeerKey(peerOrigin: string) {
+async function fetchPeerKey(peerOrigin: string) {
   let key: { origin: string; kid: string; publicKey: string };
   try {
     // The same restrictive destination profile as signed traffic; only this fixed GET path.
@@ -117,11 +118,7 @@ export async function resolveExternalInstance(
   subject: string,
   input: Record<string, unknown>,
 ) {
-  if (
-    !['operation,url', 'operation,sourceInstanceId,url'].includes(
-      Object.keys(input).sort().join(','),
-    )
-  )
+  if (Object.keys(input).sort().join(',') !== 'operation,url')
     throw new OrganizationError('INVALID_FEDERATION_REQUEST', 400);
   let target: ReturnType<typeof externalInstanceUrl>;
   try {
@@ -129,15 +126,10 @@ export async function resolveExternalInstance(
   } catch {
     throw new OrganizationError('INVALID_INSTANCE_URL', 400);
   }
-  if (target.peerOrigin === env.FEDERATION_ORIGIN)
+  const db = federationDatabase(env);
+  if (target.peerOrigin === federationConfig(env).origin)
     throw new OrganizationError('INVALID_INSTANCE_URL', 400);
-  const db = federationDatabase(env),
-    identity = await organizationIdentity(db, subject),
-    sourceInstanceId =
-      input.sourceInstanceId === undefined
-        ? identity.organization.id
-        : validId(input.sourceInstanceId);
-  await participationSource(db, subject, sourceInstanceId);
+  const sourceOrganizationId = (await organizationIdentity(db, subject)).organization.id;
   await discoverPeer(env, target.peerOrigin);
   const [peer] = await db
     .select()
@@ -151,11 +143,11 @@ export async function resolveExternalInstance(
     METADATA_PATH,
     'metadata.request',
     'metadata.response',
-    { sourceInstanceId, targetInstanceId: target.instanceId },
+    { sourceInstanceId: sourceOrganizationId, targetInstanceId: target.instanceId },
     16384,
     true,
   );
-  const payload = parseMetadata(reply.body, sourceInstanceId);
+  const payload = parseMetadata(reply.body, sourceOrganizationId);
   if (
     payload.nextCursor !== null ||
     payload.instances.length !== 1 ||
@@ -163,11 +155,18 @@ export async function resolveExternalInstance(
   )
     throw new OrganizationError('FEDERATION_TARGET_UNAVAILABLE', 409);
   await changeD1(db, async (writes) => {
-    await participationSource(db, subject, sourceInstanceId);
+    await participationSource(db, subject, sourceOrganizationId);
     writes.push(
       rowsD1(
         federationTargets,
-        [{ sourceInstanceId, ...target, payload, checkedAt: Date.now() }],
+        [
+          {
+            sourceOrganizationId,
+            ...target,
+            payload,
+            checkedAt: Date.now(),
+          },
+        ],
         true,
       ),
     );

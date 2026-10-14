@@ -7,7 +7,6 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { exportPKCS8, exportSPKI, generateKeyPair } from 'jose';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { disabledFederationPermissions } from '../src/shared/federation';
 import { newRoomSettings, type RoomView } from '../src/shared/rooms';
 import { changeD1, connectD1 } from '../src/worker/db/d1';
 import {
@@ -16,7 +15,6 @@ import {
   federationLoginSessions,
   federationParticipations,
   federationPeers,
-  federationPolicies,
   federationReservationClosures,
   federationReservations,
   federationResultDeliveries,
@@ -104,6 +102,7 @@ const enter = vi.fn(),
   identity = vi.fn(),
   cancelAdmission = vi.fn(),
   cancel = vi.fn();
+const unlimited: RateLimit = { limit: async () => ({ success: true }) };
 beforeAll(async () => {
   await applyD1Migrations(runtime.GAME_D1, runtime.D1_MIGRATIONS);
   await applyD1Migrations(runtime.PEER_D1, runtime.D1_MIGRATIONS);
@@ -112,10 +111,9 @@ beforeAll(async () => {
   source = {
     ...env,
     // Rate-limit behavior is covered separately; unrelated cases do not share one quota.
-    API_LIMITER: undefined,
-    FEDERATION_LIMITER: undefined,
+    API_LIMITER: unlimited,
+    FEDERATION_LIMITER: unlimited,
     GAME_D1: runtime.PEER_D1,
-    ORGANIZATION_ENABLED: 'true',
     FEDERATION_ORIGIN: sourceOrigin,
     SIGNING_KID: 'source',
     SIGNING_PRIVATE_KEY: await exportPKCS8(sourceKeys.privateKey),
@@ -139,10 +137,9 @@ beforeAll(async () => {
   } as unknown as Env;
   host = {
     ...env,
-    API_LIMITER: undefined,
-    FEDERATION_LIMITER: undefined,
+    API_LIMITER: unlimited,
+    FEDERATION_LIMITER: unlimited,
     GAME_D1: runtime.GAME_D1,
-    ORGANIZATION_ENABLED: 'true',
     FEDERATION_ORIGIN: hostOrigin,
     SIGNING_KID: 'host',
     SIGNING_PRIVATE_KEY: await exportPKCS8(hostKeys.privateKey),
@@ -221,29 +218,20 @@ beforeEach(async () => {
   authenticated = true;
   cancel.mockReset().mockResolvedValue({ ok: true });
   cancelAdmission.mockReset().mockResolvedValue({ ok: true });
-  sourceId = crypto.randomUUID();
+  sourceId = (await sourceDb.select().from(organizations))[0].id;
   hostId = crypto.randomUUID();
-  sourceOwner = `urn:uuid:${sourceId}`;
+  const sourceInstanceId = crypto.randomUUID();
+  sourceOwner = `urn:uuid:${sourceInstanceId}`;
   hostOwner = `urn:uuid:${hostId}`;
   const sourceTemplate = (await sourceDb.select().from(instances))[0],
     hostTemplate = (await hostDb.select().from(instances))[0];
-  const permissions = disabledFederationPermissions();
-  permissions.send.ranked = true;
-  permissions.receive.ranked = true;
   await changeD1(sourceDb, async (writes) => {
     writes.push(
       sourceDb.insert(instances).values({
         ...sourceTemplate,
-        id: sourceId,
+        id: sourceInstanceId,
         owner: sourceOwner,
         state: 'published',
-      }),
-      sourceDb.insert(federationPolicies).values({
-        id: crypto.randomUUID(),
-        instanceId: sourceId,
-        peerOrigin: hostOrigin,
-        peerInstanceId: hostId,
-        permissions,
       }),
     );
   });
@@ -252,13 +240,6 @@ beforeEach(async () => {
       hostDb
         .insert(instances)
         .values({ ...hostTemplate, id: hostId, owner: hostOwner, state: 'published' }),
-      hostDb.insert(federationPolicies).values({
-        id: crypto.randomUUID(),
-        instanceId: hostId,
-        peerOrigin: sourceOrigin,
-        peerInstanceId: sourceId,
-        permissions,
-      }),
     );
   });
   enter.mockReset().mockImplementation(async () => ({
@@ -281,14 +262,14 @@ afterEach(() => {
 });
 const authorize = () =>
   authorizeParticipation(source, 'source-admin', {
-    sourceInstanceId: sourceId,
+    sourceOrganizationId: sourceId,
     hostInstanceId: hostId,
     peerOrigin: hostOrigin,
     mode: 'ranked',
     operationId,
   });
 const request = () => ({
-  sourceInstanceId: sourceId,
+  sourceOrganizationId: sourceId,
   hostInstanceId: hostId,
   mode: 'ranked',
   operationId,
@@ -296,16 +277,17 @@ const request = () => ({
   displayName: '参加者',
   authorizationId,
 });
+it('参加APIはレート制限のbindingが無ければ処理せず設定エラーを返す', async () => {
+  const response = await app.request(
+    `${hostOrigin}/api/v1/participation/session`,
+    { headers: { Origin: hostOrigin } },
+    { ...host, API_LIMITER: undefined },
+  );
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ code: 'RATE_LIMITER_NOT_CONFIGURED' });
+});
 it('URLで初めて確認した未承認の開催先をお気に入りにし、開催元の許可で署名付き参加を確定する', async () => {
-  const [organization] = await sourceDb.select().from(organizations);
-  const legacyInstanceId = sourceId;
-  sourceId = organization.id;
   await changeD1(sourceDb, async (writes) => {
-    writes.push(
-      sourceDb
-        .delete(federationPolicies)
-        .where(eq(federationPolicies.instanceId, legacyInstanceId)),
-    );
     writes.push(
       sourceDb.delete(federationPeers).where(eq(federationPeers.origin, hostOrigin)),
     );
@@ -338,9 +320,7 @@ it('URLで初めて確認した未承認の開催先をお気に入りにし、�
       .from(federationControlDeliveries)
       .where(eq(federationControlDeliveries.eventId, withdrawal.eventId)),
   ).toHaveLength(0);
-  expect(
-    resolved.instance?.sources.some((row) => row.id === sourceId && row.ranked),
-  ).toBe(true);
+  expect(resolved.instance).toMatchObject({ available: true, ranked: true });
   expect(
     (await externalInstanceDirectory(sourceDb, 'source-admin')).instances,
   ).toHaveLength(0);
@@ -391,9 +371,6 @@ it('自分の参加記録に一致する結果だけを未承認の開催元か�
         .update(federationPeers)
         .set({ approved: false, discovered: true })
         .where(eq(federationPeers.origin, hostOrigin)),
-      sourceDb
-        .delete(federationPolicies)
-        .where(eq(federationPolicies.instanceId, sourceId)),
     );
   });
   for (const change of [
@@ -407,25 +384,21 @@ it('自分の参加記録に一致する結果だけを未承認の開催元か�
     ).rejects.toThrow('FEDERATION_RESULT_DENIED');
   }
   await deliverResult(host, job.eventId);
-  expect((await foreignHistory(source, 'source-admin', sourceId)).history).toHaveLength(
-    1,
-  );
+  expect(await deliveredHistory(job.resultId)).toHaveLength(1);
 });
 it('新しい参加は組織単位で、所属元のインスタンス停止に依存せず、組織BANを確認する', async () => {
   const [organization] = await sourceDb.select().from(organizations);
-  const legacyInstanceId = sourceId;
-  sourceId = organization.id;
   await changeD1(sourceDb, async (writes) => {
     writes.push(
       sourceDb
         .update(instances)
         .set({ state: 'archived', rankedPauseReason: '停止' })
-        .where(eq(instances.id, legacyInstanceId)),
+        .where(eq(instances.owner, sourceOwner)),
     );
   });
   const ticket = await authorize();
   const session = await exchangeParticipation(host, { ticket: ticket.ticket });
-  expect(session.row.sourceInstanceId).toBe(organization.id);
+  expect(session.row.sourceOrganizationId).toBe(organization.id);
   expect((await resumeParticipation(host, session.secret)).reservation.id).toBe(
     session.row.id,
   );
@@ -466,8 +439,6 @@ it('新しい参加は組織単位で、所属元のインスタンス停止に�
   ).toEqual([session.row.actorId]);
 });
 it('禁止以外を許可する開催元は未登録組織の鍵だけを取得し、参加・個人履歴を許可して問題共有を拒否する', async () => {
-  const [organization] = await sourceDb.select().from(organizations);
-  sourceId = organization.id;
   const newOrigin = 'https://new-source.quiz-relay.workers.dev';
   const newcomer = { ...source, FEDERATION_ORIGIN: newOrigin };
   vi.mocked(fetch).mockImplementation(async (request) =>
@@ -478,7 +449,7 @@ it('禁止以外を許可する開催元は未登録組織の鍵だけを取得�
     ),
   );
   const input = {
-    sourceInstanceId: sourceId,
+    sourceOrganizationId: sourceId,
     hostInstanceId: hostId,
     peerOrigin: hostOrigin,
     mode: 'ranked',
@@ -510,11 +481,7 @@ it('禁止以外を許可する開催元は未登録組織の鍵だけを取得�
     sourceInstanceId: sourceId,
     targetInstanceId: hostId,
   });
-  expect(page.instances[0].permissions.receive).toMatchObject({
-    ranked: true,
-    casual: true,
-    questions: false,
-  });
+  expect(page.instances[0]).toMatchObject({ ranked: true, casual: true });
   const questionMessage = await signedDelivery(
     newcomer,
     hostOrigin,
@@ -547,9 +514,9 @@ it('禁止以外を許可する開催元は未登録組織の鍵だけを取得�
     .from(federationResultDeliveries)
     .where(eq(federationResultDeliveries.resultId, record.result.id));
   await deliverResult(host, job.eventId);
-  expect(
-    (await foreignHistory(newcomer, 'source-admin', sourceId)).history,
-  ).toContainEqual(expect.objectContaining({ eventId: job.eventId }));
+  expect((await foreignHistory(newcomer, 'source-admin')).history).toContainEqual(
+    expect.objectContaining({ eventId: job.eventId }),
+  );
   await expect(
     reviewForeignResult(newcomer, 'source-admin', hostOrigin, job.eventId),
   ).resolves.toMatchObject({ questions: [] });
@@ -572,11 +539,7 @@ it('禁止以外を許可する開催元は未登録組織の鍵だけを取得�
     sourceInstanceId: sourceId,
     targetInstanceId: hostId,
   });
-  expect(limited.instances[0].permissions.receive).toMatchObject({
-    ranked: false,
-    casual: true,
-    questions: false,
-  });
+  expect(limited.instances[0]).toMatchObject({ ranked: false, casual: true });
   await changeD1(hostDb, async (writes) => {
     writes.push(
       hostDb
@@ -588,21 +551,6 @@ it('禁止以外を許可する開催元は未登録組織の鍵だけを取得�
   await expect(authorizeNew()).rejects.toThrow('FEDERATION_PEER_UNAVAILABLE');
 });
 it('外部ログインで実ルームを作成・再送・開始し、親部屋に結び付いた結果を所属元へ配送する', async () => {
-  const permissions = disabledFederationPermissions();
-  permissions.send.casual = permissions.receive.casual = true;
-  permissions.send.results = permissions.receive.results = true;
-  for (const [db, id] of [
-    [sourceDb, sourceId],
-    [hostDb, hostId],
-  ] as const)
-    await changeD1(db, async (writes) => {
-      writes.push(
-        db
-          .update(federationPolicies)
-          .set({ permissions })
-          .where(eq(federationPolicies.instanceId, id)),
-      );
-    });
   const realHost: Env = {
     ...host,
     MATCHMAKER: (env as unknown as Env).MATCHMAKER,
@@ -617,7 +565,7 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
     ),
   );
   const authorized = await authorizeParticipation(source, 'source-admin', {
-    sourceInstanceId: sourceId,
+    sourceOrganizationId: sourceId,
     hostInstanceId: hostId,
     peerOrigin: hostOrigin,
     mode: 'room',
@@ -750,7 +698,7 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
       nativeAdmission.token,
     );
     if ('ok' in nativeGame) throw new Error(nativeGame.code);
-    game = realHost.GAME_ROOM.getByName(`1c:${gameSession.room}`);
+    game = realHost.GAME_ROOM.getByName(`match:${gameSession.room}`);
     await open(game, gameSession.token);
     await open(game, nativeGame.token);
     let resultId = '';
@@ -777,9 +725,10 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
     expect(job.payload.players.every((player) => player.ratingDelta === 0)).toBe(true);
     expect(JSON.stringify(job.payload)).not.toContain(input.questions[0].text);
     await deliverResult(realHost, job.eventId);
-    expect(
-      (await foreignHistory(source, 'source-admin', sourceId)).history[0],
-    ).toMatchObject({ kind: 'room', resultId });
+    expect((await foreignHistory(source, 'source-admin')).history[0]).toMatchObject({
+      kind: 'room',
+      resultId,
+    });
     expect(
       await hostParticipationStatus(realHost, sourceOrigin, {
         operationId,
@@ -802,21 +751,17 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
     globalThis.fetch = originalFetch;
   }
 });
-it('共有停止は新規・待機の再認証を拒否し、開始済みの同じ試合だけ復帰できる', async () => {
+it('所属元の参加停止は新規・待機の再認証を拒否し、開始済みの同じ試合だけ復帰できる', async () => {
   const first = await authorize(),
     session = await exchangeParticipation(host, { ticket: first.ticket });
-  for (const [db, id] of [
-    [sourceDb, sourceId],
-    [hostDb, hostId],
-  ] as const)
-    await changeD1(db, async (writes) => {
-      writes.push(
-        db
-          .update(federationPolicies)
-          .set({ permissions: disabledFederationPermissions() })
-          .where(eq(federationPolicies.instanceId, id)),
-      );
-    });
+  await changeD1(sourceDb, async (writes) => {
+    writes.push(
+      sourceDb
+        .update(federationPeers)
+        .set({ participationBlocked: true })
+        .where(eq(federationPeers.origin, hostOrigin)),
+    );
+  });
   await expect(authorize()).rejects.toThrow('FEDERATION_PARTICIPATION_DENIED');
   phase = 'REVEALING';
   const ticket = await authorize(),
@@ -847,24 +792,12 @@ it('終了済みの試合は所属元の枠だけ解放し、開催元の結果�
     'exchanged',
   );
 });
-async function savedForeignResult(removeHostPolicy = false) {
-  const permissions = disabledFederationPermissions();
-  permissions.send.ranked = true;
-  permissions.receive.ranked = true;
-  permissions.send.results = true;
-  permissions.receive.results = true;
-  for (const [db, id] of [
-    [sourceDb, sourceId],
-    [hostDb, hostId],
-  ] as const)
-    await changeD1(db, async (writes) => {
-      writes.push(
-        db
-          .update(federationPolicies)
-          .set({ permissions })
-          .where(eq(federationPolicies.instanceId, id)),
-      );
-    });
+// The actor's history spans every test, so each test reads only its own result.
+const deliveredHistory = async (resultId: string) =>
+  (await foreignHistory(source, 'source-admin')).history.filter(
+    (entry) => entry.resultId === resultId,
+  );
+async function savedForeignResult(stopHostReceiving = false) {
   const ticket = await authorize(),
     admission = await exchangeParticipation(host, { ticket: ticket.ticket }),
     { record } = resultFixture();
@@ -892,12 +825,13 @@ async function savedForeignResult(removeHostPolicy = false) {
       participants: record.players.map((player) => player.id),
     },
   ];
-  if (removeHostPolicy)
+  if (stopHostReceiving)
     await changeD1(hostDb, async (writes) => {
       writes.push(
         hostDb
-          .delete(federationPolicies)
-          .where(eq(federationPolicies.instanceId, hostId)),
+          .update(federationPeers)
+          .set({ receiveRanked: false })
+          .where(eq(federationPeers.origin, sourceOrigin)),
       );
     });
   await commitD1Result(runtime.GAME_D1, record);
@@ -941,17 +875,12 @@ it('保存直後の配送障害でも送信記録を残し、再試行で本人�
   ]);
   await dispatchSavedResult(immediateHost, record.result.id);
   expect(dispatch).toHaveBeenCalledTimes(2);
-  expect((await foreignHistory(source, 'source-admin', sourceId)).history).toHaveLength(
-    1,
-  );
+  expect(await deliveredHistory(record.result.id)).toHaveLength(1);
 });
 it('開始後に開催元の受入設定を削除しても、参加済みの本人への結果配送を失わない', async () => {
   const { job } = await savedForeignResult(true);
-  expect(job.payload.reservationId).toBeDefined();
   await deliverResult(host, job.eventId);
-  expect((await foreignHistory(source, 'source-admin', sourceId)).history).toHaveLength(
-    1,
-  );
+  expect(await deliveredHistory(job.resultId)).toHaveLength(1);
 });
 it('確定結果を署名して本人履歴へ配送し、所属元レートと未出題情報を混ぜない', async () => {
   const before = await readResults(sourceDb, sourceOwner, actorId, [], {
@@ -961,9 +890,9 @@ it('確定結果を署名して本人履歴へ配送し、所属元レートと�
   expect(JSON.stringify(job.payload)).not.toContain('出題済みの本文');
   expect(JSON.stringify(job.payload)).not.toContain('せいとう');
   await deliverResult(host, job.eventId);
-  const history = await foreignHistory(source, 'source-admin', sourceId);
-  expect(history.history).toHaveLength(1);
-  expect(history.history[0]).toMatchObject({
+  const history = await deliveredHistory(record.result.id);
+  expect(history).toHaveLength(1);
+  expect(history[0]).toMatchObject({
     peerOrigin: hostOrigin,
     sourceActorId: actorId,
     resultId: record.result.id,
@@ -984,7 +913,7 @@ it('確定結果を署名して本人履歴へ配送し、所属元レートと�
       await hostResultReview(host, sourceOrigin, {
         resultId: record.result.id,
         sourceActorId: actorId,
-        sourceInstanceId: sourceId,
+        sourceOrganizationId: sourceId,
       })
     ).questions[0].text,
   ).toBe('出題済みの本文');
@@ -992,7 +921,7 @@ it('確定結果を署名して本人履歴へ配送し、所属元レートと�
     hostResultReview(host, sourceOrigin, {
       resultId: record.result.id,
       sourceActorId: 'd'.repeat(64),
-      sourceInstanceId: sourceId,
+      sourceOrganizationId: sourceId,
     }),
   ).rejects.toThrow('RESULT_REVIEW_UNAVAILABLE');
 });
@@ -1026,9 +955,7 @@ it('通信断でも原本と未配送を保ち、復旧時に同じイベント�
   expect(saved.payloadHash).toBe(failed.payloadHash);
   expect(saved.receivedAt).not.toBeNull();
   vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
-  expect((await foreignHistory(source, 'source-admin', sourceId)).history).toHaveLength(
-    1,
-  );
+  expect(await deliveredHistory(job.resultId)).toHaveLength(1);
 });
 it('同一イベントの別内容を409で隔離し、既に受信した原本を更新しない', async () => {
   const { job } = await savedForeignResult();
@@ -1104,7 +1031,7 @@ it('両側の許可・実署名を通して予約し、一度だけ開催セッ�
     iss: sourceOrigin,
     sub: actorId,
     aud: hostOrigin,
-    sourceInstanceId: sourceId,
+    sourceOrganizationId: sourceId,
     hostInstanceId: hostId,
     mode: 'ranked',
     matchId,
@@ -1167,35 +1094,19 @@ it('受入取消と所属元停止を待機へ反映し、復旧後だけ再び�
     row = session.row,
     scope = { id: hostId, owner: hostOwner };
   expect(await allowedInstanceActors(host, scope, [row.actorId])).toEqual([row.actorId]);
-  await changeD1(sourceDb, async (writes) => {
-    writes.push(
-      sourceDb
-        .update(instances)
-        .set({ rankedPauseReason: '休止' })
-        .where(eq(instances.id, sourceId)),
-    );
-  });
-  // The source admin has the ordinary preparation exception; revoke its outbound permission instead.
-  await changeD1(sourceDb, async (writes) => {
-    writes.push(
-      sourceDb
-        .update(federationPolicies)
-        .set({ permissions: disabledFederationPermissions() })
-        .where(eq(federationPolicies.instanceId, sourceId)),
-    );
-  });
+  const blockHost = (participationBlocked: boolean) =>
+    changeD1(sourceDb, async (writes) => {
+      writes.push(
+        sourceDb
+          .update(federationPeers)
+          .set({ participationBlocked })
+          .where(eq(federationPeers.origin, hostOrigin)),
+      );
+    });
+  await blockHost(true);
   await refreshParticipationAccess(host, hostId, [row.actorId], true);
   expect(await allowedInstanceActors(host, scope, [row.actorId])).toEqual([]);
-  const permissions = disabledFederationPermissions();
-  permissions.send.ranked = true;
-  await changeD1(sourceDb, async (writes) => {
-    writes.push(
-      sourceDb
-        .update(federationPolicies)
-        .set({ permissions })
-        .where(eq(federationPolicies.instanceId, sourceId)),
-    );
-  });
+  await blockHost(false);
   await refreshParticipationAccess(host, hostId, [row.actorId], true);
   expect(await allowedInstanceActors(host, scope, [row.actorId])).toEqual([row.actorId]);
   await changeD1(hostDb, async (writes) => {
@@ -1361,7 +1272,7 @@ async function loginProof() {
   const [organization] = await sourceDb.select().from(organizations);
   const target = {
     peerOrigin: hostOrigin,
-    sourceInstanceId: organization.id,
+    sourceOrganizationId: organization.id,
     hostInstanceId: hostId,
     mode: 'ranked' as const,
     state: crypto.randomUUID(),
@@ -1418,7 +1329,7 @@ it('外部ログイン証明のstate・所属元・対象・種別の取り違�
   for (const changed of [
     { state: crypto.randomUUID() },
     { hostInstanceId: crypto.randomUUID() },
-    { sourceInstanceId: crypto.randomUUID() },
+    { sourceOrganizationId: crypto.randomUUID() },
     { mode: 'casual' },
   ])
     await expect(exchangeForeignLogin(host, { ...proof, ...changed })).rejects.toThrow(

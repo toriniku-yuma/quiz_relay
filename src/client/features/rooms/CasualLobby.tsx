@@ -28,7 +28,7 @@ export default function CasualLobby({
   useEffect(() => {
     if (joinAfterName && guest?.data?.id) {
       setJoinAfterName(false);
-      void match.join('');
+      void match.join();
     }
   }, [joinAfterName, guest?.data?.id, match.join]);
   const game = match.game,
@@ -102,7 +102,7 @@ export default function CasualLobby({
               disabled={match.busy}
               onClick={() => {
                 if (!auth.user && !guest?.data?.name) setNamePrompt(true);
-                else void match.join('');
+                else void match.join();
               }}
             >
               {match.uncertain ? '同じ内容で再試行' : 'マッチングする'}

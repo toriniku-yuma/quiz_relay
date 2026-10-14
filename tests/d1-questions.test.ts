@@ -92,11 +92,8 @@ async function target(mode: 'open' | 'review' | 'qualified' = 'open') {
         .from(questionSubmissions)
         .where(eq(questionSubmissions.id, questionId))
     )[0];
-  const environment = {
-    GAME_D1: runtime.GAME_D1,
-    GAME_OWNER: instance.owner,
-    GAME_CONFIG_PROFILE: 'local',
-  } as Env;
+  const environment = { GAME_D1: runtime.GAME_D1 } as Env;
+  const active = { owner: instance.owner, profile: 'local' };
   return {
     id,
     instance,
@@ -107,6 +104,7 @@ async function target(mode: 'open' | 'review' | 'qualified' = 'open') {
     mutate,
     row,
     environment,
+    active,
   };
 }
 async function approved(context: Awaited<ReturnType<typeof target>>) {
@@ -128,7 +126,7 @@ it('下書き保存・提出・出題版と通知をD1で保存し、他人の�
   const context = await target();
   const row = await approved(context);
   expect(row.status).toBe('approved');
-  const definition = await loadMatchDefinition(context.environment);
+  const definition = await loadMatchDefinition(context.environment, context.active);
   expect(definition.questions[0].text).toBe(context.input.text);
   expect(definition.questions[0].answer).toBe('あ');
   const mine = await questionOverview(db, context.subject, context.id, list());
@@ -179,9 +177,9 @@ it('審査担当者でも自己承認できず、差戻し・再提出・承認�
   await context.mutate({ operation: 'submit', id, revision: 4 });
   await context.mutate({ operation: 'approve', id, revision: 5, reason: '' }, 'admin');
   expect((await context.row(id)).revision).toBe(6);
-  expect((await loadMatchDefinition(context.environment)).questions[0].text).toBe(
-    '修正本文',
-  );
+  expect(
+    (await loadMatchDefinition(context.environment, context.active)).questions[0].text,
+  ).toBe('修正本文');
   const notifications = await context.mutate({ operation: 'notifications' });
   expect(notifications.notifications).toHaveLength(2);
 });
@@ -305,12 +303,13 @@ it('カテゴリ停止は公開版と編集中の分類を別々に移し、本�
   const current = await context.row(row.id);
   expect(current.input.categoryId).toBe(category.id);
   expect(current.input.text).toBe('未承認改訂');
-  expect((await loadMatchDefinition(context.environment)).questions[0].text).toBe(
-    context.input.text,
-  );
-  expect((await loadMatchDefinition(context.environment)).questions[0].categoryId).toBe(
-    category.id,
-  );
+  expect(
+    (await loadMatchDefinition(context.environment, context.active)).questions[0].text,
+  ).toBe(context.input.text);
+  expect(
+    (await loadMatchDefinition(context.environment, context.active)).questions[0]
+      .categoryId,
+  ).toBe(category.id);
 });
 
 it('投稿方式変更は提出済み問題の承認と出題設定をまとめて反映する', async () => {
@@ -326,7 +325,9 @@ it('投稿方式変更は提出済み問題の承認と出題設定をまとめ�
     'admin',
   );
   expect((await context.row(String(saved.id))).status).toBe('approved');
-  expect((await loadMatchDefinition(context.environment)).selection?.revision).toBe(2);
+  expect(
+    (await loadMatchDefinition(context.environment, context.active)).selection?.revision,
+  ).toBe(2);
   const [configuration] = await db
     .select()
     .from(questionSettings)
@@ -448,7 +449,8 @@ it('NFKC検索とタグの別名・統合を反映し、100件ページと全並
 it('通報は同じ審議回に重複できず、解決後は新しい回で受け付ける', async () => {
   const context = await target();
   const row = await approved(context);
-  const fixed = (await loadMatchDefinition(context.environment)).questions[0];
+  const fixed = (await loadMatchDefinition(context.environment, context.active))
+    .questions[0];
   const question = {
     ...fixed,
     displayAnswer: fixed.displayAnswer ?? fixed.answer,
@@ -510,7 +512,7 @@ it('一括停止の再送は版を重複させず、解除後も削除中の問�
   await context.mutate(input, 'admin');
   await context.mutate(input, 'admin');
   expect((await context.row(row.id)).revision).toBe(3);
-  await expect(loadMatchDefinition(context.environment)).rejects.toThrow(
+  await expect(loadMatchDefinition(context.environment, context.active)).rejects.toThrow(
     'NO_RANKED_QUESTIONS',
   );
   await context.mutate(
@@ -527,14 +529,16 @@ it('一括停止の再送は版を重複させず、解除後も削除中の問�
     { operation: 'restore', id: row.id, revision: 4, reason: '復元' },
     'admin',
   );
-  await expect(loadMatchDefinition(context.environment)).rejects.toThrow(
+  await expect(loadMatchDefinition(context.environment, context.active)).rejects.toThrow(
     'NO_RANKED_QUESTIONS',
   );
   await context.mutate(
     { operation: 'resume', id: row.id, revision: 5, reason: '再開' },
     'admin',
   );
-  expect((await loadMatchDefinition(context.environment)).questions).toHaveLength(1);
+  expect(
+    (await loadMatchDefinition(context.environment, context.active)).questions,
+  ).toHaveLength(1);
 });
 
 it('移行JSONのカテゴリ作成と投稿を一括保存し、元作問者情報を維持する', async () => {

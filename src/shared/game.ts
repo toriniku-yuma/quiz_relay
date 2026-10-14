@@ -30,7 +30,6 @@ export type Result = {
   winnerId: string | null;
   reason:
     | 'target_reached'
-    | 'seven_correct'
     | 'exhausted'
     | 'question_limit'
     | 'last_remaining'

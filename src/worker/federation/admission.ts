@@ -3,7 +3,6 @@ import type { Database } from '../db/d1.ts';
 import {
   federationActors,
   federationPeers,
-  federationPolicies,
   federationReservations,
   organizations,
 } from '../db/schema.ts';
@@ -29,42 +28,20 @@ export function receivingParticipation(
   );
 }
 
-export async function participationPolicy(
+// Participation always comes from the whole organization, so only the peer state applies.
+export async function requireParticipationSending(db: Database, peerOrigin: string) {
+  const [peer] = await db
+    .select()
+    .from(federationPeers)
+    .where(eq(federationPeers.origin, peerOrigin));
+  if (!peer || peer.participationBlocked || (!peer.approved && !peer.discovered))
+    throw new OrganizationError('FEDERATION_PARTICIPATION_DENIED', 403);
+}
+export async function requireParticipationReceiving(
   db: Database,
-  instanceId: string,
   peerOrigin: string,
-  peerInstanceId: string,
   mode: 'ranked' | 'casual' | 'room',
-  direction: 'send' | 'receive',
 ) {
-  if (direction === 'send') {
-    const [peer] = await db
-      .select()
-      .from(federationPeers)
-      .where(eq(federationPeers.origin, peerOrigin));
-    const [organization] = await db.select().from(organizations);
-    const [policy] =
-      instanceId === organization?.id
-        ? []
-        : await db
-            .select()
-            .from(federationPolicies)
-            .where(
-              and(
-                eq(federationPolicies.instanceId, instanceId),
-                eq(federationPolicies.peerOrigin, peerOrigin),
-                eq(federationPolicies.peerInstanceId, peerInstanceId),
-              ),
-            );
-    if (
-      !peer ||
-      peer.participationBlocked ||
-      (!peer.approved && !peer.discovered) ||
-      (policy && !policy.permissions.send[mode === 'room' ? 'casual' : mode])
-    )
-      throw new OrganizationError('FEDERATION_PARTICIPATION_DENIED', 403);
-    return;
-  }
   const [[organization], [peer]] = await db.batch([
     db.select().from(organizations).limit(1),
     db.select().from(federationPeers).where(eq(federationPeers.origin, peerOrigin)),

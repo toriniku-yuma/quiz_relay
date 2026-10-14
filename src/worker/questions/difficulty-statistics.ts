@@ -1,11 +1,9 @@
-import { and, asc, eq, gt, or, sql } from 'drizzle-orm';
-import { changeD1, type D1Write, type Database, rowBatchesD1 } from '../db/d1.ts';
+import { and, eq, sql } from 'drizzle-orm';
+import { type D1Write, type Database, rowBatchesD1 } from '../db/d1.ts';
 import {
   difficultyActors,
-  difficultyBackfills,
   difficultySamples,
   difficultyTrials,
-  matchResults,
   type questionDifficulty,
 } from '../db/schema.ts';
 import type { ResultRecord } from '../results/record.ts';
@@ -98,58 +96,4 @@ export async function readDifficultyStatistics(
     groups.set(generation, list);
   }
   return groups;
-}
-
-// A one-time, five-result page for legacy data. New commits already write their trial facts.
-export async function backfillDifficulty(db: Database, owner: string) {
-  return changeD1(db, async (writes) => {
-    const [previous] = await db
-      .select()
-      .from(difficultyBackfills)
-      .where(eq(difficultyBackfills.owner, owner));
-    if (previous?.complete) return true;
-    const records = await db
-      .select()
-      .from(matchResults)
-      .where(
-        and(
-          eq(matchResults.owner, owner),
-          previous
-            ? or(
-                gt(matchResults.finishedAt, previous.finishedAt),
-                and(
-                  eq(matchResults.finishedAt, previous.finishedAt),
-                  gt(matchResults.resultId, previous.resultId),
-                ),
-              )
-            : undefined,
-        ),
-      )
-      .orderBy(asc(matchResults.finishedAt), asc(matchResults.resultId))
-      .limit(5);
-    appendResultTrials(
-      writes,
-      records.map((row) => row.payload),
-    );
-    const last = records.at(-1);
-    writes.push(
-      db
-        .insert(difficultyBackfills)
-        .values({
-          owner,
-          finishedAt: last?.finishedAt ?? previous?.finishedAt ?? '',
-          resultId: last?.resultId ?? previous?.resultId ?? '',
-          complete: records.length < 5,
-        })
-        .onConflictDoUpdate({
-          target: difficultyBackfills.owner,
-          set: {
-            finishedAt: last?.finishedAt ?? previous?.finishedAt ?? '',
-            resultId: last?.resultId ?? previous?.resultId ?? '',
-            complete: records.length < 5,
-          },
-        }),
-    );
-    return records.length < 5;
-  });
 }

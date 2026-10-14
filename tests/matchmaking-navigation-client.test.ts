@@ -131,7 +131,7 @@ it.each(['ranked', 'casual'] as const)(
       error: '',
     });
     mocks.request.mockRejectedValueOnce(new Error('参加結果不明'));
-    await render('instance-b', mode).join('name');
+    await render('instance-b', mode).join();
     mocks.request.mockResolvedValueOnce({ playersPerMatch: 3, rules: secondRules });
     render('instance-b', mode);
     mocks.effects[0]();
@@ -192,14 +192,14 @@ it.each(['ranked', 'casual'] as const)(
   async (mode) => {
     const response = deferred<{ room: string }>();
     mocks.request.mockReturnValueOnce(response.promise);
-    const joining = render('instance-a', mode).join('name');
+    const joining = render('instance-a', mode).join();
     render('instance-b', mode);
     mocks.effects[3]();
     response.resolve({ room: 'late-a' });
     await joining;
     expect(mocks.request).toHaveBeenCalledExactlyOnceWith(
       mode === 'ranked' ? API_PATHS.matchJoin : API_PATHS.casualJoin,
-      expect.objectContaining({ name: 'name' }),
+      { operationId: expect.any(String) },
       'instance-a',
     );
     expect(mocks.attach).toHaveBeenCalledExactlyOnceWith('late-a', 'instance-a');
@@ -243,7 +243,7 @@ it('別タブの接続を切断時取消で巻き込まず、サーバーが待�
 it('本人の取消は応答不明の参加を操作IDで取り消し、遅い参加応答を無視する', async () => {
   const response = deferred<{ room: string }>();
   mocks.request.mockReturnValueOnce(response.promise);
-  const joining = render().join('name');
+  const joining = render().join();
   const body = mocks.request.mock.calls[0][1];
   render('instance-b').cancel();
   render('instance-b');
@@ -269,7 +269,7 @@ it('本人の取消の応答消失では対象を変えずに再試行する', a
       .mockRejectedValueOnce(new Error('join response lost'))
       .mockRejectedValueOnce(new Error('cancel response lost'))
       .mockResolvedValue({ ok: true });
-    await render().join('name');
+    await render().join();
     render().cancel();
     render('instance-b');
     const cleanup = mocks.effects[3]();
@@ -290,7 +290,7 @@ it('本人の取消と開始が競合した場合は開始済み試合へ復帰�
   mocks.game.roomId = 'room-a';
   mocks.game.snapshot = { phase: 'WAITING' };
   mocks.request.mockRejectedValueOnce(new Error('join response lost'));
-  await render().join('name');
+  await render().join();
   mocks.request.mockRejectedValueOnce(new MatchError('MATCH_STARTED'));
   render().cancel();
   render('instance-b');
@@ -307,7 +307,7 @@ it('古い手動復帰応答は新しい参加を上書きしない', async () =
   mocks.resume.mockReturnValueOnce(late.promise);
   const manual = render().resume();
   mocks.request.mockResolvedValueOnce({ room: 'room-b' });
-  await render('instance-b').join('name');
+  await render('instance-b').join();
   mocks.attach.mockClear();
   late.resolve({ room: 'room-a' });
   await manual;

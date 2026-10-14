@@ -68,9 +68,7 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
         { label: '部屋', href: `${ROOMS_PATH}?instance=${instanceId}` },
         { label: '対戦履歴', href: `${HISTORY_PATH}?instance=${instanceId}` },
       ]
-    : canAccessInstance(selected, data?.account?.administrator) ||
-        data?.enabled === false ||
-        guest?.data?.id
+    : canAccessInstance(selected, data?.account?.administrator) || guest?.data?.id
       ? [
           ...(auth.user ? [{ label: 'ランクマッチ', href: gameHref(instanceId) }] : []),
           {
@@ -154,7 +152,7 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
           ? [
               { label: 'インスタンス設定', href: gameHref(instanceId, 'settings') },
               {
-                label: '問題・結果の共有設定',
+                label: '問題共有・結果配送',
                 href: `${FEDERATION_PATH}?instance=${instanceId}`,
               },
               questionLink('settings', '投稿設定'),
@@ -252,9 +250,6 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
                         href={externalInstanceHref(
                           instance.peerOrigin,
                           instance.instanceId,
-                          !peerOrigin
-                            ? selected?.id
-                            : (url.searchParams.get('source') ?? undefined),
                         )}
                         aria-current={selectedExternal === instance ? 'true' : undefined}
                       >

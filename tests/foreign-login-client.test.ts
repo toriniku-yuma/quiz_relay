@@ -73,7 +73,7 @@ it('URLの証明を除去した再描画で交換を中断せず、ログアウ�
     state = crypto.randomUUID(),
     target = {
       peerOrigin: home,
-      sourceInstanceId: source,
+      sourceOrganizationId: source,
       hostInstanceId: instance,
       mode: 'ranked' as const,
     },
@@ -162,7 +162,7 @@ it('URLの証明を除去した再描画で交換を中断せず、ログアウ�
 it('期限切れの参加要求には開催先へ戻る理由を示し、同じ要求を再送しない', async () => {
   const target = {
       peerOrigin: 'https://host.quiz-relay.workers.dev',
-      sourceInstanceId: crypto.randomUUID(),
+      sourceOrganizationId: crypto.randomUUID(),
       hostInstanceId: crypto.randomUUID(),
       mode: 'ranked' as const,
     },

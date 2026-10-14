@@ -22,6 +22,9 @@ export function applyGameUpdate(
     : null;
 }
 
+const gameSessionKey = (mode: 'local' | 'formal', subject: string) =>
+  mode === 'local' ? 'quiz-relay-development-game' : `quiz-relay-match:${subject}`;
+
 export function readGameSession(
   mode: 'local' | 'formal' = 'local',
   subject = '',
@@ -31,9 +34,7 @@ export function readGameSession(
 } | null {
   try {
     const value = JSON.parse(
-      sessionStorage.getItem(
-        mode === 'local' ? 'quiz-relay-1b-hiragana' : `quiz-relay-1c:${subject}`,
-      ) ?? 'null',
+      sessionStorage.getItem(gameSessionKey(mode, subject)) ?? 'null',
     );
     if (
       !value ||
@@ -65,13 +66,10 @@ export function saveGameSession(
   try {
     if (room)
       sessionStorage.setItem(
-        mode === 'local' ? 'quiz-relay-1b-hiragana' : `quiz-relay-1c:${subject}`,
+        gameSessionKey(mode, subject),
         JSON.stringify({ room, snapshot }),
       );
-    else
-      sessionStorage.removeItem(
-        mode === 'local' ? 'quiz-relay-1b-hiragana' : `quiz-relay-1c:${subject}`,
-      );
+    else sessionStorage.removeItem(gameSessionKey(mode, subject));
   } catch {
     /* ストレージを使えない場合も現在の接続は継続する。 */
   }

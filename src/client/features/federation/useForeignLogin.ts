@@ -105,7 +105,7 @@ export function useForeignLogin(
         if (
           !snapshot ||
           snapshot.account.homeOrigin !== entry.peerOrigin ||
-          snapshot.account.organizationId !== entry.sourceInstanceId
+          snapshot.account.organizationId !== entry.sourceOrganizationId
         )
           beginForeignAuthorization(entry, 'login');
         else

@@ -8,8 +8,8 @@ type Page = {
   history: (FederatedResult & { peerOrigin: string })[];
   nextCursor: string | null;
 };
-export function useForeignHistory(actorId: string | undefined, instanceId: string) {
-  const scope = `${actorId}:${instanceId}`,
+export function useForeignHistory(actorId: string | undefined) {
+  const scope = actorId ?? '',
     activeScope = useRef(scope);
   activeScope.current = scope;
   const [snapshot, setSnapshot] = useState<{ scope: string; data: Page } | null>(null),
@@ -23,13 +23,12 @@ export function useForeignHistory(actorId: string | undefined, instanceId: strin
   const data = snapshot?.scope === scope ? snapshot.data : null;
   const load = useCallback(
     async (cursor?: string) => {
-      if (!actorId || !instanceId) return;
+      if (!actorId) return;
       setBusy(true);
       setError('');
       try {
         const page = await organizationRequest<Page>(API_PATHS.federationResults, {
           operation: 'history',
-          instanceId,
           ...(cursor ? { cursor } : {}),
         });
         if (activeScope.current === scope)
@@ -60,7 +59,7 @@ export function useForeignHistory(actorId: string | undefined, instanceId: strin
         if (activeScope.current === scope) setBusy(false);
       }
     },
-    [actorId, instanceId, scope],
+    [actorId, scope],
   );
   useEffect(() => {
     setSnapshot(null);

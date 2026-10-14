@@ -17,7 +17,7 @@ export default function ForeignPlay({ mode }: { mode: ParticipationTarget['mode'
   const differentAccount =
     !!session &&
     (session.homeOrigin !== data.account.homeOrigin ||
-      session.sourceInstanceId !== data.account.organizationId ||
+      session.sourceOrganizationId !== data.account.organizationId ||
       session.sourceActorId !== data.account.sourceActorId);
   if (differentAccount)
     return (
@@ -27,7 +27,7 @@ export default function ForeignPlay({ mode }: { mode: ParticipationTarget['mode'
     );
   const target: ParticipationTarget = {
     peerOrigin: data.account.homeOrigin,
-    sourceInstanceId: data.account.organizationId,
+    sourceOrganizationId: data.account.organizationId,
     hostInstanceId: instanceId,
     mode,
   };

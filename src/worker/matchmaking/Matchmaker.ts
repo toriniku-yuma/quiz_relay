@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { ParticipationTarget } from '../../shared/participation.ts';
 import { settings } from '../../shared/settings.ts';
 import { loadMatchDefinition } from '../catalog/database.ts';
-import type { MatchDefinition, VersionRef } from '../catalog/definition.ts';
+import type { MatchDefinition } from '../catalog/definition.ts';
 import { contentHash } from '../catalog/hash.ts';
 import type { Env } from '../env.ts';
 import {
@@ -12,6 +12,7 @@ import {
   releaseForeignEntry,
 } from '../federation/slots.ts';
 import { anonymizeDefinition } from '../game/privacy.ts';
+import { matchRoomName, userRoomName } from '../game/room-names.ts';
 import type { Participant } from '../rooms/database.ts';
 import { scheduledD1 } from '../scheduled.ts';
 
@@ -25,22 +26,22 @@ type Entry = {
   name: string;
   pending?: MatchDefinition | true;
   revoking?: string;
-  scope?: InstanceScope;
-  generation?: string;
+  scope: InstanceScope;
+  generation: string;
   userRoom?: boolean;
-  guest?: boolean;
+  guest: boolean;
   requestHash?: string;
   operationId?: string;
 };
 type Queue = {
   actors: Record<string, Entry>;
-  foreign?: Record<string, ForeignEntry[]>;
-  foreignIntent?: Record<string, string>;
-  foreignDepartures?: Record<string, Entry>;
-  foreignChecked?: Record<string, number>;
-  withdrawals?: Record<string, string>;
-  loggingOut?: Record<string, boolean>;
-  switches?: Record<
+  foreign: Record<string, ForeignEntry[]>;
+  foreignIntent: Record<string, string>;
+  foreignDepartures: Record<string, Entry>;
+  foreignChecked: Record<string, number>;
+  withdrawals: Record<string, string>;
+  loggingOut: Record<string, boolean>;
+  switches: Record<
     string,
     {
       previous: Entry;
@@ -61,7 +62,6 @@ type AdmissionReceipt = {
   closed?: boolean;
   cancelling?: Entry;
 };
-const generation = (entry: Entry) => entry.generation ?? entry.token;
 
 export class Matchmaker extends DurableObject<Env> {
   private logouts = new Map<string, Promise<{ ok: true }>>();
@@ -77,19 +77,13 @@ export class Matchmaker extends DurableObject<Env> {
   async enter(
     actorId: string,
     name: string,
-    reference?: VersionRef,
-    resume = false,
-    scope?: InstanceScope,
+    resume: boolean,
+    scope: InstanceScope,
     guest = false,
     operationId?: string,
   ) {
     const requestHash = operationId
-      ? await contentHash({
-          name,
-          reference: reference ?? null,
-          scope: scope ?? null,
-          guest,
-        })
+      ? await contentHash({ name, scope, guest })
       : undefined;
     const allowed = await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
@@ -105,9 +99,9 @@ export class Matchmaker extends DurableObject<Env> {
     const initial = await this.ctx.blockConcurrencyWhile<Admission | null>(async () => {
       const queue = await this.read();
       const entry = queue.actors[actorId];
-      if (queue.withdrawals?.[actorId])
+      if (queue.withdrawals[actorId])
         return { ok: false as const, code: 'WITHDRAWAL_PENDING' };
-      if (this.logouts.has(actorId) || queue.loggingOut?.[actorId])
+      if (this.logouts.has(actorId) || queue.loggingOut[actorId])
         return { ok: false as const, code: 'LOGOUT_PENDING' };
       if (operationId) {
         const receipt = (
@@ -119,7 +113,7 @@ export class Matchmaker extends DurableObject<Env> {
           if (receipt.closed) return { ok: false, code: 'STALE_REQUEST' };
           if (receipt.hash !== requestHash)
             return { ok: false, code: 'OPERATION_CONFLICT' };
-          if (!entry || generation(entry) !== receipt.generation)
+          if (!entry || entry.generation !== receipt.generation)
             return { ok: false, code: 'STALE_REQUEST' };
           return { entry };
         }
@@ -129,18 +123,17 @@ export class Matchmaker extends DurableObject<Env> {
       if (entry) {
         await this.write(queue);
         if (!resume && operationId) {
-          if (queue.switches?.[actorId])
-            return { ok: false, code: 'MATCH_SWITCH_PENDING' };
+          if (queue.switches[actorId]) return { ok: false, code: 'MATCH_SWITCH_PENDING' };
           queue.rates[actorId].admissionId = admissionId;
           await this.write(queue);
           return null;
         }
-        if (entry.scope?.id !== scope?.id || entry.scope?.mode !== scope?.mode)
+        if (entry.scope.id !== scope.id || entry.scope.mode !== scope.mode)
           return {
             ok: false as const,
             code: 'OTHER_INSTANCE_ACTIVE',
-            instanceId: entry.scope?.id,
-            mode: entry.scope?.mode ?? 'ranked',
+            instanceId: entry.scope.id,
+            mode: entry.scope.mode ?? 'ranked',
           };
         if (!resume) return { ok: false as const, code: 'ALREADY_JOINED' };
         return { entry };
@@ -159,22 +152,18 @@ export class Matchmaker extends DurableObject<Env> {
     let definition: MatchDefinition;
     try {
       definition = await loadMatchDefinition(
-        scope
-          ? {
-              ...this.env,
-              GAME_OWNER: scope.owner,
-              GAME_CONFIG_PROFILE:
-                scope.mode === 'casual'
-                  ? `${this.env.GAME_CONFIG_PROFILE}-casual`
-                  : this.env.GAME_CONFIG_PROFILE,
-            }
-          : this.env,
-        reference,
+        this.env,
+        {
+          owner: scope.owner,
+          profile:
+            scope.mode === 'casual'
+              ? `${this.env.GAME_CONFIG_PROFILE}-casual`
+              : this.env.GAME_CONFIG_PROFILE,
+        },
         actorId,
       );
     } catch (error) {
       if (
-        scope &&
         error instanceof Error &&
         ['NO_RANKED_QUESTIONS', 'RANKED_NOT_CONFIGURED'].includes(error.message)
       ) {
@@ -183,21 +172,21 @@ export class Matchmaker extends DurableObject<Env> {
       }
       return { ok: false as const, code: 'GAME_DATABASE_UNAVAILABLE' };
     }
-    if (scope && definition.competition.owner !== scope.owner)
+    if (definition.competition.owner !== scope.owner)
       return { ok: false as const, code: 'INSTANCE_MISMATCH' };
-    const key = JSON.stringify(
-      scope
-        ? [scope.id, scope.mode ?? 'ranked', definition.competition]
-        : definition.competition,
-    );
+    const key = JSON.stringify([
+      scope.id,
+      scope.mode ?? 'ranked',
+      definition.competition,
+    ]);
     if (
       new Set(
         Object.values((await this.read()).actors)
-          .filter((entry) => entry.scope?.id === scope?.id)
+          .filter((entry) => entry.scope.id === scope.id)
           .map((entry) => entry.room),
       ).size >= settings.lobby.maxRooms
     )
-      await this.clean(undefined, scope?.id ?? '');
+      await this.clean(undefined, scope.id);
     const snapshot = await this.read();
     const rooms = [
       ...new Set(
@@ -223,9 +212,9 @@ export class Matchmaker extends DurableObject<Env> {
         )?.[operationId]?.closed
       )
         return { ok: false, code: 'STALE_REQUEST' };
-      if (queue.withdrawals?.[actorId])
+      if (queue.withdrawals[actorId])
         return { ok: false as const, code: 'WITHDRAWAL_PENDING' };
-      if (this.logouts.has(actorId) || queue.loggingOut?.[actorId])
+      if (this.logouts.has(actorId) || queue.loggingOut[actorId])
         return { ok: false as const, code: 'LOGOUT_PENDING' };
       if (this.slotCount(queue, actorId) >= 2)
         return { ok: false as const, code: 'MATCH_SWITCH_PENDING' };
@@ -233,7 +222,7 @@ export class Matchmaker extends DurableObject<Env> {
         return { ok: false as const, code: 'MATCHMAKING_FULL' };
       if (queue.actors[actorId] && !operationId)
         return { ok: false as const, code: 'ALREADY_JOINED' };
-      if (queue.switches?.[actorId]) return { ok: false, code: 'MATCH_SWITCH_PENDING' };
+      if (queue.switches[actorId]) return { ok: false, code: 'MATCH_SWITCH_PENDING' };
       if (queue.rates[actorId]?.admissionId !== admissionId)
         return { ok: false as const, code: 'STALE_REQUEST' };
       const previous = queue.actors[actorId];
@@ -259,7 +248,7 @@ export class Matchmaker extends DurableObject<Env> {
         !available &&
         new Set(
           Object.values(queue.actors)
-            .filter((item) => item.scope?.id === scope?.id)
+            .filter((item) => item.scope.id === scope.id)
             .map((item) => item.room),
         ).size >= settings.lobby.maxRooms
       )
@@ -276,15 +265,13 @@ export class Matchmaker extends DurableObject<Env> {
         pending: true,
         operationId,
         requestHash,
-        ...(scope ? { scope } : {}),
+        scope,
       };
-      queue.foreignIntent ??= {};
-      queue.foreignIntent[actorId] = `local:${generation(entry)}`;
+      queue.foreignIntent[actorId] = `local:${entry.generation}`;
       if (previous) {
-        queue.switches ??= {};
         queue.switches[actorId] = {
           previous,
-          successor: generation(entry),
+          successor: entry.generation,
           committed: false,
         };
       }
@@ -297,12 +284,12 @@ export class Matchmaker extends DurableObject<Env> {
           if (receipt.expires <= Date.now() && !receipt.cancelling) delete operations[id];
         operations[operationId] = {
           hash: requestHash ?? '',
-          generation: generation(entry),
+          generation: entry.generation,
           expires: Date.now() + settings.lobby.sessionLifetimeMs,
         };
         await this.ctx.storage.put(`admissions:${actorId}`, operations);
       }
-      await this.ctx.storage.put(`definition:${generation(entry)}`, definition);
+      await this.ctx.storage.put(`definition:${entry.generation}`, definition);
       const receipts =
         (await this.ctx.storage.get<Record<string, number>>(`sessions:${actorId}`)) ?? {};
       for (const [room, expires] of Object.entries(receipts))
@@ -338,17 +325,17 @@ export class Matchmaker extends DurableObject<Env> {
         await this.write(queue);
         return { ok: false, code: 'RATE_LIMIT' };
       }
-      if (queue.withdrawals?.[actor.id]) return { ok: false, code: 'WITHDRAWAL_PENDING' };
-      if (this.logouts.has(actor.id) || queue.loggingOut?.[actor.id])
+      if (queue.withdrawals[actor.id]) return { ok: false, code: 'WITHDRAWAL_PENDING' };
+      if (this.logouts.has(actor.id) || queue.loggingOut[actor.id])
         return { ok: false, code: 'LOGOUT_PENDING' };
       const existing = queue.actors[actor.id];
       if (existing) {
         if (
           !existing.userRoom ||
           existing.room !== room ||
-          existing.scope?.id !== scope.id
+          existing.scope.id !== scope.id
         ) {
-          if (queue.switches?.[actor.id])
+          if (queue.switches[actor.id])
             return { ok: false, code: 'MATCH_SWITCH_PENDING' };
         } else {
           if (existing.pending && existing.requestHash !== hash)
@@ -372,8 +359,7 @@ export class Matchmaker extends DurableObject<Env> {
       };
       if (this.slotCount(queue, actor.id) >= 2)
         return { ok: false, code: 'MATCH_SWITCH_PENDING' };
-      queue.foreignIntent ??= {};
-      queue.foreignIntent[actor.id] = `local:${generation(entry)}`;
+      queue.foreignIntent[actor.id] = `local:${entry.generation}`;
       const receipts =
         (await this.ctx.storage.get<Record<string, AdmissionReceipt>>(
           `admissions:${actor.id}`,
@@ -388,15 +374,14 @@ export class Matchmaker extends DurableObject<Env> {
         if (receipt.expires <= Date.now() && !receipt.cancelling) delete receipts[id];
       receipts[input.operationId] = {
         hash,
-        generation: generation(entry),
+        generation: entry.generation,
         expires: Date.now() + settings.lobby.sessionLifetimeMs,
       };
       await this.ctx.storage.put(`admissions:${actor.id}`, receipts);
       if (existing) {
-        queue.switches ??= {};
         queue.switches[actor.id] = {
           previous: existing,
-          successor: generation(entry),
+          successor: entry.generation,
           committed: false,
         };
       }
@@ -419,7 +404,7 @@ export class Matchmaker extends DurableObject<Env> {
 
   async resumeRoom(actor: string, room: string, instanceId: string) {
     const entry = (await this.read()).actors[actor];
-    if (!entry?.userRoom || entry.room !== room || entry.scope?.id !== instanceId)
+    if (!entry?.userRoom || entry.room !== room || entry.scope.id !== instanceId)
       return { ok: false as const, code: 'STALE_RESERVATION' };
     return this.reserve(actor, entry);
   }
@@ -432,19 +417,19 @@ export class Matchmaker extends DurableObject<Env> {
     if (entry.revoking) {
       await this.finishRevocation(actor, entry);
       const current = (await this.read()).actors[actor];
-      if (!current || generation(current) !== generation(entry))
+      if (!current || current.generation !== entry.generation)
         return { ok: false as const, code: 'STALE_REQUEST' };
       entry = current;
     }
     const definition =
       entry.pending === true
-        ? await this.ctx.storage.get<MatchDefinition>(`definition:${generation(entry)}`)
+        ? await this.ctx.storage.get<MatchDefinition>(`definition:${entry.generation}`)
         : entry.pending;
     const result = await (entry.userRoom
       ? this.room(entry.room, true).joinUserRoom(
-          { id: actor, name: entry.name, guest: !!entry.guest },
+          { id: actor, name: entry.name, guest: entry.guest },
           entry.token,
-          generation(entry),
+          entry.generation,
           credentials?.password ?? '',
           credentials?.invite ?? '',
           entry.scope,
@@ -455,7 +440,7 @@ export class Matchmaker extends DurableObject<Env> {
           entry.token,
           definition,
           entry.scope,
-          generation(entry),
+          entry.generation,
           entry.guest,
         )
     ).catch(() => null);
@@ -464,7 +449,7 @@ export class Matchmaker extends DurableObject<Env> {
       await this.room(entry.room, true).cancelReservation(
         actor,
         false,
-        generation(entry),
+        entry.generation,
         entry.token,
       );
     const admitted = await this.ctx.blockConcurrencyWhile(async () => {
@@ -472,14 +457,14 @@ export class Matchmaker extends DurableObject<Env> {
       const current = queue.actors[actor];
       if (
         !current ||
-        generation(current) !== generation(entry) ||
+        current.generation !== entry.generation ||
         current.token !== entry.token
       )
         return { ok: false as const, code: 'STALE_REQUEST' };
       // A rejected token does not prove the actor has left an active match.
       if (result.ok || !entry.userRoom) {
         delete current.pending;
-        await this.ctx.storage.delete(`definition:${generation(entry)}`);
+        await this.ctx.storage.delete(`definition:${entry.generation}`);
       }
       if (result.ok && entry.userRoom) {
         const receipts =
@@ -488,17 +473,17 @@ export class Matchmaker extends DurableObject<Env> {
         await this.ctx.storage.put(`sessions:${actor}`, receipts);
       }
       if (!result.ok && entry.userRoom) delete queue.actors[actor];
-      const switching = queue.switches?.[actor];
-      if (switching?.successor === generation(entry)) {
+      const switching = queue.switches[actor];
+      if (switching?.successor === entry.generation) {
         if (result.ok) switching.committed = true;
         else {
           if (switching.previousCancelled) delete queue.actors[actor];
           else queue.actors[actor] = switching.previous;
-          delete queue.switches?.[actor];
+          delete queue.switches[actor];
         }
       }
-      if (!result.ok && queue.foreignIntent?.[actor] === `local:${generation(entry)}`) {
-        const previous = queue.foreign?.[actor]?.find((item) => item.state === 'active');
+      if (!result.ok && queue.foreignIntent[actor] === `local:${entry.generation}`) {
+        const previous = queue.foreign[actor]?.find((item) => item.state === 'active');
         if (previous) queue.foreignIntent[actor] = previous.operationId;
       }
       await this.write(queue);
@@ -516,17 +501,14 @@ export class Matchmaker extends DurableObject<Env> {
       await this.finishSwitch(actor);
       await this.ctx.blockConcurrencyWhile(async () => {
         const queue = await this.read();
-        if (
-          queue.actors[actor] &&
-          generation(queue.actors[actor]) === generation(entry)
-        ) {
-          for (const previous of queue.foreign?.[actor] ?? [])
+        if (queue.actors[actor] && queue.actors[actor].generation === entry.generation) {
+          for (const previous of queue.foreign[actor] ?? [])
             if (
               previous.state !== 'releasing' &&
-              queue.foreignIntent?.[actor] === `local:${generation(entry)}`
+              queue.foreignIntent[actor] === `local:${entry.generation}`
             ) {
               previous.state = 'releasing';
-              previous.successor = generation(entry);
+              previous.successor = entry.generation;
             }
           await this.write(queue);
         }
@@ -537,7 +519,7 @@ export class Matchmaker extends DurableObject<Env> {
   }
 
   private async finishSwitch(actor: string) {
-    const switching = (await this.read()).switches?.[actor];
+    const switching = (await this.read()).switches[actor];
     if (!switching?.committed) return;
     try {
       const previous = switching.previous;
@@ -545,7 +527,7 @@ export class Matchmaker extends DurableObject<Env> {
         !(await this.room(previous.room, previous.userRoom).cancelReservation(
           actor,
           true,
-          generation(previous),
+          previous.generation,
           previous.revoking ?? previous.token,
           true,
         ))
@@ -553,9 +535,9 @@ export class Matchmaker extends DurableObject<Env> {
         return;
       await this.ctx.blockConcurrencyWhile(async () => {
         const queue = await this.read();
-        if (queue.switches?.[actor]?.successor === switching.successor) {
+        if (queue.switches[actor]?.successor === switching.successor) {
           delete queue.switches[actor];
-          await this.ctx.storage.delete(`definition:${generation(previous)}`);
+          await this.ctx.storage.delete(`definition:${previous.generation}`);
         }
         await this.write(queue);
       });
@@ -574,7 +556,7 @@ export class Matchmaker extends DurableObject<Env> {
     const initial = await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
       const entry = queue.actors[actorId];
-      if (entry && (entry.room !== expectedRoom || entry.scope?.id !== instanceId))
+      if (entry && (entry.room !== expectedRoom || entry.scope.id !== instanceId))
         return { ok: false as const, code: 'STALE_ROOM' };
       if (revoke && !forfeit && entry && !entry.revoking) {
         entry.revoking = entry.token;
@@ -597,7 +579,7 @@ export class Matchmaker extends DurableObject<Env> {
     const accepted = await this.room(entry.room, entry.userRoom).cancelReservation(
       actorId,
       revoke || forfeit,
-      generation(entry),
+      entry.generation,
       entry.token,
       forfeit,
     );
@@ -605,19 +587,17 @@ export class Matchmaker extends DurableObject<Env> {
     return this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
       const current = queue.actors[actorId];
-      if (current && generation(current) === generation(entry)) {
-        const switching = queue.switches?.[actorId];
-        if (switching?.successor === generation(entry) && !switching.committed) {
+      if (current && current.generation === entry.generation) {
+        const switching = queue.switches[actorId];
+        if (switching?.successor === entry.generation && !switching.committed) {
           if (switching.previousCancelled) delete queue.actors[actorId];
           else queue.actors[actorId] = switching.previous;
-          delete queue.switches?.[actorId];
+          delete queue.switches[actorId];
         } else delete queue.actors[actorId];
-        await this.ctx.storage.delete(`definition:${generation(entry)}`);
+        await this.ctx.storage.delete(`definition:${entry.generation}`);
       }
-      if (queue.foreignIntent?.[actorId] === `local:${generation(entry)}`) {
-        const previous = queue.foreign?.[actorId]?.find(
-          (item) => item.state === 'active',
-        );
+      if (queue.foreignIntent[actorId] === `local:${entry.generation}`) {
+        const previous = queue.foreign[actorId]?.find((item) => item.state === 'active');
         if (previous) queue.foreignIntent[actorId] = previous.operationId;
       }
       await this.write(queue);
@@ -630,7 +610,7 @@ export class Matchmaker extends DurableObject<Env> {
     const accepted = await this.room(entry.room, entry.userRoom).cancelReservation(
       actor,
       true,
-      generation(entry),
+      entry.generation,
       entry.revoking,
     );
     if (!accepted) throw new Error('REVOCATION_FAILED');
@@ -639,7 +619,7 @@ export class Matchmaker extends DurableObject<Env> {
       const current = queue.actors[actor];
       if (
         current &&
-        generation(current) === generation(entry) &&
+        current.generation === entry.generation &&
         current.revoking === entry.revoking
       )
         delete current.revoking;
@@ -662,19 +642,19 @@ export class Matchmaker extends DurableObject<Env> {
       const receipt = receipts[operationId] ?? {
         expires: Date.now() + settings.lobby.sessionLifetimeMs,
       };
-      const entry = [queue.actors[actor], queue.switches?.[actor]?.previous].find(
+      const entry = [queue.actors[actor], queue.switches[actor]?.previous].find(
         (entry) =>
           entry?.operationId === operationId &&
           !!entry.userRoom === (mode === 'room') &&
-          entry.scope?.id === instanceId &&
-          entry.scope?.mode === mode,
+          entry.scope.id === instanceId &&
+          entry.scope.mode === mode,
       );
       if (
         entry?.operationId === operationId &&
         !!entry.userRoom === (mode === 'room') &&
-        entry.scope?.id === instanceId &&
-        entry.scope?.mode === mode &&
-        (!receipt.generation || receipt.generation === generation(entry))
+        entry.scope.id === instanceId &&
+        entry.scope.mode === mode &&
+        (!receipt.generation || receipt.generation === entry.generation)
       )
         receipt.cancelling = entry;
       receipt.closed = true;
@@ -692,7 +672,7 @@ export class Matchmaker extends DurableObject<Env> {
     const entry = receipt?.cancelling;
     if (!entry) return { ok: true as const };
     const accepted = await this.room(entry.room, entry.userRoom)
-      .cancelReservation(actor, false, generation(entry), entry.token, false)
+      .cancelReservation(actor, false, entry.generation, entry.token, false)
       .catch(() => null);
     if (accepted === null)
       return { ok: false as const, code: 'GAME_DATABASE_UNAVAILABLE' };
@@ -702,27 +682,27 @@ export class Matchmaker extends DurableObject<Env> {
           `admissions:${actor}`,
         )) ?? {};
       const saved = receipts[operationId];
-      if (saved?.cancelling && generation(saved.cancelling) === generation(entry))
+      if (saved?.cancelling && saved.cancelling.generation === entry.generation)
         delete saved.cancelling;
       await this.ctx.storage.put(`admissions:${actor}`, receipts);
       const queue = await this.read();
       if (
         accepted &&
         queue.actors[actor] &&
-        generation(queue.actors[actor]) === generation(entry)
+        queue.actors[actor].generation === entry.generation
       ) {
-        const switching = queue.switches?.[actor];
-        if (switching?.successor === generation(entry) && !switching.committed) {
+        const switching = queue.switches[actor];
+        if (switching?.successor === entry.generation && !switching.committed) {
           if (switching.previousCancelled) delete queue.actors[actor];
           else queue.actors[actor] = switching.previous;
-          delete queue.switches?.[actor];
+          delete queue.switches[actor];
         } else delete queue.actors[actor];
-        await this.ctx.storage.delete(`definition:${generation(entry)}`);
+        await this.ctx.storage.delete(`definition:${entry.generation}`);
       }
       if (
         accepted &&
-        queue.switches?.[actor] &&
-        generation(queue.switches[actor].previous) === generation(entry)
+        queue.switches[actor] &&
+        queue.switches[actor].previous.generation === entry.generation
       )
         queue.switches[actor].previousCancelled = true;
       await this.write(queue);
@@ -733,7 +713,7 @@ export class Matchmaker extends DurableObject<Env> {
           ok: false as const,
           code: 'MATCH_STARTED',
           room: entry.room,
-          instanceId: entry.scope?.id,
+          instanceId: entry.scope.id,
         };
   }
 
@@ -756,12 +736,11 @@ export class Matchmaker extends DurableObject<Env> {
   private async logoutActorSessions(actor: string, cookieRooms: string[]) {
     const { entry, previous } = await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
-      queue.loggingOut ??= {};
       const alreadyLoggingOut = queue.loggingOut[actor];
       queue.loggingOut[actor] = true;
       if (queue.rates[actor]) delete queue.rates[actor].admissionId;
       const entry = queue.actors[actor];
-      for (const foreign of queue.foreign?.[actor] ?? []) {
+      for (const foreign of queue.foreign[actor] ?? []) {
         foreign.authenticated = false;
         foreign.logoutPending = true;
       }
@@ -769,7 +748,7 @@ export class Matchmaker extends DurableObject<Env> {
         entry.revoking = entry.token;
         entry.token = crypto.randomUUID() + crypto.randomUUID();
       }
-      const previous = queue.switches?.[actor]?.previous;
+      const previous = queue.switches[actor]?.previous;
       if (previous && !previous.revoking && !alreadyLoggingOut) {
         previous.revoking = previous.token;
         previous.token = crypto.randomUUID() + crypto.randomUUID();
@@ -784,7 +763,7 @@ export class Matchmaker extends DurableObject<Env> {
       !(await this.room(previous.room, previous.userRoom).cancelReservation(
         actor,
         true,
-        generation(previous),
+        previous.generation,
         previous.revoking ?? previous.token,
       ))
     )
@@ -808,8 +787,8 @@ export class Matchmaker extends DurableObject<Env> {
     );
     await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
-      delete queue.loggingOut?.[actor];
-      if (previous && queue.switches?.[actor]?.previous.token === previous.token)
+      delete queue.loggingOut[actor];
+      if (previous && queue.switches[actor]?.previous.token === previous.token)
         delete queue.switches[actor].previous.revoking;
       await this.ctx.storage.delete(`sessions:${actor}`);
       // Retain the active room for later logout, even if no cookie reached the browser.
@@ -836,9 +815,8 @@ export class Matchmaker extends DurableObject<Env> {
     await this.cleanForeign(actor);
     const blocked = await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
-      if (queue.withdrawals?.[actor] && queue.withdrawals[actor] !== operationId)
+      if (queue.withdrawals[actor] && queue.withdrawals[actor] !== operationId)
         return true;
-      queue.withdrawals ??= {};
       queue.withdrawals[actor] = operationId;
       if (queue.rates[actor]) delete queue.rates[actor].admissionId;
       await this.write(queue);
@@ -846,11 +824,11 @@ export class Matchmaker extends DurableObject<Env> {
     });
     if (blocked) return { ok: false as const, code: 'WITHDRAWAL_PENDING' };
     await this.clean(actor);
-    if ((await this.read()).switches?.[actor])
+    if ((await this.read()).switches[actor])
       return { ok: false as const, code: 'MATCH_SWITCH_PENDING' };
     if (
-      (await this.read()).foreign?.[actor]?.length ||
-      (await this.read()).foreignDepartures?.[actor]
+      (await this.read()).foreign[actor]?.length ||
+      (await this.read()).foreignDepartures[actor]
     )
       return { ok: false as const, code: 'CANCEL_WAITING_FIRST' };
     const entry = (await this.read()).actors[actor];
@@ -865,7 +843,7 @@ export class Matchmaker extends DurableObject<Env> {
   async cancelWithdrawal(actor: string, operationId: string) {
     await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
-      if (queue.withdrawals?.[actor] === operationId) delete queue.withdrawals[actor];
+      if (queue.withdrawals[actor] === operationId) delete queue.withdrawals[actor];
       await this.write(queue);
     });
   }
@@ -875,14 +853,14 @@ export class Matchmaker extends DurableObject<Env> {
       const queue = await this.read();
       const entries = [
         ...Object.entries(queue.actors),
-        ...Object.entries(queue.switches ?? {}).map(
+        ...Object.entries(queue.switches).map(
           ([id, switching]) => [id, switching.previous] as const,
         ),
       ];
       for (const [id, entry] of entries) {
         if (id === actorId) entry.name = '退会ユーザー';
         if (entry.pending === true) {
-          const key = `definition:${generation(entry)}`;
+          const key = `definition:${entry.generation}`;
           const definition = await this.ctx.storage.get<MatchDefinition>(key);
           if (definition) {
             anonymizeDefinition(definition, new Set(questionIds));
@@ -917,12 +895,12 @@ export class Matchmaker extends DurableObject<Env> {
     // occupied through an unknown response, including after the lease expires.
     const [foreignActor] = [
       ...new Set([
-        ...Object.keys(queue.foreign ?? {}),
-        ...Object.keys(queue.foreignDepartures ?? {}),
+        ...Object.keys(queue.foreign),
+        ...Object.keys(queue.foreignDepartures),
       ]),
     ].sort(
       (left, right) =>
-        (queue.foreignChecked?.[left] ?? 0) - (queue.foreignChecked?.[right] ?? 0),
+        (queue.foreignChecked[left] ?? 0) - (queue.foreignChecked[right] ?? 0),
     );
     if (foreignActor) await this.cleanForeign(foreignActor);
     const receiptCursor = await this.ctx.storage.get<string>('foreign-receipt-cursor');
@@ -937,7 +915,7 @@ export class Matchmaker extends DurableObject<Env> {
       await this.ctx.storage.put('foreign-receipt-cursor', [...receipts.keys()].at(-1));
     else await this.ctx.storage.delete('foreign-receipt-cursor');
     await Promise.all(
-      Object.keys(queue.switches ?? {}).map((actor) => this.finishSwitch(actor)),
+      Object.keys(queue.switches).map((actor) => this.finishSwitch(actor)),
     );
     const operations = await this.ctx.storage.list<Record<string, AdmissionReceipt>>({
       prefix: 'admissions:',
@@ -972,10 +950,9 @@ export class Matchmaker extends DurableObject<Env> {
     await Promise.all(
       [...scopes.values()].map(async ({ scope, band }) => {
         try {
-          await loadMatchDefinition({
-            ...this.env,
-            GAME_OWNER: scope.owner,
-            GAME_CONFIG_PROFILE:
+          await loadMatchDefinition(this.env, {
+            owner: scope.owner,
+            profile:
               scope.mode === 'casual'
                 ? `${this.env.GAME_CONFIG_PROFILE}-casual`
                 : band === undefined
@@ -996,10 +973,13 @@ export class Matchmaker extends DurableObject<Env> {
   private slotCount(queue: Queue, actor: string) {
     const local = [
       queue.actors[actor],
-      queue.switches?.[actor]?.previous,
-      queue.foreignDepartures?.[actor],
+      queue.switches[actor]?.previous,
+      queue.foreignDepartures[actor],
     ].filter((entry): entry is Entry => !!entry);
-    return new Set(local.map(generation)).size + (queue.foreign?.[actor]?.length ?? 0);
+    return (
+      new Set(local.map((entry) => entry.generation)).size +
+      (queue.foreign[actor]?.length ?? 0)
+    );
   }
   async claimForeign(
     actor: string,
@@ -1013,9 +993,9 @@ export class Matchmaker extends DurableObject<Env> {
     const requestHash = await contentHash(target);
     return this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
-      if (queue.withdrawals?.[actor])
+      if (queue.withdrawals[actor])
         return { ok: false as const, code: 'WITHDRAWAL_PENDING' };
-      if (queue.loggingOut?.[actor] || this.logouts.has(actor))
+      if (queue.loggingOut[actor] || this.logouts.has(actor))
         return { ok: false as const, code: 'LOGOUT_PENDING' };
       if (!this.rate(queue, actor)) {
         await this.write(queue);
@@ -1024,7 +1004,7 @@ export class Matchmaker extends DurableObject<Env> {
       const receipt = await this.ctx.storage.get<{ hash: string; closed?: boolean }>(
         `foreign-admission:${actor}:${operationId}`,
       );
-      const existing = queue.foreign?.[actor]?.find(
+      const existing = queue.foreign[actor]?.find(
         (entry) => entry.operationId === operationId,
       );
       if (receipt) {
@@ -1048,11 +1028,10 @@ export class Matchmaker extends DurableObject<Env> {
       if (this.slotCount(queue, actor) >= 2)
         return { ok: false as const, code: 'MATCH_SWITCH_PENDING' };
       if (
-        !queue.foreign?.[actor] &&
-        Object.keys(queue.foreign ?? {}).length >= settings.lobby.maxRateActors
+        !queue.foreign[actor] &&
+        Object.keys(queue.foreign).length >= settings.lobby.maxRateActors
       )
         return { ok: false as const, code: 'MATCHMAKING_FULL' };
-      queue.foreign ??= {};
       if (!queue.foreign[actor]) queue.foreign[actor] = [];
       const authorizationId = crypto.randomUUID();
       queue.foreign[actor].push({
@@ -1066,7 +1045,6 @@ export class Matchmaker extends DurableObject<Env> {
         authorizationId,
         authenticated: true,
       });
-      queue.foreignIntent ??= {};
       queue.foreignIntent[actor] = operationId;
       if (queue.rates[actor]) queue.rates[actor].admissionId = operationId;
       await this.ctx.storage.put(`foreign-admission:${actor}:${operationId}`, {
@@ -1086,9 +1064,7 @@ export class Matchmaker extends DurableObject<Env> {
   ) {
     const previous = await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read(),
-        entry = queue.foreign?.[actor]?.find(
-          (entry) => entry.operationId === operationId,
-        );
+        entry = queue.foreign[actor]?.find((entry) => entry.operationId === operationId);
       if (
         !entry?.authenticated ||
         entry.logoutPending ||
@@ -1097,7 +1073,7 @@ export class Matchmaker extends DurableObject<Env> {
         (entry.state === 'reserving' && entry.expiresAt <= Date.now())
       )
         return { ok: false as const, code: 'STALE_REQUEST' };
-      if (queue.foreignIntent?.[actor] !== operationId) {
+      if (queue.foreignIntent[actor] !== operationId) {
         if (entry.state === 'reserving') entry.state = 'releasing';
         await this.write(queue);
         return { ok: false as const, code: 'STALE_REQUEST' };
@@ -1107,14 +1083,13 @@ export class Matchmaker extends DurableObject<Env> {
       entry.state = 'active';
       entry.reservationId = reservationId;
       if (queue.actors[actor]) {
-        queue.foreignDepartures ??= {};
         queue.foreignDepartures[actor] = queue.actors[actor];
       }
       entry.expiresAt = Math.min(
         expiresAt,
         entry.createdAt + settings.lobby.sessionLifetimeMs,
       );
-      for (const old of queue.foreign?.[actor] ?? [])
+      for (const old of queue.foreign[actor] ?? [])
         if (old.operationId !== operationId) {
           old.state = 'releasing';
           old.successor = operationId;
@@ -1130,9 +1105,7 @@ export class Matchmaker extends DurableObject<Env> {
   private async closeForeignEntry(actor: string, operationId: string) {
     await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read(),
-        entry = queue.foreign?.[actor]?.find(
-          (entry) => entry.operationId === operationId,
-        );
+        entry = queue.foreign[actor]?.find((entry) => entry.operationId === operationId);
       if (!entry) return;
       const foreign = queue.foreign;
       if (!foreign) return;
@@ -1147,18 +1120,18 @@ export class Matchmaker extends DurableObject<Env> {
         (entry) => entry.operationId !== operationId,
       );
       if (!foreign[actor].length) delete foreign[actor];
-      if (queue.foreignIntent?.[actor] === operationId) {
-        const remaining = queue.foreign?.[actor]?.find((row) => row.state === 'active');
+      if (queue.foreignIntent[actor] === operationId) {
+        const remaining = queue.foreign[actor]?.find((row) => row.state === 'active');
         if (remaining) queue.foreignIntent[actor] = remaining.operationId;
         else if (queue.actors[actor])
-          queue.foreignIntent[actor] = `local:${generation(queue.actors[actor])}`;
+          queue.foreignIntent[actor] = `local:${queue.actors[actor].generation}`;
         else delete queue.foreignIntent[actor];
       }
       await this.write(queue);
     });
   }
   private async finishForeignReleases(actor: string) {
-    for (const entry of (await this.read()).foreign?.[actor] ?? []) {
+    for (const entry of (await this.read()).foreign[actor] ?? []) {
       if (entry.state !== 'releasing') continue;
       try {
         await releaseForeignEntry(this.env, actor, entry);
@@ -1175,7 +1148,7 @@ export class Matchmaker extends DurableObject<Env> {
     target: ParticipationTarget,
   ) {
     const queue = await this.read(),
-      entry = queue.foreign?.[actor]?.find((row) => row.operationId === operationId);
+      entry = queue.foreign[actor]?.find((row) => row.operationId === operationId);
     return (
       !!entry &&
       entry.authenticated &&
@@ -1184,8 +1157,8 @@ export class Matchmaker extends DurableObject<Env> {
       entry.expiresAt > Date.now() &&
       entry.authorizationId === authorizationId &&
       entry.requestHash === (await contentHash(target)) &&
-      !queue.loggingOut?.[actor] &&
-      !queue.withdrawals?.[actor]
+      !queue.loggingOut[actor] &&
+      !queue.withdrawals[actor]
     );
   }
   async foreignContinuation(
@@ -1194,25 +1167,25 @@ export class Matchmaker extends DurableObject<Env> {
     target: ParticipationTarget,
   ) {
     const queue = await this.read(),
-      entry = queue.foreign?.[actor]?.find((row) => row.operationId === operationId);
+      entry = queue.foreign[actor]?.find((row) => row.operationId === operationId);
     return (
       !!entry &&
       entry.state === 'active' &&
       entry.expiresAt > Date.now() &&
       !entry.logoutPending &&
-      !queue.loggingOut?.[actor] &&
-      !queue.withdrawals?.[actor] &&
+      !queue.loggingOut[actor] &&
+      !queue.withdrawals[actor] &&
       entry.requestHash === (await contentHash(target))
     );
   }
   private async finishForeignLogouts(actor: string) {
-    for (const entry of (await this.read()).foreign?.[actor] ?? []) {
+    for (const entry of (await this.read()).foreign[actor] ?? []) {
       if (!entry.logoutPending || entry.state === 'releasing') continue;
       try {
         await logoutForeignEntry(this.env, actor, entry);
         await this.ctx.blockConcurrencyWhile(async () => {
           const queue = await this.read(),
-            current = queue.foreign?.[actor]?.find(
+            current = queue.foreign[actor]?.find(
               (row) => row.operationId === entry.operationId,
             );
           if (current?.authorizationId === entry.authorizationId)
@@ -1226,11 +1199,10 @@ export class Matchmaker extends DurableObject<Env> {
   }
   private async cleanForeign(actor: string) {
     const initial = await this.read(),
-      entries = initial.foreign?.[actor] ?? [];
-    if (!entries.length && !initial.foreignDepartures?.[actor]) return;
+      entries = initial.foreign[actor] ?? [];
+    if (!entries.length && !initial.foreignDepartures[actor]) return;
     await this.ctx.blockConcurrencyWhile(async () => {
       const queue = await this.read();
-      queue.foreignChecked ??= {};
       queue.foreignChecked[actor] = Date.now();
       await this.write(queue);
     });
@@ -1238,7 +1210,7 @@ export class Matchmaker extends DurableObject<Env> {
       if (entry.state === 'reserving' && entry.expiresAt <= Date.now())
         await this.ctx.blockConcurrencyWhile(async () => {
           const queue = await this.read(),
-            current = queue.foreign?.[actor]?.find(
+            current = queue.foreign[actor]?.find(
               (row) => row.operationId === entry.operationId,
             );
           if (current?.state === 'reserving') current.state = 'releasing';
@@ -1257,13 +1229,13 @@ export class Matchmaker extends DurableObject<Env> {
     await this.finishForeignDeparture(actor);
   }
   private async finishForeignDeparture(actor: string) {
-    const previous = (await this.read()).foreignDepartures?.[actor];
+    const previous = (await this.read()).foreignDepartures[actor];
     if (!previous) return;
     try {
       const closed = await this.room(previous.room, previous.userRoom).cancelReservation(
         actor,
         true,
-        generation(previous),
+        previous.generation,
         previous.revoking ?? previous.token,
         true,
       );
@@ -1271,16 +1243,16 @@ export class Matchmaker extends DurableObject<Env> {
       await this.ctx.blockConcurrencyWhile(async () => {
         const queue = await this.read();
         if (
-          queue.foreignDepartures?.[actor] &&
-          generation(queue.foreignDepartures[actor]) === generation(previous)
+          queue.foreignDepartures[actor] &&
+          queue.foreignDepartures[actor].generation === previous.generation
         ) {
           delete queue.foreignDepartures[actor];
           if (
             queue.actors[actor] &&
-            generation(queue.actors[actor]) === generation(previous)
+            queue.actors[actor].generation === previous.generation
           )
             delete queue.actors[actor];
-          await this.ctx.storage.delete(`definition:${generation(previous)}`);
+          await this.ctx.storage.delete(`definition:${previous.generation}`);
         }
         await this.write(queue);
       });
@@ -1292,8 +1264,8 @@ export class Matchmaker extends DurableObject<Env> {
     const queue = await this.read();
     const entries = Object.entries(queue.actors).filter(
       ([, entry]) =>
-        entry.scope?.id === scope.id &&
-        entry.scope?.mode === scope.mode &&
+        entry.scope.id === scope.id &&
+        entry.scope.mode === scope.mode &&
         !entry.userRoom &&
         (band === undefined || entry.band === band),
     );
@@ -1302,26 +1274,22 @@ export class Matchmaker extends DurableObject<Env> {
     await Promise.allSettled(
       entries.map(async ([actor, entry]) => {
         if (
-          !(await this.room(entry.room).cancelReservation(
-            actor,
-            false,
-            generation(entry),
-          ))
+          !(await this.room(entry.room).cancelReservation(actor, false, entry.generation))
         )
           return;
         await this.ctx.blockConcurrencyWhile(async () => {
           const current = await this.read();
           if (
             current.actors[actor] &&
-            generation(current.actors[actor]) === generation(entry)
+            current.actors[actor].generation === entry.generation
           ) {
-            const switching = current.switches?.[actor];
-            if (switching?.successor === generation(entry) && !switching.committed) {
+            const switching = current.switches[actor];
+            if (switching?.successor === entry.generation && !switching.committed) {
               if (switching.previousCancelled) delete current.actors[actor];
               else current.actors[actor] = switching.previous;
-              delete current.switches?.[actor];
+              delete current.switches[actor];
             } else delete current.actors[actor];
-            await this.ctx.storage.delete(`definition:${generation(entry)}`);
+            await this.ctx.storage.delete(`definition:${entry.generation}`);
           }
           await this.write(current);
         });
@@ -1329,24 +1297,36 @@ export class Matchmaker extends DurableObject<Env> {
     );
   }
   private room(id: string, userRoom = false) {
-    return this.env.GAME_ROOM.getByName(`${userRoom ? 'room' : '1c'}:${id}`);
+    return this.env.GAME_ROOM.getByName(userRoom ? userRoomName(id) : matchRoomName(id));
   }
   private async read(): Promise<Queue> {
-    return (await this.ctx.storage.get<Queue>('queue')) ?? { actors: {}, rates: {} };
+    return (
+      (await this.ctx.storage.get<Queue>('queue')) ?? {
+        actors: {},
+        foreign: {},
+        foreignIntent: {},
+        foreignDepartures: {},
+        foreignChecked: {},
+        withdrawals: {},
+        loggingOut: {},
+        switches: {},
+        rates: {},
+      }
+    );
   }
   private async write(queue: Queue) {
-    for (const actor of Object.keys(queue.foreignIntent ?? {}))
-      if (!queue.foreign?.[actor]?.length) delete queue.foreignIntent?.[actor];
-    for (const actor of Object.keys(queue.foreignChecked ?? {}))
-      if (!queue.foreign?.[actor]?.length && !queue.foreignDepartures?.[actor])
-        delete queue.foreignChecked?.[actor];
+    for (const actor of Object.keys(queue.foreignIntent))
+      if (!queue.foreign[actor]?.length) delete queue.foreignIntent[actor];
+    for (const actor of Object.keys(queue.foreignChecked))
+      if (!queue.foreign[actor]?.length && !queue.foreignDepartures[actor])
+        delete queue.foreignChecked[actor];
     await this.ctx.storage.put('queue', queue);
     if (
       Object.keys(queue.actors).length ||
       Object.keys(queue.rates).length ||
-      Object.keys(queue.switches ?? {}).length ||
-      Object.keys(queue.foreign ?? {}).length ||
-      Object.keys(queue.foreignDepartures ?? {}).length
+      Object.keys(queue.switches).length ||
+      Object.keys(queue.foreign).length ||
+      Object.keys(queue.foreignDepartures).length
     ) {
       const next = Date.now() + settings.lobby.cleanupIntervalMs;
       const alarm = await this.ctx.storage.getAlarm();
@@ -1370,7 +1350,7 @@ export class Matchmaker extends DurableObject<Env> {
     if (instanceId !== undefined)
       snapshot.actors = Object.fromEntries(
         Object.entries(snapshot.actors).filter(
-          ([, entry]) => (entry.scope?.id ?? '') === instanceId,
+          ([, entry]) => entry.scope.id === instanceId,
         ),
       );
     if (actorId)
@@ -1420,7 +1400,7 @@ export class Matchmaker extends DurableObject<Env> {
               await this.room(entry.room, entry.userRoom).cancelReservation(
                 actor,
                 false,
-                generation(entry),
+                entry.generation,
               )
             )
               released.push([actor, entry]);
@@ -1436,16 +1416,16 @@ export class Matchmaker extends DurableObject<Env> {
         const current = queue.actors[actor];
         if (
           current &&
-          generation(current) === generation(entry) &&
+          current.generation === entry.generation &&
           current.token === entry.token
         ) {
-          const switching = queue.switches?.[actor];
-          if (switching?.successor === generation(entry) && !switching.committed) {
+          const switching = queue.switches[actor];
+          if (switching?.successor === entry.generation && !switching.committed) {
             if (switching.previousCancelled) delete queue.actors[actor];
             else queue.actors[actor] = switching.previous;
-            delete queue.switches?.[actor];
+            delete queue.switches[actor];
           } else delete queue.actors[actor];
-          await this.ctx.storage.delete(`definition:${generation(entry)}`);
+          await this.ctx.storage.delete(`definition:${entry.generation}`);
         }
       }
       for (const [id, item] of Object.entries(queue.rates))

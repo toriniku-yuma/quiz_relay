@@ -1,16 +1,11 @@
 import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
-import {
-  disabledFederationPermissions,
-  type FederationMetadata,
-  federationPermissions,
-} from '../../shared/federation.ts';
+import type { FederationMetadata } from '../../shared/federation.ts';
 import { contentHash } from '../catalog/hash.ts';
 import { changeD1, type Database, rowsD1 } from '../db/d1.ts';
 import {
   federationMetadata,
   federationMetadataJobs,
   federationPeers,
-  federationPolicies,
   instances,
   organizations,
 } from '../db/schema.ts';
@@ -23,7 +18,6 @@ import {
 } from '../organization/access.ts';
 import { organizationIdentity, resolveInstance } from '../organization/database.ts';
 import { receivingParticipation } from './admission.ts';
-import { participationSource } from './participation-source.ts';
 import { federationDatabase, requestPeer } from './transport.ts';
 
 export const METADATA_PATH = '/federation/v1/metadata';
@@ -57,8 +51,8 @@ export async function localMetadata(
     .from(organizations)
     .orderBy(organizations.id)
     .limit(1);
-  // One transactional batch keeps the snapshot consistent without seven D1 round trips.
-  const [[peer], [organization], page, policies, [facts]] = await db.batch([
+  // One transactional batch keeps the snapshot consistent without several D1 round trips.
+  const [[peer], [organization], page, [facts]] = await db.batch([
     db.select().from(federationPeers).where(eq(federationPeers.origin, peerOrigin)),
     db.select().from(organizations).orderBy(organizations.id).limit(1),
     db
@@ -74,19 +68,6 @@ export async function localMetadata(
       )
       .orderBy(asc(instances.id))
       .limit(101),
-    db
-      .select()
-      .from(federationPolicies)
-      .where(
-        and(
-          eq(federationPolicies.peerOrigin, peerOrigin),
-          eq(federationPolicies.peerInstanceId, sourceInstanceId),
-          targetInstanceId
-            ? eq(federationPolicies.instanceId, targetInstanceId)
-            : undefined,
-        ),
-      )
-      .orderBy(federationPolicies.instanceId),
     db
       .select({
         value: sql<string>`coalesce(json_group_array(json_array(${instances.id},${instances.operationRevision},${instances.name},${instances.rankedPauseReason},${instances.casualPauseReason},${instances.casualConfig})), '[]')`,
@@ -108,7 +89,6 @@ export async function localMetadata(
     instances: (JSON.parse(facts.value) as [string, ...unknown[]][]).sort(
       ([left], [right]) => left.localeCompare(right),
     ),
-    policies,
     peer: {
       approved: peer.approved,
       blocked: peer.participationBlocked,
@@ -118,6 +98,8 @@ export async function localMetadata(
   });
   if (value.snapshot && value.snapshot !== snapshot)
     throw new OrganizationError('FEDERATION_SNAPSHOT_CHANGED', 409);
+  const ranked = receivingParticipation(organization, peer, 'ranked'),
+    casual = receivingParticipation(organization, peer, 'casual');
   return {
     snapshot,
     sourceInstanceId,
@@ -125,22 +107,8 @@ export async function localMetadata(
     instances: page.slice(0, 100).map((instance) => ({
       id: instance.id,
       name: instance.name,
-      ranked: !instance.rankedPauseReason,
-      casual: !instance.casualPauseReason && instance.casualConfig.enabled,
-      permissions: {
-        ...(peer.approved
-          ? (policies.find((policy) => policy.instanceId === instance.id)?.permissions ??
-            disabledFederationPermissions())
-          : disabledFederationPermissions()),
-        receive: {
-          ...(peer.approved
-            ? (policies.find((policy) => policy.instanceId === instance.id)?.permissions
-                .receive ?? disabledFederationPermissions().receive)
-            : disabledFederationPermissions().receive),
-          ranked: receivingParticipation(organization, peer, 'ranked'),
-          casual: receivingParticipation(organization, peer, 'casual'),
-        },
-      },
+      ranked: ranked && !instance.rankedPauseReason,
+      casual: casual && !instance.casualPauseReason && instance.casualConfig.enabled,
     })),
     nextCursor: page.length > 100 ? page[99].id : null,
   };
@@ -165,14 +133,13 @@ export function parseMetadata(value: unknown, instanceId: string): FederationMet
     if (metadata.nextCursor !== null) validId(metadata.nextCursor);
     for (const instance of metadata.instances) {
       if (
-        Object.keys(instance).sort().join(',') !== 'casual,id,name,permissions,ranked' ||
+        Object.keys(instance).sort().join(',') !== 'casual,id,name,ranked' ||
         typeof instance.ranked !== 'boolean' ||
         typeof instance.casual !== 'boolean'
       )
         throw new Error('SCHEMA');
       validId(instance.id);
       validName(instance.name);
-      federationPermissions(instance.permissions);
     }
     if (
       new Set(metadata.instances.map((instance) => instance.id)).size !==
@@ -236,7 +203,7 @@ export async function refreshScheduledFederationMetadata(
   );
 }
 // Scheduled callers are internal; HTTP callers must first prove access to the source.
-export async function refreshFederationMetadata(
+async function refreshFederationMetadata(
   env: Env,
   instanceId: string,
   peerOrigin: string,
@@ -315,16 +282,17 @@ export async function refreshFederationMetadata(
         db.select().from(federationMetadata).where(key),
       ]);
       if (subject) {
-        const current = await participationSource(db, subject, instanceId);
-        if (
-          current.instance &&
-          !canViewInstance(
-            current.instance.state,
-            current.account.administrator,
-            current.permissions,
+        if (instanceId !== (await organizationIdentity(db, subject)).organization.id) {
+          const current = await resolveInstance(db, subject, instanceId);
+          if (
+            !canViewInstance(
+              current.instance.state,
+              current.account.administrator,
+              current.permissions,
+            )
           )
-        )
-          throw new OrganizationError('FEDERATION_TARGET_UNAVAILABLE', 409);
+            throw new OrganizationError('FEDERATION_TARGET_UNAVAILABLE', 409);
+        }
       } else {
         if (!organization && (!scope || scope.state === 'archived'))
           throw new OrganizationError('FEDERATION_TARGET_UNAVAILABLE', 409);

@@ -21,7 +21,7 @@ async function main() {
     console.log(JSON.stringify({ profile, config, applied: false }, null, 2));
     return;
   }
-  const subject = process.env.CATALOG_SUBJECT ?? process.env.INITIAL_ADMIN_SUBJECT;
+  const subject = process.env.CATALOG_SUBJECT;
   if (!subject) throw new Error('CATALOG_SUBJECT_REQUIRED');
   const { db, close } = await localD1();
   try {
@@ -36,7 +36,11 @@ async function main() {
     await close();
   }
 }
-main().catch(() => {
-  console.error('CONFIG_APPLY_FAILED: check JSON, DB connection and migration setup.');
+main().catch((error) => {
+  console.error(
+    error?.message === 'CATALOG_SUBJECT_REQUIRED'
+      ? 'CATALOG_SUBJECT_REQUIRED: set CATALOG_SUBJECT in .dev.vars.'
+      : 'CONFIG_APPLY_FAILED: check JSON, DB connection and migration setup.',
+  );
   process.exitCode = 1;
 });

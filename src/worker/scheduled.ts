@@ -2,7 +2,6 @@ import { and, eq, isNull, lte, or, sql } from 'drizzle-orm';
 import { connectD1 } from './db/d1.ts';
 import {
   accountWithdrawals,
-  difficultyBackfills,
   difficultySamples,
   federationMetadataJobs,
   federationPeers,
@@ -23,6 +22,7 @@ import {
   refreshQuestionSource,
 } from './federation/question-sources.ts';
 import { dueResultDeliveries } from './federation/results.ts';
+import { federationEnabled } from './federation/transport.ts';
 import { failureCode } from './http/handlers.ts';
 
 export async function scheduledD1(env: Env, now = Date.now()) {
@@ -32,7 +32,7 @@ export async function scheduledD1(env: Env, now = Date.now()) {
     time = new Date(now).toISOString(),
     day = time.slice(0, 10);
   const tasks: Record<string, unknown>[] = [];
-  if (env.FEDERATION_ORIGIN && env.SIGNING_KID && env.SIGNING_PRIVATE_KEY) {
+  if (federationEnabled(env)) {
     // Deliver saved results before optional synchronization and cleanup work.
     tasks.push(
       ...(await dueResultDeliveries(db, now)).map((job) => ({
@@ -151,7 +151,7 @@ export async function scheduledD1(env: Env, now = Date.now()) {
       .where(
         and(
           sql`${instances.state}<>'archived'`,
-          sql`(not exists(select 1 from ${difficultyBackfills} where ${difficultyBackfills.owner}=${instances.owner} and ${difficultyBackfills.complete}=1) or exists(select 1 from ${questionDifficulty} where ${questionDifficulty.instanceId}=${instances.id} and (${questionDifficulty.lastDay} is null or ${questionDifficulty.lastDay}<>${day}) and ${questionDifficulty.statisticsRevision}<>coalesce((select sum(${difficultySamples.trials}) from ${difficultySamples} where ${difficultySamples.owner}=${instances.owner} and ${difficultySamples.generation}=${questionDifficulty.generation}),0)))`,
+          sql`exists(select 1 from ${questionDifficulty} where ${questionDifficulty.instanceId}=${instances.id} and (${questionDifficulty.lastDay} is null or ${questionDifficulty.lastDay}<>${day}) and ${questionDifficulty.statisticsRevision}<>coalesce((select sum(${difficultySamples.trials}) from ${difficultySamples} where ${difficultySamples.owner}=${instances.owner} and ${difficultySamples.generation}=${questionDifficulty.generation}),0))`,
         ),
       )
       .orderBy(instances.id)

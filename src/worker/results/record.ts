@@ -5,7 +5,7 @@ import { type MatchKind, ratingChange, ratingPolicy } from './rating.ts';
 
 export type ResultRecord = {
   parentRoomId?: string;
-  answerStats?: State['answerStats'];
+  answerStats: State['answerStats'];
   startingRatings?: Record<string, number>;
   completedQuestions?: State['completedQuestions'];
   version: 1;
@@ -25,29 +25,25 @@ export function makeResultRecord(
     definition?: Omit<MatchDefinition, 'questions' | 'rules'>;
     rules: MatchDefinition['rules'];
     matchId: string;
-    matchKind?: MatchKind;
+    matchKind: MatchKind;
     startedAt?: number;
     players: Player[];
     completedQuestions?: State['completedQuestions'];
     startingRatings?: Record<string, number>;
-    answerStats?: State['answerStats'];
+    answerStats: State['answerStats'];
   },
   result: Result,
 ): ResultRecord | undefined {
-  // 開始時刻・種別のない旧DOと開発参加の結果を遡及してランキングへ入れない。
-  if (
-    !state.definition ||
-    state.startedAt === undefined ||
-    !state.matchKind ||
-    state.matchKind === 'development'
-  )
-    return;
+  // 開発参加の結果は保存せず、ランキングへ入れない。
+  if (state.matchKind === 'development') return;
+  if (!state.definition || state.startedAt === undefined)
+    throw new Error('RESULT_RECORD_INCOMPLETE');
   const kind = state.matchKind;
   return structuredClone({
     ...(state.parentRoomId ? { parentRoomId: state.parentRoomId } : {}),
     ...(state.startingRatings ? { startingRatings: state.startingRatings } : {}),
     ...(state.completedQuestions ? { completedQuestions: state.completedQuestions } : {}),
-    ...(state.answerStats ? { answerStats: state.answerStats } : {}),
+    answerStats: state.answerStats,
     version: 1,
     owner: state.definition.competition.owner,
     matchId: state.matchId,

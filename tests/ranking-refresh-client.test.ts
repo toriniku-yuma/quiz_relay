@@ -45,7 +45,7 @@ vi.mock('react', async (original) => ({
 vi.mock('../src/client/app/context', () => ({
   useApp: () => ({
     auth: { user: { id: 'self' } },
-    organization: { data: { enabled: true, account: { displayName: '本人' } } },
+    organization: { data: { account: { displayName: '本人' } } },
     url: mocks.url,
   }),
 }));

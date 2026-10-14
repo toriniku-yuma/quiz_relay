@@ -61,9 +61,8 @@ it('通信中断から復帰までの時間を早押し平均へ含めない', (
   adjudicate(state, 'b', buzz(state), 5300);
   expect(state.currentBuzzMs).toBe(500);
 });
-it('旧試合の未記録値をゼロ扱いせず、解答回数で重み付けした平均を集計する', () => {
+it('試合ごとの誤答・時間切れを数え、解答回数で重み付けした平均を集計する', () => {
   const { record } = resultFixture();
-  delete record.answerStats;
   const measured = {
     ...record,
     answerStats: [
@@ -73,8 +72,11 @@ it('旧試合の未記録値をゼロ扱いせず、解答回数で重み付け�
       { actorId: 'a', result: 'timeout' as const, elapsedMs: 900 },
     ],
   };
-  expect(resultStatistics(record, 'a').wrong).toBeNull();
-  expect(resultStatistics(record, 'a').correctMs).toBeNull();
+  expect(resultStatistics(record, 'a')).toMatchObject({
+    wrong: 0,
+    timeouts: 0,
+    correctMs: null,
+  });
   const summary = aggregateStatistics(
     [
       record,
@@ -88,7 +90,6 @@ it('旧試合の未記録値をゼロ扱いせず、解答回数で重み付け�
   );
   expect(summary).toMatchObject({
     matches: 3,
-    recordedMatches: 2,
     correctMs: 3000,
     correctSamples: 3,
     wrongMs: 600,
@@ -104,12 +105,10 @@ it('出題専任者には勝敗を付けない', () => {
     expect(resultStatistics(record, record.players[0].id).outcome).toBe('出題専任');
   }
 });
-it('新しい試合の詳細だけを結果原本へ固定し、旧試合は未記録のまま保持する', () => {
+it('試合の詳細を結果原本へ固定し、後からの状態変更を反映しない', () => {
   const { state, record } = resultFixture();
   state.answerStats = [{ actorId: 'a', result: 'correct', elapsedMs: 1000 }];
   const saved = makeResultRecord(state, record.result);
   state.answerStats[0].elapsedMs = 5000;
-  expect(saved?.answerStats?.[0].elapsedMs).toBe(1000);
-  delete state.answerStats;
-  expect(makeResultRecord(state, record.result)).not.toHaveProperty('answerStats');
+  expect(saved?.answerStats[0].elapsedMs).toBe(1000);
 });

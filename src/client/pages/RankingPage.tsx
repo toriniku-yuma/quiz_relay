@@ -4,7 +4,7 @@ import PageHeader from '../components/PageHeader';
 import ResultsPanel from '../features/results/ResultsPanel';
 
 export default function RankingPage() {
-  const { auth, url, organization } = useApp();
+  const { auth, url } = useApp();
   const instanceId = url.searchParams.get('instance') ?? '';
   return (
     <main className="mx-auto max-w-5xl p-5 sm:p-8">
@@ -12,7 +12,7 @@ export default function RankingPage() {
         title="ランキング"
         description="このインスタンスのランクマッチのレートを表示します。"
       />
-      {auth.user && (instanceId || organization.data?.enabled === false) ? (
+      {auth.user && instanceId ? (
         <ResultsPanel section="ranking" instanceId={instanceId} />
       ) : (
         <a className="underline" href={GAME_PATH}>

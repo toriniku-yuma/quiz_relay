@@ -4,7 +4,6 @@ import {
   normalizeOrganizationName,
 } from '../../shared/organization.ts';
 import { contentHash } from '../catalog/hash.ts';
-import type { Env } from '../env.ts';
 
 export class OrganizationError extends Error {
   target?: string;
@@ -46,12 +45,4 @@ export function validId(value: unknown): string {
   )
     throw new OrganizationError('INVALID_INSTANCE', 400);
   return value;
-}
-
-export function organizationEnabled(env: Env) {
-  if (env.ORGANIZATION_ENABLED === 'true') return true;
-  if (env.ORGANIZATION_ENABLED === 'false') return false;
-  if (env.ORGANIZATION_ENABLED !== undefined)
-    throw new OrganizationError('ORGANIZATION_CONFIG_INVALID', 503);
-  return false;
 }

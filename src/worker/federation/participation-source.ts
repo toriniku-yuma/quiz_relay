@@ -3,29 +3,28 @@ import { blocks } from '../../shared/moderation.ts';
 import type { Database } from '../db/d1.ts';
 import {
   federationActors,
-  instances,
   moderationSanctions,
   organizationAccounts,
   organizations,
 } from '../db/schema.ts';
-import type { Env } from '../env.ts';
-import {
-  allowedInstanceActors,
-  organizationIdentity,
-  resolveInstance,
-} from '../organization/database.ts';
+import { OrganizationError } from '../organization/access.ts';
+import { organizationIdentity } from '../organization/database.ts';
 
-// Keep old instance-scoped reservations intact. New participation uses the permanent organization ID.
-export async function participationSource(db: Database, subject: string, id: string) {
+// Participation always comes from the actor's whole organization.
+export async function participationSource(
+  db: Database,
+  subject: string,
+  sourceOrganizationId: string,
+) {
   const identity = await organizationIdentity(db, subject);
-  if (id === identity.organization.id) return { ...identity, instance: null };
-  return resolveInstance(db, subject, id);
+  if (sourceOrganizationId !== identity.organization.id)
+    throw new OrganizationError('INVALID_PARTICIPATION', 400);
+  return identity;
 }
 
 export async function sourceActors(
-  env: Env,
   db: Database,
-  sourceId: string,
+  sourceOrganizationId: string,
   mode: 'ranked' | 'casual' | 'room',
   actors: string[],
   existing = false,
@@ -34,12 +33,9 @@ export async function sourceActors(
   const [organization] = await db
     .select()
     .from(organizations)
-    .where(eq(organizations.id, sourceId));
-  const [instance] = organization
-    ? []
-    : await db.select().from(instances).where(eq(instances.id, sourceId));
-  const organizationId = organization?.id ?? instance?.organizationId;
-  if (!organizationId || (!existing && instance?.state === 'archived')) return [];
+    .where(eq(organizations.id, sourceOrganizationId));
+  if (!organization) return [];
+  const organizationId = organization.id;
   const accounts = await db
     .select()
     .from(organizationAccounts)
@@ -58,16 +54,6 @@ export async function sourceActors(
     .map((row) => row.actorId)
     .filter((id) => !foreign.some((row) => row.id === id));
   if (existing) return local;
-  if (instance)
-    return allowedInstanceActors(
-      env,
-      {
-        id: instance.id,
-        owner: instance.owner,
-        ...(mode === 'ranked' ? {} : { mode }),
-      },
-      local,
-    );
   const sanctions = await db
     .select()
     .from(moderationSanctions)

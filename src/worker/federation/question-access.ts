@@ -31,7 +31,7 @@ export function sharedQuestionAvailableSQL(
         or ${federationQuestionImports.errorCode} is not null
         or ${federationQuestionImports.lastSuccessAt}<=${now - QUESTION_SYNC_FRESH_MS}
         or coalesce(${federationPeers.approved},0)=0
-        or coalesce(json_extract(${federationPolicies.permissions},'$.receive.questions'),0)=0
+        or coalesce(${federationPolicies.receiveQuestions},0)=0
         or (${questionSubmissions.authorId}=${federationQuestionLinks.sourceAuthorId} and not exists (
           select 1 from quiz_game_question_submissions original
           join quiz_game_instances source on source.id=original.instance_id and source.state='published'
@@ -40,7 +40,7 @@ export function sharedQuestionAvailableSQL(
           join quiz_game_question_categories category on category.id=json_extract(version.payload,'$.categoryId') and category.active=1
           join quiz_federation_policies outbound on outbound.instance_id=source.id and outbound.peer_origin=${federationQuestionLinks.peerOrigin} and outbound.peer_instance_id=${federationQuestionLinks.instanceId}
           where source.id=${federationQuestionLinks.sourceInstanceId} and original.series_id=${federationQuestionLinks.sourceSeriesId} and original.published_id=${federationQuestionLinks.sourceQuestionId}
-            and original.deleted_at is null and category.import_only=0 and json_extract(outbound.permissions,'$.send.questions')=1
+            and original.deleted_at is null and category.import_only=0 and outbound.send_questions=1
         ))
         or exists(select 1 from ${federationDeletedInstances} where ${federationDeletedInstances.peerOrigin}=${federationQuestionLinks.peerOrigin} and ${federationDeletedInstances.instanceId}=${federationQuestionLinks.sourceInstanceId}))
   )`.mapWith(Number);

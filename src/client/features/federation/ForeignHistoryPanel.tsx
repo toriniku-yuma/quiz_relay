@@ -4,11 +4,10 @@ import Button from '../../components/Button';
 import Panel from '../../components/Panel';
 import { useForeignHistory } from './useForeignHistory';
 
-export default function ForeignHistoryPanel({ instanceId }: { instanceId: string }) {
+export default function ForeignHistoryPanel() {
   const { organization, auth } = useApp(),
     model = useForeignHistory(
       auth.user ? organization.data?.account?.actorId : undefined,
-      instanceId,
     );
   if (!auth.user) return null;
   return (

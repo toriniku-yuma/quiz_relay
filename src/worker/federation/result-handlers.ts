@@ -61,15 +61,10 @@ export const ownForeignResults: Handler<AuthEnv> = async (context) => {
     throw new OrganizationError('INVALID_FEDERATION_REQUEST', 400);
   if (
     input.operation === 'history' &&
-    Object.keys(input).every((key) => ['operation', 'instanceId', 'cursor'].includes(key))
+    Object.keys(input).every((key) => ['operation', 'cursor'].includes(key))
   )
     return context.json(
-      await foreignHistory(
-        context.env,
-        context.get('subject'),
-        input.instanceId,
-        input.cursor,
-      ),
+      await foreignHistory(context.env, context.get('subject'), input.cursor),
     );
   if (
     input.operation === 'review' &&

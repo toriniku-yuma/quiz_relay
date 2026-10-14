@@ -11,7 +11,7 @@ import {
 import type { Env } from '../env.ts';
 import { OrganizationError, validId, validName } from '../organization/access.ts';
 import { exportSharedQuestions } from './question-source.ts';
-import { federationDatabase, requestPeer } from './transport.ts';
+import { federationConfig, federationDatabase, requestPeer } from './transport.ts';
 
 type Source = typeof federationQuestionSources.$inferSelect;
 const sourceKey = (
@@ -27,7 +27,7 @@ async function requireSource(
   source: Pick<Source, 'instanceId' | 'peerOrigin' | 'sourceInstanceId'>,
 ) {
   const [row] = await db
-    .select({ permissions: federationPolicies.permissions })
+    .select({ receiveQuestions: federationPolicies.receiveQuestions })
     .from(federationPolicies)
     .innerJoin(federationPeers, eq(federationPeers.origin, federationPolicies.peerOrigin))
     .innerJoin(instances, eq(instances.id, federationPolicies.instanceId))
@@ -40,8 +40,7 @@ async function requireSource(
         sql`${instances.state}<>'archived'`,
       ),
     );
-  if (!row?.permissions.receive.questions)
-    throw new OrganizationError('QUESTION_IMPORT_DENIED', 403);
+  if (!row?.receiveQuestions) throw new OrganizationError('QUESTION_IMPORT_DENIED', 403);
 }
 export async function cachedQuestionSource(
   db: Database,
@@ -88,7 +87,7 @@ export async function refreshQuestionSource(
       categoriesOnly: true,
     };
     const body =
-      source.peerOrigin === env.FEDERATION_ORIGIN
+      source.peerOrigin === federationConfig(env).origin
         ? await exportSharedQuestions(db, source.peerOrigin, request)
         : (
             await requestPeer(
@@ -187,7 +186,7 @@ export async function dueQuestionSources(env: Env, now: number) {
         lte(federationQuestionSources.leaseUntil, now),
         eq(federationPeers.approved, true),
         sql`${instances.state}<>'archived'`,
-        sql`json_extract(${federationPolicies.permissions},'$.receive.questions')=1`,
+        eq(federationPolicies.receiveQuestions, true),
       ),
     )
     .orderBy(federationQuestionSources.nextAttemptAt)

@@ -3,10 +3,10 @@ export type FederatedResult = {
   eventId: string;
   resultId: string;
   matchId: string;
-  reservationId?: string;
+  reservationId: string;
   hostInstanceId: string;
   hostInstanceName: string;
-  sourceInstanceId: string;
+  sourceOrganizationId: string;
   sourceActorId: string;
   startedAt: number;
   finishedAt: number;

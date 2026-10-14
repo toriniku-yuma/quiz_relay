@@ -41,7 +41,6 @@ export function useMatchmaking(
   const operation = useRef(0);
   const joining = useRef<{
     operationId: string;
-    name: string;
     instanceId: string;
   } | null>(null);
   const cancellation = useRef<{
@@ -263,11 +262,10 @@ export function useMatchmaking(
     viewing,
     offerRestore,
     dismissRestored: () => setRestored(false),
-    join: (name: string) =>
+    join: () =>
       run(async () => {
         if (cancellation.current) return;
         joining.current ??= {
-          name,
           operationId: crypto.randomUUID(),
           instanceId: targetInstanceId,
         };

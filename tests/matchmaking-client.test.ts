@@ -70,7 +70,7 @@ it('keeps a new match when an earlier resume arrives late', async () => {
   );
   const match = useMatchmaking('user-a');
   const cleanup = mocks.effects[1]();
-  await match.join('user-a');
+  await match.join();
   resolve({ room: 'old-room' });
   await new Promise((done) => setTimeout(done, 0));
   expect(mocks.attach).toHaveBeenCalledExactlyOnceWith('new-room', '');
@@ -92,18 +92,15 @@ it('ignores an earlier no-match response after a successful cancellation', async
   expect(mocks.attach).not.toHaveBeenCalled();
   cleanup();
 });
-it('参加結果が不明なら操作ID・名前・参加先を固定して再試行する', async () => {
+it('参加結果が不明なら操作ID・参加先を固定して再試行する', async () => {
   mocks.request
     .mockRejectedValueOnce(new Error('response lost'))
     .mockResolvedValueOnce({ room: 'confirmed' });
   const match = useMatchmaking('user-a', 'old-instance', 'ranked', 'new-instance');
-  await match.join('original');
-  await match.join('changed');
+  await match.join();
+  await match.join();
   expect(mocks.request.mock.calls[1]).toEqual(mocks.request.mock.calls[0]);
-  expect(mocks.request.mock.calls[0][1]).toMatchObject({
-    name: 'original',
-    operationId: expect.any(String),
-  });
+  expect(mocks.request.mock.calls[0][1]).toEqual({ operationId: expect.any(String) });
   expect(mocks.request.mock.calls[0][2]).toBe('new-instance');
   expect(mocks.attach).toHaveBeenCalledWith('confirmed', 'new-instance');
 });

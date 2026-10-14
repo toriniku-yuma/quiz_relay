@@ -15,13 +15,16 @@ import {
 import type { Env } from '../env.ts';
 import { OrganizationError, validId } from '../organization/access.ts';
 import { organizationIdentity } from '../organization/database.ts';
-import { participationPolicy } from './admission.ts';
+import {
+  requireParticipationReceiving,
+  requireParticipationSending,
+} from './admission.ts';
 import { discoverPeer } from './discovery.ts';
 import { participationMode } from './participation.ts';
 import { origin } from './signatures.ts';
 import { logoutHostParticipation, releaseHostParticipation } from './slots.ts';
 import { signForeignLoginTicket, verifyForeignLoginTicket } from './tickets.ts';
-import { federationDatabase } from './transport.ts';
+import { federationConfig, federationDatabase } from './transport.ts';
 
 function object(value: unknown, keys: string) {
   if (
@@ -36,37 +39,33 @@ function object(value: unknown, keys: string) {
 function target(value: Record<string, unknown>): ParticipationTarget {
   return {
     peerOrigin: origin(String(value.peerOrigin)),
-    sourceInstanceId: validId(value.sourceInstanceId),
+    sourceOrganizationId: validId(value.sourceOrganizationId),
     hostInstanceId: validId(value.hostInstanceId),
     mode: participationMode(value.mode),
   };
 }
 export async function authorizeForeignLogin(env: Env, subject: string, value: unknown) {
-  const input = object(value, 'hostInstanceId,mode,peerOrigin,sourceInstanceId,state'),
+  const input = object(
+      value,
+      'hostInstanceId,mode,peerOrigin,sourceOrganizationId,state',
+    ),
     request = target(input),
     state = validId(input.state),
     db = federationDatabase(env),
     identity = await organizationIdentity(db, subject);
-  if (request.sourceInstanceId !== identity.organization.id)
+  if (request.sourceOrganizationId !== identity.organization.id)
     throw new OrganizationError('INVALID_PARTICIPATION', 400);
   if (!identity.account.displayName) throw new OrganizationError('PROFILE_REQUIRED', 409);
-  await participationPolicy(
-    db,
-    request.sourceInstanceId,
-    request.peerOrigin,
-    request.hostInstanceId,
-    request.mode,
-    'send',
-  );
+  await requireParticipationSending(db, request.peerOrigin);
   const now = Math.floor(Date.now() / 1000);
   // Login creates neither a participation slot nor a host reservation/account.
   return {
     ticket: await signForeignLoginTicket(env, {
       protocolVersion: 1,
-      iss: env.FEDERATION_ORIGIN ?? '',
+      iss: federationConfig(env).origin,
       aud: request.peerOrigin,
       sub: identity.account.actorId,
-      sourceInstanceId: identity.organization.id,
+      sourceOrganizationId: identity.organization.id,
       hostInstanceId: request.hostInstanceId,
       mode: request.mode,
       name: identity.account.displayName,
@@ -92,7 +91,7 @@ export function publicForeignAccount(row: Login): ForeignAccount {
 export async function exchangeForeignLogin(env: Env, value: unknown) {
   const input = object(
       value,
-      'hostInstanceId,mode,peerOrigin,sourceInstanceId,state,ticket',
+      'hostInstanceId,mode,peerOrigin,sourceOrganizationId,state,ticket',
     ),
     request = target(input),
     state = validId(input.state),
@@ -104,7 +103,7 @@ export async function exchangeForeignLogin(env: Env, value: unknown) {
   if (
     proof.iss !== request.peerOrigin ||
     proof.state !== state ||
-    proof.sourceInstanceId !== request.sourceInstanceId ||
+    proof.sourceOrganizationId !== request.sourceOrganizationId ||
     proof.hostInstanceId !== request.hostInstanceId ||
     proof.mode !== request.mode
   )
@@ -113,7 +112,7 @@ export async function exchangeForeignLogin(env: Env, value: unknown) {
   const row: Login = {
     hash: await contentHash(secret),
     peerOrigin: proof.iss,
-    sourceOrganizationId: proof.sourceInstanceId,
+    sourceOrganizationId: proof.sourceOrganizationId,
     sourceActorId: proof.sub,
     displayName: proof.name,
     organizationName: proof.organizationName,
@@ -130,14 +129,7 @@ export async function exchangeForeignLogin(env: Env, value: unknown) {
       .where(eq(federationPeers.origin, proof.iss));
     if (instance?.state !== 'published' || peer?.revision !== proof.keyRevision)
       throw new OrganizationError('FEDERATION_TARGET_UNAVAILABLE', 409);
-    await participationPolicy(
-      db,
-      instance.id,
-      proof.iss,
-      proof.sourceInstanceId,
-      proof.mode,
-      'receive',
-    );
+    await requireParticipationReceiving(db, proof.iss, proof.mode);
     const [retired] = await db
       .select()
       .from(federationRetiredIdentities)

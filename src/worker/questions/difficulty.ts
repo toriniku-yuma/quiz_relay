@@ -1,4 +1,4 @@
-export type DifficultySample = { trials: number; correct: number; participants: number };
+type DifficultySample = { trials: number; correct: number; participants: number };
 
 export function wilson(sample: DifficultySample) {
   const { trials: trialCount, correct: correctCount } = sample;

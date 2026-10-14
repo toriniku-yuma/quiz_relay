@@ -9,6 +9,7 @@ import {
   organizations,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
+import { matchRoomName, userRoomName } from '../game/room-names.ts';
 import { actorForSubject, OrganizationError, validId } from '../organization/access.ts';
 import { federationDatabase, requestPeer } from './transport.ts';
 
@@ -16,7 +17,7 @@ export type ForeignEntry = {
   operationId: string;
   requestHash: string;
   peerOrigin: string;
-  sourceInstanceId: string;
+  sourceOrganizationId: string;
   hostInstanceId: string;
   mode: 'ranked' | 'casual' | 'room';
   name: string;
@@ -221,7 +222,7 @@ export async function hostParticipationStatus(
   }
   if (!row.roomId) return { active: true, phase: 'WAITING' };
   const status = await env.GAME_ROOM.getByName(
-    `${row.mode === 'room' ? 'room' : '1c'}:${row.roomId}`,
+    row.mode === 'room' ? userRoomName(row.roomId) : matchRoomName(row.roomId),
   ).lobbyStatus();
   // Completion frees the home participation slot without revoking the host's
   // final result screen or its review session while the player is reading it.

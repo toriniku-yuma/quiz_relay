@@ -8,15 +8,13 @@ const average = (values: number[]) =>
 export function resultStatistics(record: ResultRecord, actorId: string): MatchStatistics {
   const player = record.players.find((candidatePlayer) => candidatePlayer.id === actorId);
   if (!player) throw new Error('PLAYER_NOT_FOUND');
-  const stats = record.answerStats?.filter(
-    (answerStat) => answerStat.actorId === actorId,
-  );
+  const stats = record.answerStats.filter((answerStat) => answerStat.actorId === actorId);
   const times = (result: 'correct' | 'wrong') =>
     stats
-      ?.filter(
+      .filter(
         (answerStat) => answerStat.result === result && answerStat.elapsedMs !== null,
       )
-      .map((answerStat) => answerStat.elapsedMs as number) ?? [];
+      .map((answerStat) => answerStat.elapsedMs as number);
   return {
     resultId: record.result.id,
     finishedAt: new Date(record.result.finishedAt).toISOString(),
@@ -32,9 +30,8 @@ export function resultStatistics(record: ResultRecord, actorId: string): MatchSt
               : '敗北',
     correct: player.correct,
     mistakes: player.mistakes,
-    wrong: stats?.filter((answerStat) => answerStat.result === 'wrong').length ?? null,
-    timeouts:
-      stats?.filter((answerStat) => answerStat.result === 'timeout').length ?? null,
+    wrong: stats.filter((answerStat) => answerStat.result === 'wrong').length,
+    timeouts: stats.filter((answerStat) => answerStat.result === 'timeout').length,
     correctMs: average(times('correct')),
     wrongMs: average(times('wrong')),
     ratingDelta: player.ratingDelta,
@@ -49,11 +46,9 @@ export function aggregateStatistics(
   records: ResultRecord[],
   actorId: string,
 ): Investigation['summary'] {
-  const recorded = records.filter((result) => result.answerStats !== undefined),
-    stats = recorded.flatMap(
-      (result) =>
-        result.answerStats?.filter((answerStat) => answerStat.actorId === actorId) ?? [],
-    );
+  const stats = records.flatMap((result) =>
+    result.answerStats.filter((answerStat) => answerStat.actorId === actorId),
+  );
   const times = (result: 'correct' | 'wrong') =>
     stats
       .filter(
@@ -62,7 +57,6 @@ export function aggregateStatistics(
       .map((answerStat) => answerStat.elapsedMs as number);
   return {
     matches: records.length,
-    recordedMatches: recorded.length,
     correct: records.reduce(
       (total, result) =>
         total + (result.players.find((player) => player.id === actorId)?.correct ?? 0),

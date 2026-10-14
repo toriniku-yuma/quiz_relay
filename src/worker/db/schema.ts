@@ -11,10 +11,7 @@ import {
   unique,
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
-import type {
-  FederationMetadata,
-  FederationPermissions,
-} from '../../shared/federation.ts';
+import type { FederationMetadata } from '../../shared/federation.ts';
 import type { FederationControl } from '../../shared/federation-controls.ts';
 import type {
   QuestionImportConfig,
@@ -45,15 +42,6 @@ export const databaseRevision = sqliteTable(
     revision: integer().notNull().default(0),
   },
   (table) => [check('database_revision_singleton', sql`${table.id} = 1`)],
-);
-
-export const catalogOperators = sqliteTable(
-  'quiz_game_catalog_operators',
-  {
-    roleName: text('role_name').primaryKey(),
-    owner: text().notNull(),
-  },
-  () => [],
 );
 
 export const probeRuns = sqliteTable(
@@ -341,7 +329,7 @@ export const resultPlayers = sqliteTable(
   ],
 );
 
-// 外部宛先・署名・配送状態は2Cで追加。1Dではローカル原本を同一TXで保持する。
+// 結果と同じバッチで保存する配送用の原本。
 export const resultOutbox = sqliteTable(
   'quiz_game_result_outbox',
   {
@@ -980,12 +968,6 @@ export const difficultyActors = sqliteTable(
     }),
   ],
 );
-export const difficultyBackfills = sqliteTable('quiz_game_difficulty_backfills', {
-  owner: text().primaryKey(),
-  finishedAt: text('finished_at').notNull(),
-  resultId: text('result_id').notNull(),
-  complete: integer({ mode: 'boolean' }).notNull().default(false),
-});
 export const maintenanceCheckpoints = sqliteTable('quiz_maintenance_checkpoints', {
   id: text().primaryKey(),
   completedDay: text('completed_day').notNull(),
@@ -1216,7 +1198,12 @@ export const federationPolicies = sqliteTable(
       .notNull()
       .references(() => federationPeers.origin),
     peerInstanceId: text('peer_instance_id').notNull(),
-    permissions: text({ mode: 'json' }).$type<FederationPermissions>().notNull(),
+    sendQuestions: integer('send_questions', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+    receiveQuestions: integer('receive_questions', { mode: 'boolean' })
+      .notNull()
+      .default(false),
     revision: integer().notNull().default(1),
   },
   (table) => [
@@ -1242,8 +1229,7 @@ export const federationFavorites = sqliteTable(
 export const federationTargets = sqliteTable(
   'quiz_federation_targets',
   {
-    // Participation uses the organization ID; existing instance-scoped caches remain readable.
-    sourceInstanceId: text('source_instance_id').notNull(),
+    sourceOrganizationId: text('source_organization_id').notNull(),
     peerOrigin: text('peer_origin')
       .notNull()
       .references(() => federationPeers.origin),
@@ -1252,7 +1238,9 @@ export const federationTargets = sqliteTable(
     checkedAt: integer('checked_at').notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.sourceInstanceId, table.peerOrigin, table.instanceId] }),
+    primaryKey({
+      columns: [table.sourceOrganizationId, table.peerOrigin, table.instanceId],
+    }),
   ],
 );
 // Durable proof of the local actor's consent, independent of transient Matchmaker slots.
@@ -1266,7 +1254,7 @@ export const federationParticipations = sqliteTable(
     actorId: text('actor_id')
       .notNull()
       .references(() => organizationAccounts.actorId),
-    sourceInstanceId: text('source_instance_id').notNull(),
+    sourceOrganizationId: text('source_organization_id').notNull(),
     hostInstanceId: text('host_instance_id').notNull(),
     matchId: text('match_id').notNull(),
     mode: text().$type<'ranked' | 'casual' | 'room'>().notNull(),
@@ -1325,30 +1313,6 @@ export const federationMetadataJobs = sqliteTable(
   ],
 );
 
-// Retained only for applied migration compatibility and instance erasure.
-// The information feature is outside the D1 / federation implementation scope.
-export const informationEntries = sqliteTable(
-  'quiz_information_entries',
-  {
-    instanceId: text('instance_id')
-      .notNull()
-      .references(() => instances.id),
-    id: text().notNull(),
-    revision: integer().notNull(),
-    kind: text({ enum: ['rules', 'notice'] }).notNull(),
-    title: text().notNull(),
-    body: text().notNull(),
-    authoringRules: text('authoring_rules').notNull().default(''),
-    published: integer({ mode: 'boolean' }).notNull(),
-    publishedAt: text('published_at'),
-    updatedAt: text('updated_at').notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.instanceId, table.id, table.revision] }),
-    index('information_list').on(table.instanceId, table.updatedAt, table.id),
-  ],
-);
-
 export const federationActors = sqliteTable(
   'quiz_federation_actors',
   {
@@ -1362,20 +1326,6 @@ export const federationActors = sqliteTable(
     displayName: text('display_name'),
   },
   (table) => [unique().on(table.peerOrigin, table.sourceActorId)],
-);
-export const federationSharedCategories = sqliteTable(
-  'quiz_federation_shared_categories',
-  {
-    instanceId: text('instance_id')
-      .notNull()
-      .references(() => instances.id),
-    categoryId: text('category_id')
-      .notNull()
-      .references(() => questionCategories.id),
-    shared: integer({ mode: 'boolean' }).notNull().default(false),
-    revision: integer().notNull().default(1),
-  },
-  (table) => [primaryKey({ columns: [table.instanceId, table.categoryId] })],
 );
 export const federationQuestionImports = sqliteTable(
   'quiz_federation_question_imports',
@@ -1494,7 +1444,7 @@ export const federationReservations = sqliteTable(
     operationId: text('operation_id').notNull(),
     requestHash: text('request_hash').notNull(),
     authorizationId: text('authorization_id').notNull().default(''),
-    sourceInstanceId: text('source_instance_id').notNull(),
+    sourceOrganizationId: text('source_organization_id').notNull(),
     sourceActorId: text('source_actor_id').notNull(),
     actorId: text('actor_id')
       .notNull()
@@ -1615,7 +1565,7 @@ export const federationResultInbox = sqliteTable(
     actorId: text('actor_id')
       .notNull()
       .references(() => organizationAccounts.actorId),
-    sourceInstanceId: text('source_instance_id').notNull(),
+    sourceOrganizationId: text('source_organization_id').notNull(),
     payload: text({ mode: 'json' }).$type<FederatedResult>().notNull(),
     payloadHash: text('payload_hash').notNull(),
     message: text().notNull(),
@@ -1628,7 +1578,7 @@ export const federationResultInbox = sqliteTable(
     primaryKey({ columns: [table.peerOrigin, table.eventId] }),
     index('federation_result_history').on(
       table.actorId,
-      table.sourceInstanceId,
+      table.sourceOrganizationId,
       table.finishedAt,
       table.eventId,
     ),

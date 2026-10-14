@@ -102,14 +102,13 @@ try {
   process.chdir(fixture);
   assert.equal(localOperationsConfig({}), undefined);
   const runtime = {
-    AUTH_PROVIDER: 'clerk',
     CLERK_PUBLISHABLE_KEY: 'public-fixture',
     CLERK_SECRET_KEY: 'secret-fixture',
     GAME_CONFIG_PROFILE: 'local',
   };
   writeFileSync(
     '.env.erasure-local',
-    'AUTH_PROVIDER=clerk\nCLERK_PUBLISHABLE_KEY=public-fixture\nCLERK_SECRET_KEY=secret-fixture\n',
+    'CLERK_PUBLISHABLE_KEY=public-fixture\nCLERK_SECRET_KEY=secret-fixture\n',
   );
   assert.throws(() => localOperationsConfig(runtime), /ENOENT/);
   const rooms = '.wrangler/state/v3/do/quiz-relay-probe-GameRoom';
@@ -124,7 +123,7 @@ try {
   ]);
   assert.equal(localOperationsConfig(runtime).GAME_CONFIG_PROFILE, 'local');
   for (const patch of [
-    { AUTH_PROVIDER: 'supabase' },
+    { CLERK_PUBLISHABLE_KEY: undefined },
     { CLERK_PUBLISHABLE_KEY: 'other-app' },
     { CLERK_SECRET_KEY: 'other-secret' },
   ])
@@ -132,12 +131,15 @@ try {
       () => localOperationsConfig({ ...runtime, ...patch }),
       /LOCAL_ERASURE_CONFIGURATION_MISMATCH/,
     );
-  const clerkRuntime = runtime;
+  assert.throws(
+    () => localOperationsConfig({ ...runtime, FEDERATION_ORIGIN: 'https://game.test' }),
+    /FEDERATION_NOT_CONFIGURED/,
+  );
   writeFileSync(`${rooms}/unknown.sqlite`, '');
-  assert.throws(() => localOperationsConfig(clerkRuntime), /UNKNOWN_LOCAL_ROOM_FILE/);
+  assert.throws(() => localOperationsConfig(runtime), /UNKNOWN_LOCAL_ROOM_FILE/);
   unlinkSync(`${rooms}/unknown.sqlite`);
   writeFileSync(`${rooms}/${'c'.repeat(64)}.sqlite-wal`, '');
-  assert.throws(() => localOperationsConfig(clerkRuntime), /ORPHANED_LOCAL_ROOM_STATE/);
+  assert.throws(() => localOperationsConfig(runtime), /ORPHANED_LOCAL_ROOM_STATE/);
 } finally {
   process.chdir(originalDirectory);
   // This exact temporary directory was created above inside the workspace.

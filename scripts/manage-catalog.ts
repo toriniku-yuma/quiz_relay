@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import defaults from '../config/matchmaking.json' with { type: 'json' };
 import {
   listCatalog,
   manageCatalog,
@@ -8,8 +7,7 @@ import {
 import { localD1 } from './local-d1.ts';
 
 async function main() {
-  const [path, flag, ...extra] = process.argv.slice(2);
-  const owner = process.env.GAME_OWNER ?? defaults.owner;
+  const [path, owner, flag, ...extra] = process.argv.slice(2);
   if (
     !owner ||
     !path ||
@@ -46,7 +44,7 @@ async function main() {
       return;
     }
   }
-  const subject = process.env.CATALOG_SUBJECT ?? process.env.INITIAL_ADMIN_SUBJECT;
+  const subject = process.env.CATALOG_SUBJECT;
   if (!subject) throw new Error('CATALOG_SUBJECT_REQUIRED');
   const { db, close } = await localD1();
   try {
@@ -66,6 +64,7 @@ async function main() {
 main().catch((error) => {
   const allowed = [
     'INVALID_ARGUMENTS',
+    'CATALOG_SUBJECT_REQUIRED',
     'INPUT_TOO_LARGE',
     'INVALID_OPERATION',
     'INVALID_QUESTION',

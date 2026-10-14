@@ -36,7 +36,7 @@ export type ModeratedUser = {
   reportCount?: number;
   appealCount?: number;
 };
-export type ModerationEvent = {
+type ModerationEvent = {
   id: string;
   actorId: string;
   operatorId: string;
@@ -111,7 +111,7 @@ export function parseSanction(
   return { kind, restrictions: restrictions as Restriction[], expiresAt };
 }
 
-export type UserReport = {
+type UserReport = {
   id: string;
   instanceId?: string;
   actorId: string;
@@ -123,7 +123,7 @@ export type UserReport = {
   resolvedAt: string | null;
   resolution: string | null;
 };
-export type Appeal = {
+type Appeal = {
   id: string;
   actorId: string;
   sanctionId: string;

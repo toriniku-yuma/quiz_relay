@@ -11,7 +11,6 @@
     "a": {
       "name": "quiz-relay-federation-a-erasure-test",
       "vars": {
-        "AUTH_PROVIDER": "clerk",
         "GAME_CONFIG_PROFILE": "default",
         "FEDERATION_ORIGIN": "https://quiz-relay-federation-a-test.quiz-relay.workers.dev",
         "SIGNING_KID": "federation-test-a-v1"
@@ -42,7 +41,6 @@
     "b": {
       "name": "quiz-relay-federation-b-erasure-test",
       "vars": {
-        "AUTH_PROVIDER": "clerk",
         "GAME_CONFIG_PROFILE": "default",
         "FEDERATION_ORIGIN": "https://quiz-relay-federation-b-test.quiz-relay.workers.dev",
         "SIGNING_KID": "federation-test-b-v1"

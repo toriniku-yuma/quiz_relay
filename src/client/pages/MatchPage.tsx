@@ -42,9 +42,7 @@ export default function MatchPage() {
             : (selected?.name ?? 'インスタンスを選んで、対戦に参加しましょう。')
         }
       />
-      {auth.user && matching && (selected || organization.data?.enabled === false) && (
-        <MatchingRanking instanceId={selected?.id ?? ''} />
-      )}
+      {auth.user && matching && selected && <MatchingRanking instanceId={selected.id} />}
       {!auth.ready ||
       (!auth.user && foreignLogin && (!foreignLogin.checked || foreignLogin.busy)) ? (
         <p role="status">ログイン状態を確認しています。</p>

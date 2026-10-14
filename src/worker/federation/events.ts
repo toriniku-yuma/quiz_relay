@@ -11,17 +11,18 @@ import { federationPeerKeys, federationPeers } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { OrganizationError } from '../organization/access.ts';
 import { canonical, parseCanonical } from './signatures.ts';
-import { federationDatabase } from './transport.ts';
+import { federationConfig, federationDatabase } from './transport.ts';
 
 const type = 'quiz-relay-event+jws';
 export async function signEvent(env: Env, payload: unknown) {
+  const config = federationConfig(env);
   return new CompactSign(
-    new TextEncoder().encode(canonical({ issuer: env.FEDERATION_ORIGIN, payload })),
+    new TextEncoder().encode(canonical({ issuer: config.origin, payload })),
   )
     .setProtectedHeader(
-      JSON.parse(canonical({ alg: 'EdDSA', kid: env.SIGNING_KID, typ: type })),
+      JSON.parse(canonical({ alg: 'EdDSA', kid: config.kid, typ: type })),
     )
-    .sign(await importPKCS8(env.SIGNING_PRIVATE_KEY ?? '', 'EdDSA'));
+    .sign(await importPKCS8(config.privateKey, 'EdDSA'));
 }
 export async function verifyEvent(env: Env, issuer: string, value: unknown) {
   try {
