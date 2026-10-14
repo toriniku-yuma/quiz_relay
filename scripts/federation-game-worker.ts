@@ -1,6 +1,7 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import mockQuestions from '../seeds/mock-hiragana.json';
 import { disabledFederationPermissions } from '../src/shared/federation';
 import { defaultQuestionSettings, emptyQuestion } from '../src/shared/questions';
 import { newRoomSettings } from '../src/shared/rooms';
@@ -48,7 +49,6 @@ import { publishQuestionCatalog } from '../src/worker/questions/catalog';
 import { QuestionPlan } from '../src/worker/questions/plan';
 import { participantContext } from '../src/worker/rooms/database';
 import { roomResult } from '../src/worker/rooms/rpc';
-import mockQuestions from '../supabase/seeds/mock-hiragana.json';
 import type { FederationTestEnv } from './federation-worker';
 
 // Only this isolated QA entry owns setup controls. No test account or bypass enters the game entry.

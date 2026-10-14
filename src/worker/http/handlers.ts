@@ -2,8 +2,7 @@ import type { Context, Handler } from 'hono';
 import type { Env } from '../env.ts';
 import { OrganizationError } from '../organization/access.ts';
 
-export const health: Handler<{ Bindings: Env }> = (context) =>
-  context.json({ ok: true, stage: '0A/0B' });
+export const health: Handler<{ Bindings: Env }> = (context) => context.json({ ok: true });
 
 export function notFound<Runtime extends { Bindings: Env }>(context: Context<Runtime>) {
   return context.json({ code: 'NOT_FOUND' }, 404);
@@ -70,7 +69,6 @@ export function handleError<Runtime extends { Bindings: Env }>(
       event: 'request_failed',
       operation,
       correlationId,
-      type: error.name === 'PostgresError' ? 'database' : 'internal',
       code: failureCode(error),
     }),
   );

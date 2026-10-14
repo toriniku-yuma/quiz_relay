@@ -1,2 +1,0 @@
-ALTER TABLE "quiz_game"."instances" DROP CONSTRAINT "instance_state";--> statement-breakpoint
-ALTER TABLE "quiz_game"."instances" ADD CONSTRAINT "instance_state" CHECK ("quiz_game"."instances"."state" IN ('preparing', 'published', 'archived'));

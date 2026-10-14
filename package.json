@@ -21,17 +21,10 @@
     "lint": "biome check --error-on-warnings .",
     "config:apply": "node --env-file-if-exists=.dev.vars scripts/apply-game-config.ts",
     "config:apply:local": "pnpm run config:apply config/matchmaking.local.json local --apply",
-    "db:local:setup": "node scripts/local-postgres.ts setup",
-    "db:local:start": "node scripts/local-postgres.ts start",
-    "db:local:stop": "node scripts/local-postgres.ts stop",
-    "db:local:check": "node scripts/local-postgres.ts check",
     "db:generate": "drizzle-kit generate",
-    "db:generate:d1": "drizzle-kit generate --config drizzle.d1.config.ts",
-    "db:rehearse:d1": "node scripts/rehearse-d1-migration.ts --local",
-    "auth:map:clerk": "node --env-file-if-exists=.env.postgres-local --env-file-if-exists=.dev.vars --env-file-if-exists=.env.supabase-admin scripts/map-clerk-accounts.ts",
     "db:generate:custom": "drizzle-kit generate --custom",
     "db:migrate": "node scripts/migrate-d1.ts",
-    "db:seed": "node scripts/game-catalog-seed.ts",
+    "db:seed": "node scripts/game-catalog-seed.ts config/matchmaking.json",
     "catalog:manage": "node --env-file-if-exists=.dev.vars scripts/manage-catalog.ts",
     "db:check": "node scripts/check-d1.mjs",
     "catalog:list": "node --env-file-if-exists=.dev.vars scripts/manage-catalog.ts --list",
@@ -40,13 +33,11 @@
   "dependencies": {
     "@clerk/backend": "3.23.0",
     "@clerk/clerk-js": "6.38.0",
-    "@supabase/supabase-js": "2.116.0",
     "canonicalize": "4.0.0",
     "clsx": "2.1.1",
     "drizzle-orm": "0.45.2",
     "hono": "4.13.7",
     "jose": "6.2.12",
-    "postgres": "3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "3.6.0"
@@ -72,9 +63,6 @@
     "onlyBuiltDependencies": [
       "esbuild",
       "workerd"
-    ],
-    "patchedDependencies": {
-      "postgres@3.4.9": "patches/postgres@3.4.9.patch"
-    }
+    ]
   }
 }

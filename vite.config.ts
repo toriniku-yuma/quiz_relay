@@ -45,7 +45,7 @@ export default defineConfig(({ command }) => {
       }),
     ],
     server: {
-      // Local PostgreSQL clusters, backups, and DO state are not application sources.
+      // Local D1 and DO state under .wrangler are not application sources.
       watch: { ignored: ['**/.wrangler/**'] },
       https:
         command === 'serve' && devVars.DEV_TLS_CERT && devVars.DEV_TLS_KEY

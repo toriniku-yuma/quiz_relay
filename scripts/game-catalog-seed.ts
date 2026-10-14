@@ -14,16 +14,14 @@ import {
 import { localD1 } from './local-d1.ts';
 
 async function main() {
-  const [path = 'config/matchmaking.json', flag, ...extra] = process.argv.slice(2);
-  if ((flag && flag !== '--apply') || extra.length) throw new Error('INVALID_ARGUMENTS');
+  const [path, flag, ...extra] = process.argv.slice(2);
+  if (!path || path.startsWith('--') || (flag && flag !== '--apply') || extra.length)
+    throw new Error('INVALID_ARGUMENTS');
   const config = validateMatchConfig(
     JSON.parse((await readFile(path, 'utf8')).replace(/^\uFEFF/, '')),
   );
   const questions = JSON.parse(
-    await readFile(
-      new URL('../supabase/seeds/mock-hiragana.json', import.meta.url),
-      'utf8',
-    ),
+    await readFile(new URL('../seeds/mock-hiragana.json', import.meta.url), 'utf8'),
   );
   const definition = await validateDefinition({
     competition: { owner: config.owner, id: config.competitionId, version: 1 },

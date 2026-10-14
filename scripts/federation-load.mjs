@@ -26,7 +26,7 @@ for (const node of ['a', 'b'])
   tokens[node] = JSON.parse(
     await readFile(`.wrangler/federation-${node}-secrets.json`, 'utf8'),
   ).PROBE_TOKEN;
-const questions = JSON.parse(await readFile('supabase/seeds/mock-hiragana.json', 'utf8')),
+const questions = JSON.parse(await readFile('seeds/mock-hiragana.json', 'utf8')),
   report = {
     runId,
     startedAt: new Date().toISOString(),
