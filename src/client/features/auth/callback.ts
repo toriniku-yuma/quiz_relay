@@ -1,22 +1,3 @@
-export function hasAuthCallback(url: URL) {
-  const hash = new URLSearchParams(url.hash.slice(1));
-
-  return (
-    url.searchParams.get('clerk-callback') === '1' ||
-    url.searchParams.has('code') ||
-    url.searchParams.has('error') ||
-    hash.has('error')
-  );
-}
-
-export function readAuthReturn() {
-  try {
-    return safeAuthReturn(localStorage.getItem('quiz-relay-auth-return') ?? undefined);
-  } catch {
-    return undefined;
-  }
-}
-
 import { participationId, participationTarget } from '../../../shared/participation';
 import {
   AUTHORIZE_PATH,
@@ -25,6 +6,16 @@ import {
   GAME_PATH,
   ROOMS_PATH,
 } from '../../app/paths';
+
+export const AUTH_RETURN_KEY = 'quiz-relay-auth-return';
+
+export function readAuthReturn() {
+  try {
+    return safeAuthReturn(localStorage.getItem(AUTH_RETURN_KEY) ?? undefined);
+  } catch {
+    return undefined;
+  }
+}
 
 export function safeAuthReturn(value: string | undefined) {
   if (!value || value.length > 2048) return undefined;

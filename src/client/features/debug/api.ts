@@ -1,4 +1,3 @@
-import { isAuthApiError } from '@supabase/supabase-js';
 import type { ApiPath } from '../../../shared/api-paths';
 
 export class ProbeApiError extends Error {
@@ -12,7 +11,7 @@ export class ProbeApiError extends Error {
         : code === 'PROBES_DISABLED'
           ? '検証APIが無効です。有効にしてデプロイしてください。'
           : code === 'AUTH_NOT_CONFIGURED'
-            ? 'SupabaseのURLと公開キーを設定してください。'
+            ? 'Clerkの公開キーと秘密キーを設定してください。'
             : '検証APIでエラーが発生しました。表示されたコードと設定を確認してください。',
     );
 
@@ -40,17 +39,6 @@ export async function probeRequest(token: string, path: ApiPath, method = 'GET')
 export function formatProbeError(error: unknown) {
   if (error instanceof ProbeApiError) {
     return { ok: false, status: error.status, code: error.code, message: error.message };
-  }
-  if (isAuthApiError(error)) {
-    return {
-      ok: false,
-      status: error.status,
-      code: error.code,
-      message:
-        error.status === 429
-          ? 'Supabaseの認証リクエストが回数制限で拒否されました。連続した再送を止め、時間を置いてください。'
-          : '認証に失敗しました。エラーコードとSupabaseの設定を確認してください。',
-    };
   }
 
   return { ok: false, message: '検証に失敗しました。設定と実行手順を確認してください。' };

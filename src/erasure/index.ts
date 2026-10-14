@@ -30,16 +30,13 @@ type ErasureEnv = InventoryEnv &
   Pick<
     Env,
     | 'MATCHMAKER'
-    | 'AUTH_PROVIDER'
     | 'CLERK_SECRET_KEY'
-    | 'CLERK_PUBLISHABLE_KEY'
-    | 'CLERK_JWT_KEY'
     | 'GAME_CONFIG_PROFILE'
     | 'FEDERATION_ORIGIN'
     | 'SIGNING_KID'
     | 'SIGNING_PRIVATE_KEY'
   > & { GAME_D1: D1Database };
-export async function expireRoomReviews(db: Database, rooms: Env['GAME_ROOM']) {
+async function expireRoomReviews(db: Database, rooms: Env['GAME_ROOM']) {
   const due = await db
     .select()
     .from(instanceRooms)
@@ -138,9 +135,8 @@ async function maintenance(
     return anonymizeWithdrawal(db, env, operationId(input));
   if (input.task === 'authentication') {
     const id = operationId(input);
-    if (env.AUTH_PROVIDER !== 'clerk' || !env.CLERK_SECRET_KEY)
-      throw new Error('AUTH_ERASURE_CONFIGURATION_REQUIRED');
-    return eraseAuthentication(db, id, clerkAuthDeletion(env));
+    if (!env.CLERK_SECRET_KEY) throw new Error('AUTH_ERASURE_CONFIGURATION_REQUIRED');
+    return eraseAuthentication(db, id, clerkAuthDeletion(env.CLERK_SECRET_KEY));
   }
   if (input.task === 'difficulty') {
     if (typeof input.instanceId !== 'string') throw new Error('INVALID_OPERATION');

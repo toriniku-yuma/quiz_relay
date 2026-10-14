@@ -1,5 +1,5 @@
 import { API_PATHS, instanceApiPath } from '../../../shared/api-paths';
-import { setupAuth } from '../auth/client';
+import { authToken } from '../auth/client';
 
 const errors: Record<string, string> = {
   PROFILE_REQUIRED: 'マイページで表示名を登録してから参加してください。',
@@ -45,13 +45,12 @@ export class MatchError extends Error {
   }
 }
 export async function matchRequest(path: string, body: object = {}, instanceId = '') {
-  const client = await setupAuth();
-  const { data } = await client.auth.getSession();
-  if (!data.session) throw new MatchError('AUTH_REQUIRED');
+  const token = await authToken();
+  if (!token) throw new MatchError('AUTH_REQUIRED');
   const response = await fetch(instanceApiPath(path, instanceId), {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${data.session.access_token}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),

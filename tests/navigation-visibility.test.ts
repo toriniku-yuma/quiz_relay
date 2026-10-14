@@ -13,7 +13,6 @@ vi.mock('../src/client/app/context', () => ({
     auth: { user: { user_metadata: {}, email: 'test@example.test' }, busy: false },
     organization: {
       data: {
-        enabled: true,
         account: { administrator: state.administrator, actorId: 'test' },
         organization: { name: '組織' },
         addedInstanceIds: state.addedInstanceIds,

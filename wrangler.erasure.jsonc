@@ -14,7 +14,7 @@
       "migrations_dir": "drizzle-d1"
     }
   ],
-  "vars": { "GAME_CONFIG_PROFILE": "default", "AUTH_PROVIDER": "clerk" },
+  "vars": { "GAME_CONFIG_PROFILE": "default" },
   "durable_objects": {
     "bindings": [
       {

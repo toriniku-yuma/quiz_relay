@@ -11,16 +11,11 @@ const runtime = parseEnv(readFileSync('.dev.vars', 'utf8'));
 function setup() {
   if (existsSync('.env.erasure-local'))
     throw new Error('LOCAL_ERASURE_ALREADY_CONFIGURED');
-  if (
-    runtime.AUTH_PROVIDER !== 'clerk' ||
-    !runtime.CLERK_SECRET_KEY ||
-    !runtime.CLERK_PUBLISHABLE_KEY
-  )
+  if (!runtime.CLERK_SECRET_KEY || !runtime.CLERK_PUBLISHABLE_KEY)
     throw new Error('AUTH_SECRET_KEY_REQUIRED');
   writeFileSync(
     '.env.erasure-local',
     [
-      'AUTH_PROVIDER=clerk',
       ...['CLERK_SECRET_KEY', 'CLERK_PUBLISHABLE_KEY', 'CLERK_JWT_KEY']
         .filter((name) => runtime[name])
         .map((name) => `${name}=${JSON.stringify(runtime[name])}`),

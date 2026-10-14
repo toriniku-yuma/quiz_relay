@@ -1,11 +1,7 @@
 import { exportSPKI, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import {
-  authenticateClerk,
-  clerkSubject,
-  legacySubjectPrefix,
-} from '../src/worker/auth/clerk';
-import { authConfig } from '../src/worker/auth/config';
+import { authenticateClerk } from '../src/worker/auth/clerk';
+import { authConfig, type ClerkKeys, clerkKeys } from '../src/worker/auth/config';
 import type { Env } from '../src/worker/env';
 
 const mocks = vi.hoisted(() => ({ getUser: vi.fn() }));
@@ -23,19 +19,21 @@ vi.mock('@clerk/backend', async (importOriginal) => {
 
 const issuer = 'https://auth-test.clerk.accounts.dev';
 const origin = 'https://quiz.test';
-const subject = '00000000-0000-4000-8000-000000000001';
-let keys: Awaited<ReturnType<typeof generateKeyPair>>;
+let signingKeys: Awaited<ReturnType<typeof generateKeyPair>>;
 let configuration: Env;
+let keys: ClerkKeys;
 let user: Record<string, unknown>;
 
 beforeAll(async () => {
-  keys = await generateKeyPair('RS256', { extractable: true });
+  signingKeys = await generateKeyPair('RS256', { extractable: true });
   configuration = {
-    AUTH_PROVIDER: 'clerk',
     CLERK_PUBLISHABLE_KEY: `pk_test_${btoa('auth-test.clerk.accounts.dev$')}`,
     CLERK_SECRET_KEY: 'sk_test_fixture',
-    CLERK_JWT_KEY: await exportSPKI(keys.publicKey),
-  } as Env;
+    CLERK_JWT_KEY: await exportSPKI(signingKeys.publicKey),
+  } as unknown as Env;
+  const configuredKeys = clerkKeys(configuration);
+  if (!configuredKeys) throw new Error('CLERK_FIXTURE_REQUIRED');
+  keys = configuredKeys;
 });
 beforeEach(() => {
   user = {
@@ -61,7 +59,7 @@ afterEach(() => {
 
 async function token(
   payload: Record<string, unknown> = {},
-  privateKey = keys.privateKey,
+  privateKey = signingKeys.privateKey,
 ) {
   return new SignJWT({ sid: 'sess_fixture', azp: origin, ...payload })
     .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: 'fixture' })
@@ -77,7 +75,7 @@ async function authenticate(value: string) {
     new Request(`${origin}/api/auth/identity`, {
       headers: { Authorization: `Bearer ${value}` },
     }),
-    configuration,
+    keys,
   );
 }
 
@@ -87,13 +85,10 @@ it('実SDKで署名を検証し、Googleアカウントを認証する', async (
     displayName: '作問者',
   });
 });
-it('管理APIで付けた旧IDだけを引き継ぐ', async () => {
-  user.externalId = legacySubjectPrefix + subject;
+it('外部IDや利用者が書けるメタデータではなくClerkユーザーIDを本人IDにする', async () => {
+  user.externalId = 'other';
   user.unsafe_metadata = { subject: 'attacker' };
-  expect((await authenticate(await token()))?.subject).toBe(subject);
-  expect(() => clerkSubject({ id: 'user_fixture', externalId: 'other' })).toThrow(
-    'INVALID_AUTH_MAPPING',
-  );
+  expect((await authenticate(await token()))?.subject).toBe('user_fixture');
 });
 it('別originのトークンと、別鍵で署名したトークンを拒否する', async () => {
   expect(await authenticate(await token({ azp: 'https://evil.test' }))).toBeNull();
@@ -123,17 +118,12 @@ it.each([
   user.externalAccounts = accounts;
   expect(await authenticate(await token())).toBeNull();
 });
-it('Clerk選択時にキーが欠けたら旧Authへ戻らず、秘密鍵も公開設定へ出さない', () => {
+it('Clerkのキーが欠けたら認証設定を返さず、秘密鍵も公開設定へ出さない', () => {
+  expect(authConfig({ ...configuration, CLERK_SECRET_KEY: undefined })).toBeUndefined();
   expect(
-    authConfig({
-      ...configuration,
-      CLERK_SECRET_KEY: undefined,
-      SUPABASE_URL: 'https://old.test',
-      SUPABASE_PUBLISHABLE_KEY: 'old',
-    }),
+    authConfig({ ...configuration, CLERK_PUBLISHABLE_KEY: 'public-fixture' }),
   ).toBeUndefined();
   expect(authConfig(configuration)).toEqual({
-    provider: 'clerk',
     publishableKey: configuration.CLERK_PUBLISHABLE_KEY,
   });
 });

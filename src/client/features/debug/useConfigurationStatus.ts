@@ -11,12 +11,10 @@ export type ConfigurationStatus = {
 
 export async function loadConfigurationStatus(): Promise<ConfigurationStatus> {
   const client = await setupAuth();
-  const session = await client.auth.getSession();
-  if (session.error) throw new Error('ログイン状態を確認できませんでした。');
-  if (!session.data.session) return null;
-  const { data, error } = await client.auth.getUser();
-  if (error || !data.user)
-    throw new Error('本人確認に失敗しました。ログインし直してください。');
+  const user = await client.getUser().catch(() => {
+    throw new Error('ログイン状態を確認できませんでした。');
+  });
+  if (!user) return null;
   const organization = await organizationRequest(API_PATHS.organizationOverview);
   return {
     name: organization.account?.displayName?.trim() || 'ログイン済み',
@@ -51,8 +49,8 @@ export function useConfigurationStatus() {
     void setupAuth()
       .then((client) => {
         if (!active) return;
-        const subscription = client.auth.onAuthStateChange(() => {
-          // Clear the previous identity immediately; defer async Auth calls outside its callback lock.
+        unsubscribe = client.subscribe(() => {
+          // Clear the previous identity immediately, then reload outside the listener.
           generation.current++;
           setData(null);
           setBusy(true);
@@ -61,7 +59,6 @@ export function useConfigurationStatus() {
             if (active) void refresh();
           }, 0);
         });
-        unsubscribe = () => subscription.data.subscription.unsubscribe();
         void refresh();
       })
       .catch(() => {

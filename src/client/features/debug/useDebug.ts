@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ApiPath } from '../../../shared/api-paths';
 import { DEBUG_PATH } from '../../app/paths';
-import { hasAuthCallback } from '../auth/callback';
-import { checkIdentity, getAuth, signInWithGoogle, signOut } from '../auth/client';
+import { checkIdentity, signInWithGoogle, signOut } from '../auth/client';
 import { formatProbeError, probeRequest } from './api';
 
 export function useDebug() {
@@ -23,17 +22,7 @@ export function useDebug() {
   }, []);
 
   useEffect(() => {
-    const returned = hasAuthCallback(new URL(location.href));
-    if (!getAuth() && !returned) return;
-
-    void run(async () => {
-      try {
-        return await checkIdentity();
-      } finally {
-        if (returned && new URL(location.href).searchParams.get('clerk-callback') !== '1')
-          history.replaceState(null, '', DEBUG_PATH);
-      }
-    });
+    void run(checkIdentity);
   }, [run]);
 
   return {
@@ -43,7 +32,7 @@ export function useDebug() {
     busy,
     request: (path: ApiPath, method = 'GET') =>
       run(() => probeRequest(token, path, method)),
-    googleLogin: () => run(() => signInWithGoogle(token)),
+    googleLogin: () => run(() => signInWithGoogle(DEBUG_PATH)),
     checkIdentity: () => run(checkIdentity),
     signOut: () => run(signOut),
   };

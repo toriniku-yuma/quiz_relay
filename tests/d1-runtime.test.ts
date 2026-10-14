@@ -25,7 +25,6 @@ const runtime = env as unknown as Env & {
 };
 const environment: Env = {
   ...runtime,
-  AUTH_PROVIDER: 'clerk',
   CLERK_PUBLISHABLE_KEY: 'pk_test_fixture',
   CLERK_SECRET_KEY: 'sk_test_fixture',
   INITIAL_ADMIN_SUBJECT: 'runtime-admin',

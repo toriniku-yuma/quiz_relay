@@ -1,10 +1,5 @@
-import {
-  AuthApiError,
-  createClient,
-  type SupabaseClient,
-  type User,
-} from '@supabase/supabase-js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { AuthClient, AuthUser } from '../src/client/features/auth/clerk';
 import { publicPlayEntry } from '../src/client/features/auth/publicEntry';
 import { useAuth } from '../src/client/features/auth/useAuth';
 import { withdrawalReceiptKey } from '../src/client/features/profile/withdrawalReceipt';
@@ -13,9 +8,8 @@ const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
   cursor: 0,
   effects: [] as (() => (() => void) | undefined)[],
-  client: null as SupabaseClient | null,
+  client: null as AuthClient | null,
   cleanup: undefined as (() => void) | undefined,
-  request: vi.fn(),
 }));
 vi.mock('react', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react')>()),
@@ -36,7 +30,7 @@ vi.mock('../src/client/features/auth/client', async (importOriginal) => ({
   setupAuth: async () => mocks.client,
 }));
 
-const subject = '00000000-0000-4000-8000-000000000001';
+const subject = 'user_fixture';
 it.each([
   ['/game/?instance=sample', true],
   ['/casual/?instance=sample', true],
@@ -49,18 +43,11 @@ it.each([
 ])('公開参加先%sだけを未ログインで保持する', (path, expected) => {
   expect(publicPlayEntry(new URL(`https://quiz.test${path}`))).toBe(expected);
 });
-const user: User = {
-  id: subject,
-  aud: 'authenticated',
-  role: 'authenticated',
-  app_metadata: {},
-  user_metadata: {},
-  created_at: '2026-01-01T00:00:00Z',
-};
+
 function render() {
   mocks.cursor = 0;
   mocks.effects = [];
-  // biome-ignore lint/correctness/useHookAtTopLevel: 既存の状態保持ハーネスでSDK通知後の再描画を検証する。
+  // biome-ignore lint/correctness/useHookAtTopLevel: 状態保持ハーネスで認証通知後の再描画を検証する。
   return useAuth();
 }
 async function mount() {
@@ -68,46 +55,27 @@ async function mount() {
   mocks.cleanup = mocks.effects[0]() ?? undefined;
   await vi.waitFor(() => expect(render().ready).toBe(true));
 }
-function configure(expired = false) {
-  const now = Math.floor(Date.now() / 1000);
-  const exp = expired ? now - 3600 : now + 3600;
-  const accessToken = `${btoa('{"alg":"HS256","typ":"JWT"}')}.${btoa(JSON.stringify({ sub: subject, exp, iat: now - 7200, aud: 'authenticated' }))}.dummy`;
-  const storage = new Map([
-    [
-      'auth-session-review',
-      JSON.stringify({
-        access_token: accessToken,
-        refresh_token: 'dummy-refresh',
-        expires_at: exp,
-        expires_in: 3600,
-        token_type: 'bearer',
-        user,
-      }),
-    ],
-  ]);
-  mocks.client = createClient('https://review-auth.invalid', 'dummy-public-key', {
-    auth: {
-      storageKey: 'auth-session-review',
-      storage: {
-        getItem: (key) => storage.get(key) ?? null,
-        setItem: (key, value) => {
-          storage.set(key, value);
-        },
-        removeItem: (key) => {
-          storage.delete(key);
-        },
-      },
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
+function configure(initial: AuthUser | null) {
+  const listeners = new Set<(user: AuthUser | null) => void>();
+  const client = {
+    getToken: vi.fn(),
+    getUser: vi.fn(async () => initial),
+    subscribe: vi.fn((listener: (user: AuthUser | null) => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    }),
+    signInWithGoogle: vi.fn(),
+    signOut: vi.fn(),
+  };
+  mocks.client = client;
+  return {
+    client,
+    notify: (user: AuthUser | null) => {
+      for (const listener of listeners) listener(user);
     },
-    global: { fetch: mocks.request },
-  });
-  return mocks.client;
-}
-async function expire(client: SupabaseClient) {
-  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 7200000);
-  await client.auth.refreshSession();
-  expect((await client.auth.getSession()).data.session).toBeNull();
+  };
 }
 function expectLogin() {
   expect(render().user).toBeNull();
@@ -120,21 +88,6 @@ function expectLogin() {
 beforeEach(() => {
   mocks.slots = [];
   mocks.cleanup = undefined;
-  mocks.request.mockReset().mockImplementation(async (input: RequestInfo | URL) => {
-    const url = new URL(
-      typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
-    );
-    if (url.origin !== 'https://review-auth.invalid') throw new Error('NETWORK_BLOCKED');
-    if (url.pathname === '/auth/v1/user') return Response.json(user);
-    if (url.pathname === '/auth/v1/token')
-      return Response.json(
-        { code: 'refresh_token_not_found', message: 'review session expired' },
-        { status: 400 },
-      );
-    if (url.pathname === '/auth/v1/logout')
-      return Response.json({ message: 'review service unavailable' }, { status: 503 });
-    throw new Error('UNEXPECTED_REQUEST');
-  });
   const storage = new Map<string, string>();
   vi.stubGlobal('sessionStorage', {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -151,89 +104,64 @@ beforeEach(() => {
   });
   vi.stubGlobal('PopStateEvent', Event);
 });
-afterEach(async () => {
+afterEach(() => {
   mocks.cleanup?.();
-  await mocks.client?.auth.dispose();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-it('起動前に失効通知が終わった期限切れセッションもログイン画面へ戻す', async () => {
-  const client = configure(true);
-  await client.auth.initialize();
+it('起動時にセッションがなければログイン画面へ戻す', async () => {
+  configure(null);
   await mount();
   expectLogin();
 });
 
-it('利用中の更新トークン失効でSDKが認証を解除したらログイン画面へ戻す', async () => {
-  const client = configure();
+it('利用中にセッションが失効したらログイン画面へ戻す', async () => {
+  const { notify } = configure({ id: subject });
   await mount();
   expect(render().user?.id).toBe(subject);
   expect(history.replaceState).not.toHaveBeenCalled();
-  await expire(client);
+  notify(null);
   expectLogin();
 });
 
-it('アクセストークンが有効な間の更新失敗ではログイン状態を維持する', async () => {
-  const client = configure();
+it('本人確認の一時障害では未ログインと扱わず、移動せずに再試行を促す', async () => {
+  const { client } = configure({ id: subject });
+  client.getUser.mockRejectedValueOnce(new Error('AUTH_IDENTITY_UNAVAILABLE'));
   await mount();
-  const { error } = await client.auth.refreshSession();
-  expect(error?.status).toBe(400);
-  expect(render().user?.id).toBe(subject);
-  expect(history.replaceState).not.toHaveBeenCalled();
-});
-
-it('本人確認の一時障害だけではSDKが保持するログイン状態を解除しない', async () => {
-  const client = configure();
-  vi.spyOn(client.auth, 'getUser').mockResolvedValueOnce({
-    data: { user: null },
-    error: new AuthApiError('review service unavailable', 503, 'service_unavailable'),
-  });
-  await mount();
-  expect(render().user?.id).toBe(subject);
   expect(history.replaceState).not.toHaveBeenCalled();
   expect(render().message).toContain('確認できませんでした');
 });
 
-it('ログアウト503でも実SDKがローカル認証を破棄したらログイン画面へ戻す', async () => {
-  const client = configure();
-  await mount();
-  const { error } = await client.auth.signOut();
-  expect(error?.status).toBe(503);
-  expect((await client.auth.getSession()).data.session).toBeNull();
-  expectLogin();
-});
-
 it('認証切れ後に古い本人確認が届いてもログイン状態を復活させない', async () => {
-  const client = configure();
-  let complete!: (value: { data: { user: User }; error: null }) => void;
-  const request = vi.spyOn(client.auth, 'getUser').mockImplementationOnce(
+  const { client, notify } = configure(null);
+  let complete!: (value: AuthUser) => void;
+  client.getUser.mockImplementationOnce(
     () =>
-      new Promise((resolve) => {
+      new Promise<AuthUser>((resolve) => {
         complete = resolve;
       }),
   );
   render();
   mocks.cleanup = mocks.effects[0]() ?? undefined;
-  await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-  await client.auth.signOut();
-  complete({ data: { user }, error: null });
+  await vi.waitFor(() => expect(client.getUser).toHaveBeenCalledOnce());
+  notify(null);
+  complete({ id: subject });
   await vi.waitFor(() => expect(render().ready).toBe(true));
   expectLogin();
 });
 
-it.each(['INITIAL_SESSION', 'SIGNED_OUT'])(
-  '退会手続き情報がある専用画面では%sの後も処理状況画面を残す',
-  async (event) => {
+it.each(['initial', 'expired'])(
+  '退会手続き情報がある専用画面では%sの未ログイン後も処理状況画面を残す',
+  async (timing) => {
     vi.stubGlobal('location', { href: 'https://quiz.example/account/?view=withdrawal' });
     sessionStorage.setItem(
       withdrawalReceiptKey,
       JSON.stringify({ id: 'withdrawal-operation', subject }),
     );
-    const client = configure(event === 'INITIAL_SESSION');
-    if (event === 'INITIAL_SESSION') await client.auth.initialize();
+    const { notify } = configure(timing === 'initial' ? null : { id: subject });
     await mount();
-    if (event === 'SIGNED_OUT') await client.auth.signOut({ scope: 'local' });
+    if (timing === 'expired') notify(null);
     expect(render().user).toBeNull();
     expect(history.replaceState).not.toHaveBeenCalled();
   },
@@ -250,9 +178,9 @@ it.each(['none', 'broken', 'another-user'])(
           ? '{'
           : JSON.stringify({ id: 'old-operation', subject: 'another-user' }),
       );
-    const client = configure();
+    const { notify } = configure({ id: subject });
     await mount();
-    await expire(client);
+    notify(null);
     expectLogin();
   },
 );
@@ -262,8 +190,8 @@ it('退会の受付情報があっても別画面での失効は移動する', a
     withdrawalReceiptKey,
     JSON.stringify({ id: 'old-operation', subject }),
   );
-  const client = configure();
+  const { notify } = configure({ id: subject });
   await mount();
-  await expire(client);
+  notify(null);
   expectLogin();
 });

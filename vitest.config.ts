@@ -12,12 +12,9 @@ export default defineConfig({
         },
         bindings: {
           D1_MIGRATIONS: await readD1Migrations('./drizzle-d1'),
-          // Auth fixtures must not inherit the developer's real provider or Clerk keys.
-          AUTH_PROVIDER: 'supabase',
-          SUPABASE_URL: 'https://auth.test',
-          SUPABASE_PUBLISHABLE_KEY: 'public-fixture',
-          CLERK_PUBLISHABLE_KEY: '',
-          CLERK_SECRET_KEY: '',
+          // Fixture Clerk keys; tests replace session verification and never use real keys.
+          CLERK_PUBLISHABLE_KEY: 'pk_test_fixture',
+          CLERK_SECRET_KEY: 'sk_test_fixture',
           CLERK_JWT_KEY: '',
         },
         // Tests opt into a private service explicitly; never call the real provider.

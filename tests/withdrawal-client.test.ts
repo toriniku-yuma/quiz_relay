@@ -7,7 +7,7 @@ const harness = vi.hoisted(() => ({
   request: vi.fn(),
   fetch: vi.fn(),
   signOut: vi.fn(),
-  getSession: vi.fn(),
+  getUser: vi.fn(),
 }));
 vi.mock('react', () => ({
   useEffect: vi.fn(),
@@ -27,7 +27,8 @@ vi.mock('react', () => ({
 }));
 vi.mock('../src/client/features/auth/client', () => ({
   setupAuth: async () => ({
-    auth: { signOut: harness.signOut, getSession: harness.getSession },
+    signOut: harness.signOut,
+    getUser: harness.getUser,
   }),
 }));
 vi.mock('../src/client/features/organization/useOrganization', () => ({
@@ -41,12 +42,7 @@ function render(subject?: string) {
 }
 beforeEach(() => {
   harness.state = [];
-  for (const mock of [
-    harness.request,
-    harness.fetch,
-    harness.signOut,
-    harness.getSession,
-  ])
+  for (const mock of [harness.request, harness.fetch, harness.signOut, harness.getUser])
     mock.mockReset();
   const storage = new Map<string, string>();
   vi.stubGlobal('sessionStorage', {
@@ -77,9 +73,7 @@ it('古い退会結果が到着しても再登録した別アカウントをロ�
   harness.fetch.mockImplementation(async () =>
     Response.json({ accepted: true, ready: true }),
   );
-  harness.getSession.mockResolvedValue({
-    data: { session: { user: { id: 'new-user' } } },
-  });
+  harness.getUser.mockResolvedValue({ id: 'new-user' });
   await render('old-user').submit();
   expect(harness.signOut).not.toHaveBeenCalled();
   harness.state = [];
@@ -92,11 +86,9 @@ it('受付済みの本人だけローカル認証を破棄し、退会要求を�
   harness.fetch.mockImplementation(async () =>
     Response.json({ accepted: true, ready: false }),
   );
-  harness.getSession.mockResolvedValue({
-    data: { session: { user: { id: 'old-user' } } },
-  });
+  harness.getUser.mockResolvedValue({ id: 'old-user' });
   await render('old-user').submit();
-  expect(harness.signOut).toHaveBeenCalledWith({ scope: 'local' });
+  expect(harness.signOut).toHaveBeenCalledOnce();
   expect(harness.request).not.toHaveBeenCalled();
   expect(render('old-user').accepted).toBe(true);
   expect(render('old-user').ready).toBe(false);

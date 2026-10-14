@@ -15,22 +15,10 @@ import type { State } from '../src/worker/game/state';
 import app from '../src/worker/index';
 import { questionProvenance, questions } from './fixtures/questions';
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), user: vi.fn() }));
+const mocks = vi.hoisted(() => ({ load: vi.fn(), identity: vi.fn() }));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/catalog/database', () => ({ loadMatchDefinition: mocks.load }));
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: mocks.user,
-      getClaims: async () => ({
-        data: {
-          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
-        },
-        error: null,
-      }),
-    },
-  }),
-}));
+vi.mock('../src/worker/auth/clerk', () => ({ authenticateClerk: mocks.identity }));
 vi.mock('../src/worker/organization/database', () => ({
   allowedInstanceActors: async (_env: unknown, _scope: unknown, actors: string[]) =>
     actors,
@@ -40,7 +28,7 @@ const owner = 'https://game.test';
 let definition: MatchDefinition;
 beforeEach(async () => {
   mocks.load.mockReset();
-  mocks.user.mockReset();
+  mocks.identity.mockReset();
   const config = { ...rules, showSelections: true };
   const manifest = questions.map((question) => ({
     ...question,
@@ -62,10 +50,7 @@ beforeEach(async () => {
     ...structuredClone(definition),
     competition: ref ?? definition.competition,
   }));
-  mocks.user.mockResolvedValue({
-    data: { user: { id: 'user-1', email_confirmed_at: '2026-09-01' } },
-    error: null,
-  });
+  mocks.identity.mockResolvedValue({ subject: 'user-1', displayName: '作問者' });
 });
 
 async function state(
@@ -861,7 +846,7 @@ it('A04: identity is server verified; unauthenticated and cross-origin requests 
       )
     ).status,
   ).toBe(403);
-  mocks.user.mockResolvedValueOnce({ data: { user: null }, error: { status: 401 } });
+  mocks.identity.mockResolvedValueOnce(null);
   expect(
     (
       await app.request(
@@ -996,7 +981,7 @@ it('A04: public Auth settings need no probe token; join issues HttpOnly session 
   };
   const config = await app.request('https://game.test/api/auth/config', {}, bindings);
   expect(config.status).toBe(200);
-  expect(Object.keys(await config.json()).sort()).toEqual(['publishableKey', 'url']);
+  expect(Object.keys(await config.json()).sort()).toEqual(['publishableKey']);
   const response = await app.request(
     'https://game.test/api/matchmaking/join',
     {
@@ -1012,7 +997,9 @@ it('A04: public Auth settings need no probe token; join issues HttpOnly session 
   expect(cookie).toContain('Secure');
   expect(cookie).toContain('SameSite=Strict');
   expect(Object.keys(await response.json())).toEqual(['room']);
-  expect(mocks.user).toHaveBeenCalledWith('valid');
+  expect(mocks.identity.mock.lastCall?.[0].headers.get('Authorization')).toBe(
+    'Bearer valid',
+  );
   const duplicate = await app.request(
     'https://game.test/api/matchmaking/join',
     {
@@ -1026,11 +1013,17 @@ it('A04: public Auth settings need no probe token; join issues HttpOnly session 
   expect(await duplicate.json()).toEqual({ code: 'ALREADY_JOINED' });
 });
 
-it.each([
-  { id: 'anonymous', is_anonymous: true, email_confirmed_at: '2026-09-01' },
-  { id: 'unconfirmed', is_anonymous: false, email_confirmed_at: null },
-])('A04: rejects users without a confirmed non-anonymous identity', async (user) => {
-  mocks.user.mockResolvedValue({ data: { user }, error: null });
+it.each<[string, number, () => Promise<null>]>([
+  ['rejected account', 401, async () => null],
+  [
+    'unavailable identity provider',
+    503,
+    async () => {
+      throw new Error('offline');
+    },
+  ],
+])('A04: rejects joins when Clerk reports a %s', async (_case, status, verify) => {
+  mocks.identity.mockImplementation(verify);
   const response = await app.request(
     'https://game.test/api/matchmaking/join',
     {
@@ -1040,7 +1033,7 @@ it.each([
     },
     runtime,
   );
-  expect(response.status).toBe(401);
+  expect(response.status).toBe(status);
   expect(mocks.load).not.toHaveBeenCalled();
 });
 

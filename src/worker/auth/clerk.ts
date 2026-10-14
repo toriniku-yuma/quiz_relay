@@ -1,45 +1,32 @@
-import { createClerkClient, type User } from '@clerk/backend';
-import type { Env } from '../env.ts';
+import { createClerkClient } from '@clerk/backend';
+import type { ClerkKeys } from './config.ts';
 
-export const legacySubjectPrefix = 'quiz-relay:supabase:';
-const legacySubject = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-// externalId is set only through the trusted Backend API; never merge by email or user metadata.
-export function clerkSubject(user: Pick<User, 'id' | 'externalId'>) {
-  if (user.externalId === null) return user.id;
-  const subject = user.externalId.startsWith(legacySubjectPrefix)
-    ? user.externalId.slice(legacySubjectPrefix.length)
-    : '';
-  if (!legacySubject.test(subject)) throw new Error('INVALID_AUTH_MAPPING');
-  return subject;
-}
-
-export function clerkBackend(
-  env: Pick<Env, 'CLERK_PUBLISHABLE_KEY' | 'CLERK_SECRET_KEY' | 'CLERK_JWT_KEY'>,
-) {
+export function clerkBackend(keys: Pick<ClerkKeys, 'secretKey'> & Partial<ClerkKeys>) {
   return createClerkClient({
-    publishableKey: env.CLERK_PUBLISHABLE_KEY,
-    secretKey: env.CLERK_SECRET_KEY,
-    jwtKey: env.CLERK_JWT_KEY,
+    publishableKey: keys.publishableKey,
+    secretKey: keys.secretKey,
+    jwtKey: keys.jwtKey,
     telemetry: { disabled: true },
   });
 }
 
-export async function authenticateClerk(request: Request, env: Env) {
-  const client = clerkBackend(env);
+export async function authenticateClerk(request: Request, keys: ClerkKeys) {
+  const client = clerkBackend(keys);
+  const origin = new URL(request.url).origin;
   const state = await client.authenticateRequest(request, {
     acceptsToken: 'session_token',
-    authorizedParties: [new URL(request.url).origin],
+    authorizedParties: [origin],
   });
   if (!state.isAuthenticated) return null;
   const authentication = state.toAuth();
   if (!authentication.userId) return null;
-  const frontendApi = atob(
-    (env.CLERK_PUBLISHABLE_KEY ?? '').replace(/^pk_(test|live)_/, ''),
-  ).replace(/\$$/, '');
+  const frontendApi = atob(keys.publishableKey.replace(/^pk_(test|live)_/, '')).replace(
+    /\$$/,
+    '',
+  );
   if (
     authentication.sessionClaims.iss !== `https://${frontendApi}` ||
-    authentication.sessionClaims.azp !== new URL(request.url).origin
+    authentication.sessionClaims.azp !== origin
   )
     return null;
   const user = await client.users.getUser(authentication.userId);
@@ -56,5 +43,5 @@ export async function authenticateClerk(request: Request, env: Env) {
     return null;
   // Also disable email, phone, password, passkey and non-Google strategies in Clerk.
   // Linking Google alone cannot establish the sign-in strategy of an existing session.
-  return { subject: clerkSubject(user), displayName: '作問者' };
+  return { subject: user.id, displayName: '作問者' };
 }

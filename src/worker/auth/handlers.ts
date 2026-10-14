@@ -1,9 +1,8 @@
-import { createClient } from '@supabase/supabase-js';
 import type { Handler, MiddlewareHandler } from 'hono';
 import { contentHash } from '../catalog/hash.ts';
 import type { Env } from '../env.ts';
 import { authenticateClerk } from './clerk.ts';
-import { authConfig } from './config.ts';
+import { authConfig, clerkKeys } from './config.ts';
 
 export type AuthEnv = {
   Bindings: Env;
@@ -46,68 +45,21 @@ export const authenticate: MiddlewareHandler<AuthEnv> = async (context, next) =>
   const bearer = context.req.header('Authorization') ?? '';
   if (!/^Bearer [A-Za-z0-9._-]+$/.test(bearer) || bearer.length > 8192)
     return context.json({ code: 'AUTH_REQUIRED' }, 401);
-  const config = authConfig(context.env);
-  if (!config) return context.json({ code: 'AUTH_NOT_CONFIGURED' }, 503);
-  if (
-    context.env.API_LIMITER &&
-    !(await context.env.API_LIMITER.limit({ key: `bearer:${await contentHash(bearer)}` }))
-      .success
-  )
+  const keys = clerkKeys(context.env);
+  if (!keys) return context.json({ code: 'AUTH_NOT_CONFIGURED' }, 503);
+  const limiter = context.env.API_LIMITER;
+  if (!limiter) return context.json({ code: 'RATE_LIMITER_NOT_CONFIGURED' }, 503);
+  if (!(await limiter.limit({ key: `bearer:${await contentHash(bearer)}` })).success)
     return context.json({ code: 'RATE_LIMIT' }, 429);
 
-  let identity: { subject: string; displayName: string } | null;
-  if (config.provider === 'clerk') {
-    try {
-      identity = await authenticateClerk(context.req.raw, context.env);
-    } catch (error) {
-      return context.json(
-        {
-          code:
-            error instanceof Error && error.message === 'INVALID_AUTH_MAPPING'
-              ? 'AUTH_MAPPING_REQUIRED'
-              : 'AUTH_UNAVAILABLE',
-        },
-        503,
-      );
-    }
-  } else {
-    const auth = createClient(config.url, config.publishableKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-      global: {
-        fetch: (input, init) =>
-          fetch(input, { ...init, signal: AbortSignal.timeout(8000) }),
-      },
-    });
-    const { data, error } = await auth.auth.getUser(bearer.slice(7));
-    if (error || !data.user || data.user.is_anonymous || !data.user.email_confirmed_at)
-      return context.json({ code: 'AUTH_REQUIRED' }, 401);
-    const { data: verified, error: claimsError } = await auth.auth.getClaims(
-      bearer.slice(7),
-    );
-    if (
-      claimsError ||
-      verified?.claims.sub !== data.user.id ||
-      !verified.claims.amr?.some(
-        (method) => typeof method === 'object' && method.method === 'oauth',
-      )
-    )
-      return context.json({ code: 'SOCIAL_LOGIN_REQUIRED' }, 401);
-    const displayName = data.user.user_metadata?.display_name;
-    identity = {
-      subject: data.user.id,
-      displayName:
-        typeof displayName === 'string' &&
-        displayName.trim().length > 0 &&
-        displayName.length <= 80
-          ? displayName.trim()
-          : '作問者',
-    };
+  let identity: Awaited<ReturnType<typeof authenticateClerk>>;
+  try {
+    identity = await authenticateClerk(context.req.raw, keys);
+  } catch {
+    return context.json({ code: 'AUTH_UNAVAILABLE' }, 503);
   }
   if (!identity) return context.json({ code: 'AUTH_REQUIRED' }, 401);
-  if (
-    context.env.API_LIMITER &&
-    !(await context.env.API_LIMITER.limit({ key: `subject:${identity.subject}` })).success
-  )
+  if (!(await limiter.limit({ key: `subject:${identity.subject}` })).success)
     return context.json({ code: 'RATE_LIMIT' }, 429);
   context.set('subject', identity.subject);
   context.set('displayName', identity.displayName);

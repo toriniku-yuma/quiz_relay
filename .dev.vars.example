@@ -3,7 +3,6 @@
 PROBES_ENABLED=true
 PROBE_TOKEN=
 # Free Clerk Development application, Google only. See docs/guides/setup.md.
-AUTH_PROVIDER=clerk
 CLERK_PUBLISHABLE_KEY=
 CLERK_SECRET_KEY=
 # Optional PEM public key for networkless session signature verification.

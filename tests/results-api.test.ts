@@ -4,39 +4,22 @@ import { contentHash } from '../src/worker/catalog/hash';
 import type { Env } from '../src/worker/env';
 import app from '../src/worker/index';
 
-const mocks = vi.hoisted(() => ({ user: vi.fn(), read: vi.fn() }));
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: mocks.user,
-      getClaims: async () => ({
-        data: {
-          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
-        },
-        error: null,
-      }),
-    },
-  }),
-}));
+const mocks = vi.hoisted(() => ({ identity: vi.fn(), read: vi.fn() }));
+vi.mock('../src/worker/auth/clerk', () => ({ authenticateClerk: mocks.identity }));
 vi.mock('../src/worker/results/read', () => ({ readResults: mocks.read }));
 vi.mock('../src/worker/db/d1', () => ({
   connectD1: () => ({}),
 }));
 beforeEach(() => {
-  mocks.user.mockReset();
+  mocks.identity.mockReset();
   mocks.read.mockReset();
-  mocks.user.mockResolvedValue({
-    data: { user: { id: 'self', email_confirmed_at: '2026-09-01' } },
-    error: null,
-  });
+  mocks.identity.mockResolvedValue({ subject: 'self', displayName: '作問者' });
   mocks.read.mockResolvedValue({ history: [], ranking: [] });
 });
 const runtime = {
   ...(env as unknown as Env),
   ORGANIZATION_ENABLED: 'false',
   GAME_OWNER: 'https://game.test',
-  SUPABASE_URL: 'https://auth.test',
-  SUPABASE_PUBLISHABLE_KEY: 'test',
 };
 const request = (headers: Record<string, string> = {}, body = '{}') =>
   app.request(

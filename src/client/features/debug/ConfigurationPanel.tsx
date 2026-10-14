@@ -38,10 +38,7 @@ export default function ConfigurationPanel({
             </div>
             <div>
               <dt className="font-bold">オーガナイゼーション名</dt>
-              <dd>
-                {organization?.organization?.name ??
-                  (organization?.enabled ? '未設定' : '組織機能が無効です')}
-              </dd>
+              <dd>{organization?.organization?.name ?? '未設定'}</dd>
             </div>
             <div>
               <dt className="font-bold">管理者設定</dt>

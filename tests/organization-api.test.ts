@@ -5,7 +5,7 @@ import app from '../src/worker/index';
 import { OrganizationError } from '../src/worker/organization/access';
 
 const mocks = vi.hoisted(() => ({
-  user: vi.fn(),
+  identity: vi.fn(),
   resolve: vi.fn(),
   overview: vi.fn(),
   selection: vi.fn(),
@@ -17,19 +17,7 @@ const mocks = vi.hoisted(() => ({
   restriction: vi.fn(),
   excluded: vi.fn(),
 }));
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: mocks.user,
-      getClaims: async () => ({
-        data: {
-          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
-        },
-        error: null,
-      }),
-    },
-  }),
-}));
+vi.mock('../src/worker/auth/clerk', () => ({ authenticateClerk: mocks.identity }));
 vi.mock('../src/worker/organization/database', () => ({
   organizationDatabase: () => ({ db: {}, close: mocks.close }),
   resolveInstance: mocks.resolve,
@@ -57,8 +45,6 @@ const runtime: Env = {
   ORGANIZATION_ENABLED: 'true',
   INITIAL_ADMIN_SUBJECT: 'test-installer',
   GAME_OWNER: 'https://old.test',
-  SUPABASE_URL: 'https://auth.test',
-  SUPABASE_PUBLISHABLE_KEY: 'public',
 };
 const instanceId = crypto.randomUUID();
 const request = (path: string, headers: Record<string, string> = {}, body = '{}') =>
@@ -75,10 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.restriction.mockReset();
   mocks.excluded.mockResolvedValue([]);
-  mocks.user.mockResolvedValue({
-    data: { user: { id: 'verified', email_confirmed_at: '2026-09-01' } },
-    error: null,
-  });
+  mocks.identity.mockResolvedValue({ subject: 'verified', displayName: '作問者' });
   mocks.resolve.mockResolvedValue({
     organization: { id: 'org' },
     account: { actorId: 'old-actor', administrator: false, displayName: '登録名' },

@@ -32,11 +32,9 @@ export function useWithdrawal(subject?: string) {
       if (value.accepted) {
         setAccepted(true);
         setReady(value.ready);
-        // Application access is already revoked on the server; discard this browser's Auth token.
+        // Application access is already revoked on the server; discard this browser's Clerk session.
         const client = await setupAuth();
-        const { data } = await client.auth.getSession();
-        if (data.session?.user.id === request.subject)
-          await client.auth.signOut({ scope: 'local' });
+        if ((await client.getUser())?.id === request.subject) await client.signOut();
       }
       return value.accepted;
     },

@@ -46,9 +46,7 @@ vi.mock('../src/client/features/organization/useOrganization', () => ({
   OrganizationRequestError: class extends Error {},
 }));
 vi.mock('../src/client/features/auth/client', () => ({
-  setupAuth: async () => ({
-    auth: { getSession: async () => ({ data: { session: { access_token: 'test' } } }) },
-  }),
+  authToken: async () => 'test',
 }));
 function draw<T>(fn: () => T) {
   mocks.cursor = 0;

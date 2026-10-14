@@ -1,29 +1,11 @@
-import { clerkBackend, clerkSubject, legacySubjectPrefix } from '../worker/auth/clerk.ts';
-import type { Env } from '../worker/env.ts';
+import { clerkBackend } from '../worker/auth/clerk.ts';
 
-export function clerkAuthDeletion(
-  env: Pick<Env, 'CLERK_SECRET_KEY' | 'CLERK_PUBLISHABLE_KEY' | 'CLERK_JWT_KEY'>,
-) {
-  const client = clerkBackend(env);
+export function clerkAuthDeletion(secretKey: string) {
+  const client = clerkBackend({ secretKey });
   return async (subject: string) => {
-    let id: string;
-    if (subject.startsWith('user_')) {
-      id = subject;
-    } else {
-      const users = await client.users.getUserList({
-        externalId: [`${legacySubjectPrefix}${subject}`],
-        limit: 2,
-      });
-      if (
-        users.totalCount > 1 ||
-        users.data.some((user) => clerkSubject(user) !== subject)
-      )
-        throw new Error('AUTH_ERASURE_MAPPING_CONFLICT');
-      if (users.data.length === 0) return;
-      id = users.data[0].id;
-    }
+    if (!/^user_[A-Za-z0-9]+$/.test(subject)) throw new Error('INVALID_AUTH_SUBJECT');
     try {
-      await client.users.deleteUser(id);
+      await client.users.deleteUser(subject);
     } catch (error) {
       // A successful deletion with a lost response is safe to retry.
       if (

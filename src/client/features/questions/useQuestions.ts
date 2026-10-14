@@ -6,7 +6,7 @@ import type {
   QuestionView,
 } from '../../../shared/questions';
 import type { SortState } from '../../../shared/sorting';
-import { setupAuth } from '../auth/client';
+import { authToken } from '../auth/client';
 
 const messages: Record<string, string> = {
   PROFILE_REQUIRED: 'マイページで表示名を登録してから提出してください。',
@@ -41,13 +41,12 @@ export class QuestionRequestError extends Error {
   }
 }
 export async function questionsRequest<T>(instanceId: string, body: object): Promise<T> {
-  const client = await setupAuth();
-  const { data } = await client.auth.getSession();
-  if (!data.session) throw new Error('ログインしてください。');
+  const token = await authToken();
+  if (!token) throw new Error('ログインしてください。');
   const response = await fetch(instanceApiPath(API_PATHS.questions, instanceId), {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${data.session.access_token}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),

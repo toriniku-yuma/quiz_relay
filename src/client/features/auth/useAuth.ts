@@ -1,7 +1,4 @@
 import { useEffect, useState } from 'react';
-import { navigate } from '../../app/navigation';
-import { GAME_PATH } from '../../app/paths';
-import { hasAuthCallback, readAuthReturn } from './callback';
 import type { AuthUser } from './clerk';
 import { redirectSignedOut, setupAuth, signInWithGoogle, signOut } from './client';
 import { publicPlayEntry } from './publicEntry';
@@ -12,48 +9,35 @@ export function useAuth() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   useEffect(() => {
-    const initialUrl = new URL(location.href);
-    const publicEntry = publicPlayEntry(initialUrl);
-    let storedAuthentication = false;
+    const publicEntry = publicPlayEntry(new URL(location.href));
+    let storedSession = false;
     try {
-      storedAuthentication =
-        (typeof localStorage !== 'undefined' &&
-          Object.keys(localStorage).some((key) => /^sb-.*-auth-token$/.test(key))) ||
-        (typeof document !== 'undefined' && document.cookie?.includes('__session='));
+      storedSession =
+        typeof document !== 'undefined' && document.cookie?.includes('__session=');
     } catch {
-      /* Private browsing can deny storage access. */
+      /* Private browsing can deny cookie access. */
     }
-    const signedOut = (actualLogout = false) => {
-      if (actualLogout || subject || storedAuthentication || !publicEntry)
-        redirectSignedOut(subject);
-    };
     let active = true;
     let revision = 0;
     let subject: string | undefined;
     let unsubscribe: (() => void) | undefined;
+    const apply = (nextUser: AuthUser | null) => {
+      if (nextUser) subject = nextUser.id;
+      setUser(nextUser);
+      if (!nextUser && (subject || storedSession || !publicEntry))
+        redirectSignedOut(subject);
+    };
     void setupAuth()
       .then(async (client) => {
         if (!active) return;
-        const subscription = client.auth.onAuthStateChange((event, session) => {
+        unsubscribe = client.subscribe((nextUser) => {
           if (!active) return;
           revision++;
-          if (session?.user) subject = session.user.id;
-          setUser(session?.user ?? null);
-          if (!session && (event === 'SIGNED_OUT' || event === 'INITIAL_SESSION'))
-            signedOut(event === 'SIGNED_OUT');
+          apply(nextUser);
         });
-        unsubscribe = () => subscription.data.subscription.unsubscribe();
-        const { error } = await client.auth.initialize();
-        if (error) throw error;
-        if (!active) return;
         const checkedRevision = revision;
-        const { data, error: identityError } = await client.auth.getUser();
-        if (active && revision === checkedRevision) {
-          if (identityError) throw identityError;
-          if (data.user) subject = data.user.id;
-          setUser(data.user);
-          if (!data.user) signedOut();
-        }
+        const currentUser = await client.getUser();
+        if (active && revision === checkedRevision) apply(currentUser);
       })
       .catch(() => {
         if (active)
@@ -62,17 +46,7 @@ export function useAuth() {
           );
       })
       .finally(() => {
-        if (active) {
-          setReady(true);
-          const callbackUrl = new URL(location.href);
-          if (
-            hasAuthCallback(callbackUrl) &&
-            callbackUrl.searchParams.get('clerk-callback') !== '1'
-          ) {
-            const target = readAuthReturn();
-            navigate(subject && target ? target : GAME_PATH, true);
-          }
-        }
+        if (active) setReady(true);
       });
     return () => {
       active = false;

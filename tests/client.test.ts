@@ -2,10 +2,6 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { rootRedirect } from '../src/client/app/redirect';
 import { formatProbeError, probeRequest } from '../src/client/features/debug/api';
 
-const { createClient } = vi.hoisted(() => ({ createClient: vi.fn() }));
-
-vi.mock('@supabase/supabase-js', () => ({ createClient, isAuthApiError: () => false }));
-
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
@@ -41,59 +37,34 @@ it.each([
   }
 });
 
-it('reuses matching config and disposes the old client on URL or key changes', async () => {
-  createClient.mockImplementation(() => ({
-    auth: { dispose: vi.fn().mockResolvedValue(undefined) },
-  }));
-
-  let config = { url: 'https://a.example', publishableKey: 'public-a' };
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockImplementation(async () => new Response(JSON.stringify(config))),
-  );
+it('公開設定を一度だけ取得して同じClerkクライアントを使い、不正な設定は拒否する', async () => {
+  let config: unknown = { url: 'https://auth.example', publishableKey: 'public' };
+  const request = vi
+    .fn()
+    .mockImplementation(async () => new Response(JSON.stringify(config)));
+  vi.stubGlobal('fetch', request);
 
   const { setupAuth } = await import('../src/client/features/auth/client');
 
-  const first = await setupAuth('test');
-
-  expect(await setupAuth('test')).toBe(first);
-
-  config = { url: 'https://b.example', publishableKey: 'public-b' };
-
-  const second = await setupAuth('test');
-
-  expect(second).not.toBe(first);
-  expect(first.auth.dispose).toHaveBeenCalledOnce();
-
-  config = { ...config, publishableKey: 'rotated' };
-
-  expect(await setupAuth('test')).not.toBe(second);
-  expect(second.auth.dispose).toHaveBeenCalledOnce();
-  expect(createClient).toHaveBeenCalledTimes(3);
-  expect(JSON.parse(localStorage.getItem('probe-auth-config') ?? 'null')).toEqual(config);
+  await expect(setupAuth()).rejects.toThrow('AUTH_NOT_CONFIGURED');
+  config = { provider: 'clerk', publishableKey: 'pk_test_fixture' };
+  await expect(setupAuth()).rejects.toThrow('AUTH_NOT_CONFIGURED');
+  config = { publishableKey: 'pk_test_fixture' };
+  const first = await setupAuth();
+  expect(await setupAuth()).toBe(first);
+  expect(request).toHaveBeenCalledTimes(3);
+  expect(request).toHaveBeenLastCalledWith('/api/auth/config', expect.anything());
 });
 
-it('preserves auth query and hash during the root redirect', () => {
-  expect(rootRedirect(new URL('https://app.example/?code=test#state=value'))).toBe(
-    '/game/?code=test#state=value',
-  );
-  expect(rootRedirect(new URL('https://app.example/debug/'))).toBeNull();
+it('ルートからの転送でクエリとハッシュを保持する', () => {
   expect(rootRedirect(new URL('https://app.example/?instance=a#saved'))).toBe(
     '/game/?instance=a#saved',
   );
+  expect(rootRedirect(new URL('https://app.example/'))).toBe('/game/');
+  expect(rootRedirect(new URL('https://app.example/debug/'))).toBeNull();
 });
 
-it('keeps the debug auth callback target only for a recognized callback and destination', () => {
-  expect(rootRedirect(new URL('https://app.example/?code=pkce'), '/debug/')).toBe(
-    '/debug/?code=pkce',
-  );
-  expect(rootRedirect(new URL('https://app.example/'), '/debug/')).toBe('/game/');
-  expect(
-    rootRedirect(new URL('https://app.example/?code=pkce'), 'https://evil.test'),
-  ).toBe('/game/?code=pkce');
-});
-
-it('keeps formal recovery separate by authenticated subject and preserves legacy storage', async () => {
+it('keeps formal recovery separate by authenticated subject from the default storage', async () => {
   const { readGameSession, saveGameSession } = await import(
     '../src/client/features/game/recovery'
   );

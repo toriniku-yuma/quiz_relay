@@ -21,9 +21,6 @@ export interface Env {
   ROOM_LIFECYCLE_LOGS?: string;
   PROBE_TOKEN?: string;
   PROBE_ORIGIN?: string;
-  SUPABASE_URL?: string;
-  SUPABASE_PUBLISHABLE_KEY?: string;
-  AUTH_PROVIDER?: 'supabase' | 'clerk';
   CLERK_PUBLISHABLE_KEY?: string;
   CLERK_SECRET_KEY?: string;
   CLERK_JWT_KEY?: string;

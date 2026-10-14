@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import type { OrganizationOverview } from '../../../shared/organization';
-import { setupAuth } from '../auth/client';
+import { authToken } from '../auth/client';
 import { creationRequest } from './creationRequest';
 
 const errors: Record<string, string> = {
@@ -108,13 +108,12 @@ export async function organizationRequest<T = OrganizationOverview>(
   path: string,
   body: object = {},
 ): Promise<T> {
-  const client = await setupAuth();
-  const { data } = await client.auth.getSession();
-  if (!data.session) throw new Error('ログインしてください。');
+  const token = await authToken();
+  if (!token) throw new Error('ログインしてください。');
   const response = await fetch(path, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${data.session.access_token}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),

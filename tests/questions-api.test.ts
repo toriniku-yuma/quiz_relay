@@ -4,25 +4,13 @@ import type { Env } from '../src/worker/env';
 import app from '../src/worker/index';
 
 const mocks = vi.hoisted(() => ({
-  user: vi.fn(),
+  identity: vi.fn(),
   mutate: vi.fn(),
   overview: vi.fn(),
   verified: vi.fn(),
   close: vi.fn(),
 }));
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: mocks.user,
-      getClaims: async () => ({
-        data: {
-          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
-        },
-        error: null,
-      }),
-    },
-  }),
-}));
+vi.mock('../src/worker/auth/clerk', () => ({ authenticateClerk: mocks.identity }));
 vi.mock('../src/worker/organization/database', async (original) => ({
   ...(await original<typeof import('../src/worker/organization/database')>()),
   organizationDatabase: () => ({ db: {}, close: mocks.close }),
@@ -37,8 +25,6 @@ vi.mock('../src/worker/questions/reports', () => ({
 }));
 const runtime = {
   ...env,
-  SUPABASE_URL: 'https://auth.test',
-  SUPABASE_PUBLISHABLE_KEY: 'public',
   GAME_OWNER: 'https://game.test',
   GAME_CONFIG_PROFILE: 'local',
 } as unknown as Env;
@@ -55,9 +41,9 @@ const request = (body: object | string, headers: Record<string, string> = {}) =>
   );
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.user.mockResolvedValue({
-    data: { user: { id: 'verified-subject', email_confirmed_at: '2026-01-01' } },
-    error: null,
+  mocks.identity.mockResolvedValue({
+    subject: 'verified-subject',
+    displayName: '作問者',
   });
   mocks.mutate.mockResolvedValue({ ok: true });
   mocks.overview.mockResolvedValue({ review: false, difficulty: [], submissions: [] });

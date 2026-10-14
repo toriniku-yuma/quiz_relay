@@ -56,11 +56,7 @@ vi.mock('react', async (original) => ({
   },
 }));
 vi.mock('../src/client/features/auth/client', () => ({
-  setupAuth: async () => ({
-    auth: {
-      getSession: async () => ({ data: { session: { access_token: 'verified' } } }),
-    },
-  }),
+  authToken: async () => 'verified',
 }));
 afterEach(() => {
   hooks.slots = [];

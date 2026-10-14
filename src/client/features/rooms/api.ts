@@ -1,5 +1,5 @@
 import { instanceApiPath } from '../../../shared/api-paths';
-import { setupAuth } from '../auth/client';
+import { authToken } from '../auth/client';
 import { OrganizationRequestError } from '../organization/useOrganization';
 
 export const playMessages: Record<string, string> = {
@@ -49,13 +49,12 @@ export async function playRequest<T>(
   instanceId = '',
   signal?: AbortSignal,
 ): Promise<T> {
-  const auth = await setupAuth(),
-    { data } = await auth.auth.getSession();
+  const token = await authToken();
   const response = await fetch(instanceApiPath(path, instanceId), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(body),
     signal: signal

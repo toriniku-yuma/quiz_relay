@@ -25,7 +25,7 @@ vi.mock('react', () => ({
   },
 }));
 vi.mock('../src/client/features/auth/client', () => ({
-  setupAuth: async () => ({ auth: { getSession: harness.session } }),
+  authToken: harness.session,
 }));
 
 const requests: {
@@ -38,9 +38,7 @@ beforeEach(() => {
   harness.effect = undefined;
   requests.length = 0;
   vi.stubGlobal('window', new EventTarget());
-  harness.session
-    .mockReset()
-    .mockResolvedValue({ data: { session: { access_token: 'test' } } });
+  harness.session.mockReset().mockResolvedValue('test');
   vi.stubGlobal(
     'fetch',
     (_path: string, init: RequestInit) =>

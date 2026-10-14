@@ -10,25 +10,13 @@ import app from '../src/worker/index';
 import { questions } from './fixtures/questions';
 
 const mocks = vi.hoisted(() => ({
-  user: vi.fn(),
+  identity: vi.fn(),
   resolve: vi.fn(),
   load: vi.fn(),
   allowed: vi.fn(),
   blocked: new Set<string>(),
 }));
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: mocks.user,
-      getClaims: async () => ({
-        data: {
-          claims: { sub: (await mocks.user()).data.user?.id, amr: [{ method: 'oauth' }] },
-        },
-        error: null,
-      }),
-    },
-  }),
-}));
+vi.mock('../src/worker/auth/clerk', () => ({ authenticateClerk: mocks.identity }));
 vi.mock('../src/worker/organization/database', () => ({
   organizationDatabase: () => ({ db: {}, close: async () => {} }),
   resolveInstance: mocks.resolve,
@@ -42,8 +30,6 @@ vi.mock('../src/worker/organization/moderation', () => ({
 const runtime = {
   ...env,
   ORGANIZATION_ENABLED: 'true',
-  SUPABASE_URL: 'https://auth.test',
-  SUPABASE_PUBLISHABLE_KEY: 'public',
 } as unknown as Env;
 let id: string;
 let owner: string;
@@ -73,9 +59,9 @@ beforeEach(async () => {
   mocks.allowed.mockImplementation(async (_env: Env, _scope: unknown, actors: string[]) =>
     actors.filter((actorId) => !mocks.blocked.has(actorId)),
   );
-  mocks.user.mockImplementation(async () => ({
-    data: { user: { id: actor, email_confirmed_at: 'yes' } },
-    error: null,
+  mocks.identity.mockImplementation(async () => ({
+    subject: actor,
+    displayName: '作問者',
   }));
   mocks.resolve.mockImplementation(async (_db, subject) => ({
     organization: { id: org },
