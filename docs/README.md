@@ -26,7 +26,7 @@
 
 ## 開発・設計を調べる
 
-[開発ルール](development/rules.md) ／ [機能別の計画](development/plan.md) ／ [検証項目](development/testing.md)
+[開発ルール](development/rules.md) ／ [機能別の計画](development/plan.md) ／ [未実装のTODO](development/todo.md) ／ [検証項目](development/testing.md)
 
 [構成と復旧](design/architecture.md) ／ [データ保存](design/schema.md) ／ [組織設計](design/organization.md) ／ [通信](design/protocol.md) ／ [セキュリティ](design/security.md) ／ [難易度の自動更新](design/difficulty.md) ／ [設計判断](design/decisions.md)
 
@@ -34,7 +34,7 @@
 
 外部対戦は、実際のリンク元で本人確認して開催先へ自動ログインし、通常の対戦画面と共通メニューを使います。開催先の会員ログインを優先し、ログアウトは開催先だけ終了します。[変更したUIの確認箇所](development/testing.md#federation-ui-changes)をまとめています。
 
-組織・インスタンス、作問・審査、運営、ランク・カジュアル・部屋、D1・Clerk、インスタンス間連携を実装しています。通常API・管理CLI・非公開消去Worker・定期処理は同じD1を使います。インスタンスのトップ・お知らせ・作問ルール掲示、遊び方、効果音は未実装で、今回の連携の対象外です。
+組織・インスタンス、作問・審査、運営、ランク・カジュアル・部屋、D1・Clerk、インスタンス間連携を実装しています。通常API・管理CLI・非公開消去Worker・定期処理は同じD1を使います。未実装の変更は[TODO](development/todo.md)にまとめています。
 
 インスタンス切替は本人のお気に入りを保存します。外部先はお気に入りかURLから開き、参加元インスタンスを選ばず、組織アカウントで参加します。開催元は「承認済みの組織だけ許可」か「禁止した組織以外は許可」を選び、相手組織ごとにランク・カジュアル／部屋を制限できます。所属元の明示禁止は維持し、承認済み一覧は必要時だけ表示します。一覧は自動取得し、失敗時だけ再試行を表示します。画面移動で現在の待機・ロビー・対戦を維持します。別組織参加・結果配送・開催元の振り返り、共有問題の分類先指定・固定3区分の難易度・検索・個別除外、匿名化と停止の連携を実装しています。
 

@@ -18,7 +18,7 @@
 ## 開発の現在地
 
 組織・インスタンス基盤、対戦・結果保存・レート・本人履歴・管理CLI、共通メニュー、作問・審査、部屋、インスタンス間連携を実装しています。
-組織基盤の総合受入は未完了。インスタンスのトップ・お知らせ・作問ルール掲示、遊び方・効果音は未実装です。
+組織基盤の総合受入は未完了。未実装の変更は[TODO](docs/development/todo.md)にまとめています。
 [計画](docs/development/plan.md)・[仕様と設計の一覧](docs/README.md)・[作業ルール](docs/development/rules.md)を確認してください。
 
 React・TypeScript・Tailwind CSS、Hono on Cloudflare Workers、Durable Objects、Cloudflare D1（Drizzle）、Clerkを使います。

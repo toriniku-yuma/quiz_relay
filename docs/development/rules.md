@@ -82,7 +82,7 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 ApplicationがページとNotFoundを選び、redirect.tsが転送URLを作り、mainが実際に転送します。
 認証コールバックは features/auth/callback、共有パスは paths.ts に置き、ページの相互importを避けます。専用ルーター依存は追加しません。
 
-`/` はインスタンス未選択なら一覧、`/?instance=…` なら選択したインスタンスのトップを表示します。ランク参加は `/rank/`、開発参加は `/local-game/`、技術検証は `/debug/` です。別のホーム、`/top/`・`/information/`・`/instances/` は設けません。組織設定・インスタンス設定・運営終了・完全削除も `/rank/` の表示切替へ同居させず、用途別のパスに分けます。
+`/` は `/game/` へ転送します。インスタンス一覧とランク参加は `/game/`、開発参加は `/local-game/`、技術検証は `/debug/` です。
 認証後は検証済みの同一origin内の元画面へ戻します。外部URLへ転送せず、Clerkの戻り先設定を不要に増やしません。
 
 app/navigation.tsが通常の同一タブ内クリックとHistory APIを扱います。
