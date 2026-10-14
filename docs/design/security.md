@@ -6,9 +6,10 @@
 
 ## 認証と参加セッション
 
-Googleログインに限定します。Clerkではsession tokenの署名・期限・issuer・許可originを検証し、検証済みGoogle連携のないアカウント、パスワード設定済み・BAN・ロック済みのアカウントを拒否します。Clerkの管理画面でもメールリンク・コード・パスワード・電話・passkey等を無効にし、Google以外の認証経路を残しません。Googleを連携済みという情報だけでは、過去のセッションのログイン方法を証明できないため、設定変更時は旧セッションを失効させます。
-移行前のSupabaseではgetUserとgetClaimsでBearerを検証し、匿名・メール未確認・検証済みamrにOAuth認証がないセッションを除外します。名前・メールの一致でアカウントを独自統合しません。旧ID対応付けは管理APIで取得したGoogleのprovider subjectを照合してから行います。
-初回管理者は設置者指定の検証済みAuth subjectだけが設定できます。初回設定完了後は再初期化を拒否します。
+Googleログインに限定します。Clerkではsession tokenの署名・期限・issuer・許可originを検証し、検証済みGoogle連携のないアカウント、パスワード設定済み・BAN・ロック済みのアカウントを拒否します。Clerkの管理画面でもメールリンク・コード・パスワード・電話・passkey等を無効にし、Google以外の認証経路を残しません。Googleを連携済みという情報だけでは、過去のセッションのログイン方法を証明できないため、設定変更時は既存のセッションを失効させます。
+本人ID（subject）は検証済みsession tokenのClerkユーザーIDです。外部ID・利用者が書けるメタデータ・名前・メールの一致で本人を決めず、アカウントを独自統合しません。
+Clerkの公開キーと秘密キーのどちらかが未設定なら、認証APIは `AUTH_NOT_CONFIGURED`（503）で止まり、別の認証方式へ切り替えません。Clerkへ照会できない場合は `AUTH_UNAVAILABLE`（503）とし、未ログインと区別します。
+初回管理者は設置者指定の検証済みsubjectだけが設定できます。初回設定完了後は再初期化を拒否します。
 
 参加更新APIは同一Origin・本人確認・本文上限を要求します。
 WebSocketは同一Originと部屋専用HttpOnly cookie、DOのactor対応表で認可します。
@@ -22,7 +23,7 @@ cookieは最大12時間、アプリのログアウトで失効します。Auth�
 ## 権限と公開範囲
 
 組織管理者・インスタンス別モデレーター・作問者・参加者の権限を分けます。
-接続先の追加・解除と機能別許可は管理者専用です。作問・資格管理・個人処分も別権限で確認します。
+接続先の追加・解除と問題共有の許可は管理者専用です。作問・資格管理・個人処分も別権限で確認します。
 権限の例外は運営仕様で認めた対象管理権限者の全体休止・モード休止中の参加だけです。他の許可でBAN・外部禁止・ゲスト禁止を上書きしません。
 試合中の処分は次試合から適用し、現在の再接続・確定原本を変えません。
 
@@ -32,10 +33,9 @@ cookieは最大12時間、アプリのログアウトで失効します。Auth�
 
 ## DB接続と秘密
 
-service_role・管理PAT・DB接続文字列・署名秘密鍵をブラウザーや応答に渡しません。
-公開Auth設定はprovider・publishableKeyと、移行前のSupabase URLだけです。Clerk secret keyはWorker内の検証・ユーザー照合と専用消去Workerで使い、応答・ブラウザーへ渡しません。現在はWorkerで全操作を認可し、D1の公開クライアント接続を提供しません。旧PostgreSQLのgrants・RLSは移行元の履歴として保持します。
-現在は公開API・非公開消去サービス・設置者用CLI・migrationを分離します。旧PostgreSQLのreader・writer等のロールは移行元にだけ残します。
-旧DBの読取り用接続はCLIの秘密ファイルに置き、Workerへ流用しません。[DB管理](../guides/database.md)。
+Clerk secret key・Cloudflare APIトークン・署名秘密鍵をブラウザーや応答に渡しません。
+公開する認証設定はClerkのpublishableKeyだけです。Clerk secret keyはWorker内のsession検証・ユーザー照合と専用消去Workerのユーザー削除で使い、応答・ブラウザーへ渡しません。WorkerですべてのD1操作を認可し、D1の公開クライアント接続を提供しません。
+公開API・非公開消去サービス・設置者用CLI・migrationを分離します。[DB管理](../guides/database.md)。
 過去版の不変トリガーとパラメーター化されたDrizzle操作を維持します。
 
 ## 外部への送信境界
@@ -48,7 +48,9 @@ global_fetch_strictly_publicを有効にして公開経路を使います。こ�
 
 [公開経路の公式仕様](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)と[fetch](https://developers.cloudflare.com/workers/runtime-apis/fetch/)を参照。
 
-登録済みHTTPS origin・pin済みkid・鍵の有効期間・署名・用途・宛先・時刻・hash・nonce・サイズ・型を検証します。
+`FEDERATION_ORIGIN` を設定した配置だけが組織間連携を有効にします。その場合は `SIGNING_KID`・`SIGNING_PRIVATE_KEY` が必須で、欠けると `FEDERATION_NOT_CONFIGURED` で停止します。署名付き受信は `FEDERATION_LIMITER` がなければ同じコードで拒否し、件数制限なしで受け付けません。
+
+登録済みHTTPS origin・pin済みkid・署名・用途・宛先・時刻・hash・nonce・サイズ・型を検証します。永続イベントの原本は、旧鍵を含む保存済みの鍵履歴からkidで選んだ鍵で検証します。
 任意URLの取得、リダイレクト、内部・loopback・link-local IPへの送信を拒否します。
 URLで初めて開く相手の公開鍵は、HTTPS・固定path・5秒・4KiB・redirect拒否・型とEd25519鍵の検査を通して取得します。自動承認や既存鍵の置換はしません。鍵更新は別経路で確認し、旧鍵と承認履歴を監査のため保持します。
 漏洩時はpeerを停止して新鍵を確認し、影響範囲を調べます。正常な更新で過去結果を一括無効にしません。
@@ -65,8 +67,9 @@ URLで初めて開く相手の公開鍵は、HTTPS・固定path・5秒・4KiB・
 
 新規試合を停止する運用を用意する。
 
-現在の運用上限は `config/runtime.json` に集約しています。
+現在の運用上限は `config/runtime.json`、Workers Rate Limitingの要求数上限は `wrangler.jsonc` の `ratelimits` に置きます。
 部屋数上限はインスタンスごとに64室、actorの参加要求は60秒に20回、ゲーム接続はactor当たり3本、コマンドは1秒に20回です。
+認証済みAPIは同じBearer・subjectごとに1分120回、外部参加API（`/api/v1/participation/*`）は接続元IPごとに1分120回、組織間の署名要求はpeerごとに1分60回です。
 上限変更は負荷と復帰を検証して行い、未保存結果を捨てて容量を空けません。
 
 ## 監視と復旧
@@ -81,4 +84,4 @@ URLで初めて開く相手の公開鍵は、HTTPS・固定path・5秒・4KiB・
 
 UIではローカル保存、peer受領、履歴反映を区別する。遅延や隔離を「同期済み」と表示しない。保持期限は[運営仕様](../spec/organization.md)、バックアップ・復旧目標は[構成と復旧](architecture.md)に従います。
 
-PostgresバックアップだけではDOに残る未保存結果を回復できない。復元対象にDOストレージと鍵履歴・設定を含める方法を先行検証する。復旧後は重複配送と開催元別レートの再生成を安全に実行する。破壊的な障害試験は分離したデモ環境で行う。
+D1のバックアップだけではDOに残る未保存結果を回復できない。復元対象にDOストレージと鍵履歴・設定を含める方法を先行検証する。復旧後は重複配送と開催元別レートの再生成を安全に実行する。破壊的な障害試験は分離したデモ環境で行う。

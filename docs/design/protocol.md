@@ -13,7 +13,7 @@ ActivityPubはソーシャルサービスの投稿・通知等を配信する規
 
 管理者が相手のHTTPS originと公開鍵を別経路で確認して登録します。URL参加では、固定の公開鍵APIをHTTPSで取得して初回の鍵を保存しますが、peer・問題共有は自動承認しません。既存の鍵を自動更新せず、管理者による明示禁止も上書きしません。
 originはpath・query・fragment・userinfoを含めず正規化し、完全一致で比較します。
-本人の識別子・所属組織と、開催先のインスタンスを別々に検証します。移行前の予約では旧参加元の識別子も保存済み原本と照合します。表示名・メール・自己申告actorIdは認証に使いません。
+本人の識別子・所属組織と、開催先のインスタンスを別々に検証します。表示名・メール・自己申告actorIdは認証に使いません。
 
 ## 実装済みの同組織参加API
 
@@ -21,19 +21,19 @@ originはpath・query・fragment・userinfoを含めず正規化し、完全一�
 
 | メソッド・パス | 本文・認可 | 応答 |
 | --- | --- | --- |
-| GET /api/auth/config | 公開 | provider・publishableKeyだけ、no-store |
+| GET /api/auth/config | 公開 | publishableKeyだけ、no-store |
 | POST /api/matchmaking/config | Bearer | competition参照・playersPerMatch・rules。問題内容は含めない |
-| POST /api/matchmaking/join | Bearer、{name, operationId} | {room, operationId}とHttpOnly cookie。同一操作は同じ参加先へ再送 |
+| POST /api/matchmaking/join | Bearer、{operationId} | {room, operationId}とHttpOnly cookie。表示名は登録済みプロフィールを使い、未登録は409 PROFILE_REQUIRED。同一操作は同じ参加先へ再送 |
 | POST /api/matchmaking/resume | Bearer、{} | 同じactorの{room}とcookie。参加なし409 |
 | POST /api/matchmaking/cancel | Bearer、{room}または{operationId} | 待機だけ取消。開始後409、古い部屋指定409。部屋未確定でも操作IDを閉鎖 |
 | POST /api/matchmaking/logout | Bearer、{room} | 本人の部屋セッション・接続を失効 |
-| GET /api/matchmaking/socket?room=UUID | 同一Origin・部屋cookie・WebSocket Upgrade | state/delta/ackと本人用panel |
+| GET /api/matchmaking/socket?room=UUID | 同一Origin・部屋cookie・WebSocket Upgrade | state/delta/ack/errorと本人用panel |
 
 初回セッションは認証済みsubjectと開催元から導出したactorへ結び付け、cookieはSecure/HttpOnly/SameSite=Strict、path=/api/matchmaking、最大12時間。
 
 tokenはURL/JSONに含めない。WebSocketでは部屋cookieを認可し、初回のBearerを再送しない。ログアウト操作で失効するが、Clerk管理側の失効が既発行cookieへ即時伝播する方式ではない。
 
-既存の部屋ID形式は `1c:<UUID>`（互換性のため保持）。組織Matchmakerが同一actorのインスタンス・モード横断の参加枠を最大2つに制限する。新参加が成立すると旧本人だけを強制離脱させ、未確認の離脱は永続台帳から再試行する。GameRoomは設定人数の異なるactor接続がそろった時だけDB固定版を再確認して開始する。取消と開始は同じDO内で直列化。
+GameRoomのDO名は種類ごとに分け、試合は `match:<UUID>`、ユーザー部屋は `room:<UUID>`、開発参加は `development:<部屋名>`。名前の組立ては `src/worker/game/room-names.ts` に集約する。組織Matchmakerが同一actorのインスタンス・モード横断の参加枠を最大2つに制限する。新参加が成立すると、それまで同じ本人が使っていた枠だけを強制離脱させ、未確認の離脱は永続台帳から再試行する。GameRoomは設定人数の異なるactor接続がそろった時だけDB固定版を再確認して開始する。取消と開始は同じDO内で直列化。
 
 未接続予約60秒・待機部屋10分・セッション12時間の期限を復帰で延長しない。終了済みの参加要求は同じ操作IDで再送せず、開催先へ戻って本人の参加操作から新しい要求を開始する。開始後の切断猶予・終端状態・再送/復帰は[復旧設計](architecture.md)に従う。
 自動マッチは初回接続後の最後の接続切れを検知した時点で予約・セッション・参加世代を閉じる。ページ移動での取消は本人の待機を全タブから解除し、開始との競合はサーバーの現在phaseで判定する。カジュアルマッチの取消も{room}または{operationId}を受け付ける。
@@ -42,8 +42,6 @@ tokenはURL/JSONに含めない。WebSocketでは部屋cookieを認可し、初�
 認証済みの `POST /api/results/overview` は `section: self` も受け付ける。ランキング取得時には `self: {rank, rating}` を返し、`self` 指定時は本人情報だけを取得してranking/historyを空配列で返す。順位は全対象者の順位計算後に本人を抽出し、一覧の100人制限を受けない。順位なしはnull、レートは初期値1000＋保存済みランク差分とする。順位からの除外で本人のレートを初期化しない。`self` とkind/resultId/cursorの併用は400。ゲストの結果APIは履歴だけを返す。
 
 config応答のrulesはDBで検証した公開ルール値。設定切替後の新規参加は新しいマッチング定義版を使用し、既存部屋は保存した版を保持する。正解数の目標到達によるDO結果理由は `target_reached`。
-
-旧保存データの `seven_correct` もクライアント表示互換のため受け付ける。
 
 上記の予約・待機・セッション時間はconfig/runtime.jsonの初期値。
 
@@ -83,13 +81,13 @@ config応答のrulesはDBで検証した公開ルール値。設定切替後の�
 
 ## 問題の同期
 
-共有元instance・系列ID・questionId・版・hash・元カテゴリ・元難易度・利用可否を配送します。
+共有元instance・snapshot・カテゴリ候補と、問題ごとの系列ID・questionId・hash・作者ID・作者名・元カテゴリ・元難易度を配送します。利用可否の項目は持たず、完成したsnapshotに含まれない問題を停止として扱います。
 公開出題用の本文・表示正答・読み・ひっかけ・解説・出典を含め、審査専用根拠や審査記録は含めません。
 問題はサーバー間だけで受け取り、一般向けAPIへ原本を公開しません。
 
 共有元の送信許可・停止を検証し、受け取り先カテゴリ・難易度補正・個別除外を別データとして適用します。難易度は0・1・2の固定3区分に限定します。
 改訂は新questionIdと同じ系列IDで受け取り、再同期で個別除外を消しません。
-同じID・版に別hashが届いたら上書きせず隔離します。
+同じsnapshotの取得中に同じ系列の別hashが届いたら反映せず、snapshot変更として再取得します。
 共有解除・取得失敗は新規候補から除外し、開始済みの固定内容と過去結果を維持します。
 
 ## 結果の配送
@@ -98,7 +96,7 @@ config応答のrulesはDBで検証した公開ルール値。設定切替後の�
 所属元では開催元付きの本人履歴へ表示し、所属元自身のレートへ加算しません。
 部屋・カジュアルマッチの識別を保持し、すべてのランキング指標から除外します。
 
-配送内容はeventId・origin・resultId・matchId・開催instance・固定設定参照・開始終了時刻・種別・終了状態・理由・参加actor・勝敗・正解数・お手つき数・失格・レート差分です。
+配送内容はeventId・resultId・matchId・reservationId・開催instanceのIDと名前・所属組織のID（`sourceOrganizationId`）・本人のactor・固定設定参照・開始終了時刻・種別・理由・勝者と、参加者ごとのactor・表示名・正解数・お手つき数・失格・レート差分です。送信元originは配送署名のissuerで示し、終了状態（FINISHED／INVALID）は理由から決まります。
 正解・問題本文・入力解答は配送しません。出題済み問題の振り返りは開催元へ移動し、開催元でも本人を認証します。
 大会条件による投影、受信側による結果取消、過去レートの自動取消は採用しません。
 
@@ -110,9 +108,9 @@ outboxは宛先ごとの試行回数・次回時刻・lease・最終エラー・
 結果を保存した直後に同じ結果の配送を最大2件試み、失敗や残件は毎分の定期処理で再送します。配送失敗で確定原本や送信記録を失わず、受領確認まで完了扱いにしません。即時試行はゲームの同期処理を待たせず、定期処理との競合は既存のleaseで制御します。
 
 通信断・5xx・429は再送し、仕様違反・認証エラー・409は修正まで隔離します。
-本人の参加記録に結び付く結果・匿名化通知は、新規参加の禁止後も配送を続けます。結果の`reservationId`と署名付き参加応答から保存した台帳を照合し、本人・所属組織・開催instance・mode・matchを固定します。部屋は親予約に結び付く子試合だけを受け取ります。旧形式で参加予約を持たない結果は従来の手動承認と結果共有許可を必要とします。それ以外の承認が必要な配送は停止時に保留します。試行回数だけを理由に未配送原本を捨てません。
+本人の参加記録に結び付く結果・匿名化通知は、新規参加の禁止後も配送を続けます。結果の`reservationId`と署名付き参加応答から保存した台帳を照合し、本人・所属組織・開催instance・mode・matchを固定します。部屋は親予約に結び付く子試合だけを受け取ります。参加予約を持たない結果は配送・受領しません。試行回数だけを理由に未配送原本を捨てません。
 Workerの定期処理でlease失効と未処理を回収し、プロセスのメモリだけに再試行を任せません。
-エラーは `{code, retryable, correlationId}` とし、秘密を返しません。
+エラーは `{code}` とし、想定外の例外だけ `correlationId` を付けます。秘密を返しません。
 
 A開催→B所属の履歴反映、重複配送、Bのレート不変、切断後の再送、取得先停止を契約テストに含めます。
 送信先制限と鍵管理は[セキュリティ](security.md)を参照してください。
@@ -129,35 +127,40 @@ A開催→B所属の履歴反映、重複配送、Bのレート不変、切断�
 | POST /api/v1/participation/login/logout | 開催先だけのログイン・参加Cookieと未交換予約を失効 |
 | POST /api/v1/participation/login/rooms/:action | 参加前の部屋一覧・出題設定・本人セット。作成と入室は参加証明が必要 |
 | POST /api/v1/participation/exchange | 開催先セッションへの一度限りの交換 |
+| POST /api/v1/participation/session・config・resume・cancel | 予約別Cookieで本人・開催instance・種別の取得、公開ルール取得、復帰、`{forfeit}` による取消・離脱 |
 | GET /api/v1/participation/socket?reservation=UUID&room=UUID | 予約専用cookieで子試合のWebSocket接続 |
-| POST /federation/v1/metadata | 開催元の受入方式に従った所属元への署名付き機能・版確認。`targetInstanceId`指定時はその1件だけ |
+| POST /api/v1/federation/results | 所属元で本人の外部結果履歴（所属組織単位）と振り返りを取得 |
+| POST /federation/v1/metadata | 開催元の公開インスタンスと版を署名付きで返す。各インスタンスの`ranked`・`casual`は、公開状態と開催元が要求元組織を受け入れるかを合わせた値。`targetInstanceId`指定時はその1件だけ |
 | GET /federation/v1/key | URL参加先の公開origin・kid・Ed25519公開鍵のみを取得 |
+| POST /federation/v1/participation/validate | 開催先から所属元へ、待機中の本人と参加許可を再確認 |
+| POST /federation/v1/participation/release・status・logout | 所属元から開催先へ、参加枠の解放・状態確認・外部本人のログアウト |
 | POST /federation/v1/questions/sync | 署名付き同期要求と認可範囲の固定snapshot取得 |
 | POST /federation/v1/inbox | 結果・匿名化・利用停止イベントの受領 |
+| POST /federation/v1/results/review | 所属元から開催元へ、本人の出題済み問題の振り返りを取得 |
 
 識別子はUUIDと組織origin・instanceIdを組み合わせます。共有系列IDは作成元で発行し改訂でも変えません。既存の内部IDは再生成しません。
 
 ## 参加チケットの形式
 
 Ed25519のcompact JWSを使い、ヘッダーのalg・kid・用途を固定して検証します。有効期間は60秒、時計差は5秒まで、予約は60秒です。期限の猶予を予約の延長に使いません。
-必須claimは iss・sub・aud・sourceInstanceId・hostInstanceId・mode・matchId・reservationId・authorizationId・jti・iat・exp・protocolVersion。subは所属元が導出した不変actor識別子、audは開催元origin、matchIdは予約と結び付けた開催先のIDです。表示名は検証済み所属元プロフィールから別途受け取り、認証に使いません。
-参加契約の`sourceInstanceId`は旧形式との互換性のため項目名を維持し、新しい参加では所属組織のUUIDを格納します。旧予約・履歴のUUIDは書き換えず、そのまま復帰・閲覧します。問題共有で使う同名項目は実インスタンスIDのままです。
+必須claimは iss・sub・aud・sourceOrganizationId・hostInstanceId・mode・matchId・reservationId・authorizationId・jti・iat・exp・protocolVersion。subは所属元が導出した不変actor識別子、audは開催元origin、matchIdは予約と結び付けた開催先のIDです。表示名は検証済み所属元プロフィールから別途受け取り、認証に使いません。
+参加・外部ログイン・結果配送の`sourceOrganizationId`は所属組織のUUIDです。所属元は自組織以外の値を拒否します。問題共有・メタデータ要求の`sourceInstanceId`は要求元の対象（インスタンスまたは組織）のIDで、参加契約とは別の項目です。
 issuerとjtiを一意にし、交換とセッション作成を同一トランザクションで行います。消費記録は有効期限と時計差が過ぎるまで永続保持し、以後も期限切れチケットを拒否するため再利用できません。
 
 通常の外部リンクには所属元origin・所属組織UUID・開催instance・種別だけをクエリに載せます。開催元自身のログインを優先し、未ログインなら開催元で乱数stateと戻り先をsessionStorageへ保存して、所属元の `/authorize-participation/?flow=login` へ同じタブで転送します。所属元のログイン済み本人を確認し、60秒の署名証明を開催先の通常画面のfragmentで返します。fragmentはHTTP要求・Refererに載らず、交換前にHistoryから除去します。state・保存先・種別・instanceの一致をブラウザーで、issuer・audience・本人・所属・state・用途・期限・再利用を開催元で検証します。証明そのものをブラウザーストレージへ保存しません。
-外部ログインのJWS用途は `quiz-relay-foreign-login+jws`。参加チケットとは交換できず、表示名・組織名を署名対象に含め、ログインだけでは参加枠・開催先会員を作りません。参加ボタンでは `flow=participation` で同じ往復を行い、既存の予約に結び付いた参加チケットを交換します。新しい動線ではログインCookieの本人と参加チケットの本人も照合します。旧ポップアップのpostMessage契約は互換経路だけに残し、state・送信元Window・originを完全一致で確認します。
+外部ログインのJWS用途は `quiz-relay-foreign-login+jws`。参加チケットとは交換できず、表示名・組織名を署名対象に含め、ログインだけでは参加枠・開催先会員を作りません。参加ボタンでは `flow=participation` で同じ往復を行い、既存の予約に結び付いた参加チケットを交換します。ログインCookieの本人と参加チケットの本人も照合します。所属元の確認画面は `flow` が `login` か `participation` の要求だけを受け付けます。
 開催元自身が同一originの交換APIへ送り、Secure・HttpOnly・SameSite=Strict cookieを発行します。CORSで第三者にcookieを発行させません。ログインCookie `qr_foreign_login` と予約別Cookieは `/api/v1/participation` のみに送信し、最大12時間です。ログアウトでは開催元側を失効し、所属元のAuthを終了せず、所属元クエリを除いたゲスト画面へ戻します。
 
 ## 配送の形式・上限
 
-配送は `{message: compact JWS}` とし、protocolVersion・messageType・issuer・audience・issuedAt・expiresAt・nonce・method・path・bodyHash・bodyを署名します。
+配送は `{message: compact JWS}` とし、protocolVersion・messageType・issuer・audience・issuedAt・expiresAt・nonce・method・path・bodyHash・bodyを署名します。応答は要求のnonceを `replyTo` に入れて署名し、要求側で一致を検証します。
 bodyHashはbodyをRFC8785で正規化し、UTF-8→SHA-256→base64urlで計算します。既存ライブラリを使い、独自の暗号・JWS検証を作りません。bodyとエンベロープの両方に型とサイズ検証を適用します。
 永続イベントの原本署名と、配送要求の60秒の有効期間を分離します。再送で配送署名・nonceを更新してもeventId・原本・原本hashを変えません。nonceは期限と時計差が過ぎるまで重複拒否します。
 
 署名・base64を含む連携HTTP本文は256KiB（262,144バイト）までです。問題同期は1ページ25問以内、固定snapshotとcursorで分割します。通常の問題JSON取込の2MB・500問上限とは別です。HTTP読込みは上限を超えた時点で中止し、相手応答は5秒で打ち切ります。
 
-メタデータの承認・組織・公開インスタンス・受入許可・snapshotの材料と、問題共有の送信許可・カテゴリ・公開内容・snapshotの材料は、それぞれDrizzleのD1 batchで同じ読み取りトランザクションから取得します。どちらもDBへの往復を7回から1回に減らし、対戦などの無関係な更新による再読込みと、並行更新で異なる版の情報が混ざることを防ぎます。batchの結果で列名が重複しないよう、共有ページは必要な列だけを選択します。[D1 batchの保証](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)に従い、ページ間の公開情報変更は従来どおり拒否します。
-メタデータ同期のlease取得と保存時の再認可も、対象・相手・job・既存キャッシュの4つの読み取りを1回のD1 batchにまとめます。DB全体の変更世代による競合検査を維持しつつ、部屋の準備操作などと重なる読み取り時間を短縮します。
+メタデータの承認・組織・公開インスタンス・受入許可・snapshotの材料と、問題共有の送信許可・カテゴリ・公開内容・snapshotの材料は、それぞれDrizzleのD1 batchで同じ読み取りトランザクションから取得します。どちらもDBへの往復は1回で、対戦などの無関係な更新による再読込みと、並行更新で異なる版の情報が混ざることを防ぎます。batchの結果で列名が重複しないよう、共有ページは必要な列だけを選択します。[D1 batchの保証](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)に従い、ページ間の公開情報変更は拒否します。
+メタデータ同期のlease取得と保存時の再認可も、対象（インスタンスまたは組織）・相手・job・既存キャッシュの読み取りを1回のD1 batchにまとめます。DB全体の変更世代による競合検査を維持しつつ、部屋の準備操作などと重なる読み取り時間を短縮します。
 
 peerごとに1分60要求、actorの参加予約は1分20要求を上限とします。毎分の定期処理で期限到来outboxを回収し、通信失敗は1秒から15分までの指数バックオフに0〜25%のjitterを加えて再試行します。実際の送信は次の定期実行以降となり、429ではRetry-Afterより前に再送しません。
 

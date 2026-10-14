@@ -7,8 +7,8 @@
 <a id="catalog-management-002"></a>
 ## 準備と認可
 
-`pnpm db:migrate --local` を適用し、通常画面で組織と管理者を登録します。CLIは `.dev.vars` の `CATALOG_SUBJECT`、未設定なら `INITIAL_ADMIN_SUBJECT` を使い、対象ownerに属する組織管理者をサーバーと同じ認可処理で確認します。
-`GAME_OWNER` とJSON内ownerを対象インスタンスの不変ownerへ合わせます。通常インスタンスのownerは `urn:uuid:内部ID` です。プレビューではDBへ接続せず、実行時に権限と対象を再検証します。CLIはクラウドDBへ接続せず、旧PostgreSQLの管理接続やロール設定を使用しません。
+`pnpm db:migrate --local` を適用し、通常画面で組織と管理者を登録します。CLIは `.dev.vars` の `CATALOG_SUBJECT` が対象ownerに属する組織管理者であることを、サーバーと同じ認可処理で確認します。未設定なら `CATALOG_SUBJECT_REQUIRED` で止まります。
+対象ownerはコマンドの引数で必ず指定し、JSON内ownerも同じ値にします。通常インスタンスのownerは `urn:uuid:内部ID` です。プレビューではDBへ接続せず、実行時に権限と対象を再検証します。CLIはローカルD1だけに接続し、クラウドDBへ接続しません。
 
 <a id="catalog-management-003"></a>
 ## 操作
@@ -18,9 +18,9 @@ UTF-8のJSONファイルに操作を記述する。最大64KiB。`--apply` な�
 実行時にこれらを再検証する。
 
 ```powershell
-pnpm catalog:manage path/to/request.json
-pnpm catalog:manage path/to/request.json --apply
-pnpm catalog:list
+pnpm catalog:manage path/to/request.json urn:uuid:<インスタンスID>
+pnpm catalog:manage path/to/request.json urn:uuid:<インスタンスID> --apply
+pnpm catalog:list urn:uuid:<インスタンスID>
 ```
 
 一覧は管理対象の問題ID・停止状態、セットID/版/hash、ルールID/版/設定、有効プロファイル。問題本文・正解・秘密値は標準出力へ出さない。
@@ -88,8 +88,8 @@ $catalogConfig.playersPerMatch = 3
 $catalogRequest = @{ operation = 'configure'; profile = 'local'; config = $catalogConfig }
 New-Item -ItemType Directory -Path .wrangler/qa -Force | Out-Null
 $catalogRequest | ConvertTo-Json -Depth 10 | Set-Content .wrangler/qa/catalog-request.json -Encoding utf8
-pnpm catalog:manage .wrangler/qa/catalog-request.json
-pnpm catalog:manage .wrangler/qa/catalog-request.json --apply
+pnpm catalog:manage .wrangler/qa/catalog-request.json $catalogConfig.owner
+pnpm catalog:manage .wrangler/qa/catalog-request.json $catalogConfig.owner --apply
 ```
 
 上記は実行するとローカル設定を変更する例です。操作用の一時JSONはGit管理外へ置き、継続して使う出題設定は `config/` で管理します。

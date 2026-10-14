@@ -2,7 +2,7 @@
 
 [ドキュメント一覧](../README.md)
 
-**通常アプリとローカル開発はD1、認証はClerkのGoogleログインを使用します。** 旧PostgreSQLは移行元原本として保持します。
+**通常アプリとローカル開発はD1、認証はClerkのGoogleログインを使用します。**
 
 <a id="phase-0-002"></a>
 ## ローカルで動かす
@@ -16,7 +16,7 @@ pnpm db:migrate --local
 pnpm dev
 ```
 
-既存の `.dev.vars` を上書きせず、以下のClerkキーと初回管理者の `INITIAL_ADMIN_SUBJECT` を設定します。空のD1ではログイン後の組織設定画面で組織と初期インスタンスを作ります。既存環境は[バックアップ・移行](database.md)を先に行い、初期seedを再投入しません。
+既存の `.dev.vars` を上書きせず、以下のClerkキーと初回管理者の `INITIAL_ADMIN_SUBJECT` を設定します。空のD1ではログイン後の組織設定画面で組織と初期インスタンスを作ります。データのあるD1へ初期seedを再投入しません。バックアップと復旧は[DB管理](database.md)を参照してください。
 このPCはTailscale IP 100.102.202.80:5173と、設定済みHTTPS `https://desktop-149oae5.taildd84bf.ts.net:5173/` を使います。別PCのIP・証明書は後述の手順で合わせます。 `.wrangler` のD1・DO原本を再起動時に消しません。
 
 <a id="phase-0-003"></a>
@@ -28,7 +28,7 @@ Cloudflareアカウント、D1、Clerk Developmentアプリを用意します。
 <a id="phase-0-004"></a>
 ## DB検証
 
-[DB管理](database.md)のmigrationを適用し、開発ツールの「DBのcommit・rollback」でD1の同時保存とrollbackを確認します。 `pnpm db:check` は通常データと独立したD1で検証します。PostgreSQL接続文字列・CA・DBロールは通常アプリに設定しません。
+[DB管理](database.md)のmigrationを適用し、開発ツールの「DBのcommit・rollback」でD1の同時保存とrollbackを確認します。 `pnpm db:check` は通常データと独立したD1で検証します。
 
 <a id="phase-0-005"></a>
 ## 認証遷移の検証
@@ -38,16 +38,16 @@ Googleログイン、元画面への復帰、本人確認、ログアウトを�
 <a id="clerk-free"></a>
 ## Clerkを無料で検証する
 
-1. [Clerk Dashboard](https://dashboard.clerk.com/)でアカウントを作り、Hobbyプランのアプリ `quiz-relay-a-test` を作成します。Development環境を使います。有料機能・課金・Clerk Organizationsは有効にしません。Quiz Relayの組織・権限は既存DBで管理します。
+1. [Clerk Dashboard](https://dashboard.clerk.com/)でアカウントを作り、Hobbyプランのアプリ `quiz-relay-a-test` を作成します。Development環境を使います。有料機能・課金・Clerk Organizationsは有効にしません。Quiz Relayの組織・権限はD1で管理します。
 2. SSO connectionsでGoogleを全ユーザー向けに有効にし、Sign-up & sign-in設定でメールコード・リンク・パスワード・電話・passkey等の別経路を無効にします。Google以外のproviderは追加しません。メール等を登録必須の追加入力にしません。DevelopmentのGoogleには共有OAuth資格情報を利用できます。[Google公式手順](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/google)。
-3. API keysの `pk_test_...` と `sk_test_...` を、Git管理外の `.dev.vars` のCLERK_PUBLISHABLE_KEY・CLERK_SECRET_KEYへ保存します。JWT公開鍵のPEMをCLERK_JWT_KEYに設定すると署名検証のための通信を省けます。鍵・トークンはチャットや結果欄に貼りません。キーの設定だけでは認証元は変わりません。
-4. 切り替える検証DBの既存アカウントに対しては、先に下記のID対応を行います。テスト用DBを空で新規作成する場合は不要です。初回管理者のINITIAL_ADMIN_SUBJECTも、移行後に使う検証済みsubjectと合わせます。
-5. 専用消去Workerの秘密設定も同じClerkアプリへ合わせてから、通常アプリ・消去WorkerのAUTH_PROVIDERを `clerk` に変更し、再起動します。既存の `.env.erasure-local` は旧DB接続を除いて編集し、AUTH_PROVIDER・CLERK_PUBLISHABLE_KEY・CLERK_SECRET_KEY・必要ならCLERK_JWT_KEYを設定します。構成が一致しない場合は起動を拒否します。[消去の運用](operations.md)。
+3. API keysの `pk_test_...` と `sk_test_...` を、Git管理外の `.dev.vars` のCLERK_PUBLISHABLE_KEY・CLERK_SECRET_KEYへ保存します。JWT公開鍵のPEMをCLERK_JWT_KEYに設定すると署名検証のための通信を省けます。鍵・トークンはチャットや結果欄に貼りません。
+4. 初回管理者のClerk User IDを `.dev.vars` のINITIAL_ADMIN_SUBJECTへ設定します。
+5. 専用消去Workerの `.env.erasure-local` にも同じClerkアプリのCLERK_PUBLISHABLE_KEY・CLERK_SECRET_KEY・必要ならCLERK_JWT_KEYを設定し、再起動します。構成が一致しない場合は起動を拒否します。[消去の運用](operations.md)。
 6. ChromeでGoogleログイン・招待部屋への復帰・ログアウトを確認し、iOS Safariでも実施します。対戦のログアウトは開催元セッションの失効を先に行います。退会後のAuth削除・再登録と、権限を引き継がないことも確認します。
 
-Developmentは1環境100ユーザーまでで、Productionとはユーザーを共有しません。本番データのID対応にはProductionのキーを使い、検証用Developmentへ本番データを切り替えません。[環境の違い](https://clerk.com/docs/guides/development/managing-environments)。本番化には管理可能なドメイン・DNSと独自Google OAuth資格情報を準備します。[本番手順](https://clerk.com/docs/guides/development/deployment/production)。
+Developmentは1環境100ユーザーまでで、Productionとはユーザーを共有しません。本番データにはProductionのキーを使い、検証用Developmentへ本番データを接続しません。[環境の違い](https://clerk.com/docs/guides/development/managing-environments)。本番化には管理可能なドメイン・DNSと独自Google OAuth資格情報を準備します。[本番手順](https://clerk.com/docs/guides/development/deployment/production)。
 
-組織間の公開検証では、別アプリ `quiz-relay-b-test` とB専用のWorker・D1を使い、A/BでAuthキー・署名鍵・originを混ぜません。現在Aには既存のDevelopmentアプリ `Quiz_relay` を使い、Bには `quiz-relay-b-test` を用意しています。各D1に1組織・2インスタンスを登録済みで、組織内のAuthを共通にします。隔離D1の検証は `tests/d1-*.test.ts` がmigrationを適用します。ローカルの切替と、下記の公開ゲーム検証D1への適用を確認済みです。
+組織間の公開検証では、別アプリ `quiz-relay-b-test` とB専用のWorker・D1を使い、A/BでAuthキー・署名鍵・originを混ぜません。現在Aには既存のDevelopmentアプリ `Quiz_relay` を使い、Bには `quiz-relay-b-test` を用意しています。各D1に1組織・2インスタンスを登録済みで、組織内のAuthを共通にします。隔離D1の検証は `tests/d1-*.test.ts` がmigrationを適用します。
 
 <a id="federation-test"></a>
 ### A/Bの公開ゲーム検証環境
@@ -61,7 +61,7 @@ Cloudflare FreeとClerk HobbyのDevelopment環境で、通常ゲーム・管理�
 | 公開origin | `https://quiz-relay-federation-a-test.quiz-relay.workers.dev` | `https://quiz-relay-federation-b-test.quiz-relay.workers.dev` |
 | Clerk Developmentアプリ | `Quiz_relay` | `quiz-relay-b-test` |
 
-両D1へ0000〜0036のmigrationを適用済みです。各側に1組織・2インスタンス・対応する実Googleユーザーの管理者権限を登録しています。秘密はGit管理外の `.wrangler/federation-a-secrets.json`・`.wrangler/federation-b-secrets.json` へ保存します。CLERK_PUBLISHABLE_KEY・CLERK_SECRET_KEY・PROBE_TOKEN・SIGNING_PRIVATE_KEY（Ed25519 PKCS8）・PEER_PUBLIC_KEY（相手のSPKI）・TEST_ADMIN_SUBJECTをA/Bで分けます。非公開Workerには同じClerkキーと自側の署名鍵だけを設定し、公開route・workers.dev・preview URLを持たせません。
+両D1へmigrationを適用済みです。各側に1組織・2インスタンス・対応する実Googleユーザーの管理者権限を登録しています。秘密はGit管理外の `.wrangler/federation-a-secrets.json`・`.wrangler/federation-b-secrets.json` へ保存します。CLERK_PUBLISHABLE_KEY・CLERK_SECRET_KEY・PROBE_TOKEN・SIGNING_PRIVATE_KEY（Ed25519 PKCS8）・PEER_PUBLIC_KEY（相手のSPKI）・TEST_ADMIN_SUBJECTをA/Bで分けます。非公開Workerには同じClerkキーと自側の署名鍵だけを設定し、公開route・workers.dev・preview URLを持たせません。
 
 再配置は以下の順序です。Bも `--env b` とB用の秘密ファイルを指定します。ルートの通常クラウドDBへ検証設定を流用しません。
 
@@ -73,16 +73,16 @@ node node_modules/wrangler/bin/wrangler.js deploy --config config/federation/wra
 ```
 
 秘密の初回登録・変更は `wrangler secret bulk` を対象の設定・環境へ実施します。通常Workerと非公開Workerが同じD1 ID、DOのscript_name、service bindingを使うことを確認します。通常Workerの毎分Cronだけが非公開処理を呼びます。`pnpm run check` はclient assetsも生成します。デプロイ前にビルド出力のgzipサイズが利用プランの上限内に収まることを確認します。
-外部ログインの同じタブの往復にはClerkの新しい外部戻り先を登録しません。Clerk認証の戻り先は所属元内の検証済み `/authorize-participation/` だけで、その後アプリが短命な署名証明を開催先へ返します。0036を先に適用し、A/Bの秘密・originを維持してから、[変更画面の確認](../development/testing.md#federation-ui-changes)を行います。
+外部ログインの同じタブの往復にはClerkの新しい外部戻り先を登録しません。Clerk認証の戻り先は所属元内の検証済み `/authorize-participation/` だけで、その後アプリが短命な署名証明を開催先へ返します。migrationを先に適用し、A/Bの秘密・originを維持してから、[変更画面の確認](../development/testing.md#federation-ui-changes)を行います。
 
-保護された `/api/probes/game/status` は `gameReady: true`、検証インスタンス、メタデータ・問題取り込みの最終成功時刻とエラーを返します。本文・解答・認証秘密は返しません。初回の `/api/probes/game/setup` は対象名・管理者・インスタンスを照合し、未設定の問題・参加設定を登録します。`/api/probes/game/policy` は送受信許可を初期値へ戻すため、稼働中の受入では再実行しません。カテゴリ共有・取り込み・個別除外は通常の管理画面で操作します。
+保護された `/api/probes/game/status` は `gameReady: true`、検証インスタンス、メタデータ・問題取り込みの最終成功時刻とエラーを返します。本文・解答・認証秘密は返しません。初回の `/api/probes/game/setup` は対象名・管理者・インスタンスを照合し、未設定の問題・参加設定を登録します。カテゴリ共有・取り込み・個別除外は通常の管理画面で操作します。
 
-実Googleによる通常画面の本人確認、外部ランク・部屋対戦、所属元履歴・開催元の振り返り、共有問題の取り込み・検索・除外を確認しました。ブラウザー・実機・継続負荷の確認範囲は[検証状況](../development/testing.md#d1-clerk)へ集約します。旧 `wrangler.jsonc`・`federation-worker.ts` は通信プローブ用です。通常ゲームをその入口へ戻しません。
+実Googleによる通常画面の本人確認、外部ランク・部屋対戦、所属元履歴・開催元の振り返り、共有問題の取り込み・検索・除外を確認しました。ブラウザー・実機・継続負荷の確認範囲は[検証状況](../development/testing.md#d1-clerk)へ集約します。
 
 <a id="federation-cloud-check"></a>
 ### 公開A/Bで繰り返す連携検証
 
-配置済みA/Bは以下のコマンドで検査できます。通常ゲーム用設定だけを読み、初期化・許可変更・対戦・退会を行いません。連携要求のnonceを少数保存し、通常の定期清掃に任せます。相手を停止する旧 `scripts/federation-probe.mjs` は現在の通常ゲーム環境に実行しません。
+配置済みA/Bは以下のコマンドで検査できます。通常ゲーム用設定だけを読み、初期化・許可変更・対戦・退会を行いません。連携要求のnonceを少数保存し、通常の定期清掃に任せます。
 
 | 設定項目 | 保存先・入手先 | 確認条件 |
 | --- | --- | --- |
@@ -91,7 +91,7 @@ node node_modules/wrangler/bin/wrangler.js deploy --config config/federation/wra
 | `SIGNING_PRIVATE_KEY`・`SIGNING_KID` | 自側Ed25519のPKCS8 PEMは秘密JSON、kidはgame設定 | 自側の署名鍵を使用。A/Bで別鍵 |
 | `PEER_PUBLIC_KEY`・`PEER_KID` | 相手Ed25519のSPKI PEMは秘密JSON、kidはgame設定 | 相手の公開鍵・kidと一致し、通常管理画面でも相手を承認 |
 | `PROBE_TOKEN` | 各秘密JSON | A/Bで異なる32文字以上の秘密値。チャットやブラウザーURLへ貼らない |
-| `TEST_ADMIN_SUBJECT` | 自側ClerkのUser ID、旧ID対応済みなら対応先ID → 各秘密JSON | 検証組織「連携検証 A/B」の管理者で、プロフィール設定済み |
+| `TEST_ADMIN_SUBJECT` | 自側ClerkのUser ID → 各秘密JSON | 検証組織「連携検証 A/B」の管理者で、プロフィール設定済み |
 | 非公開Workerの秘密 | `.wrangler/federation-erasure-a-secrets.json`／`federation-erasure-b-secrets.json` | 自側Clerkキー・自側署名鍵のみ。管理者代行・probe秘密を不要にコピーしない |
 | A-1/B-1の問題共有 | 通常管理画面 | 両側の送受信とカテゴリ共有が有効、少なくとも1件の承認済み問題と有効な取り込みあり |
 
@@ -114,19 +114,6 @@ node node_modules/wrangler/bin/wrangler.js secret bulk .wrangler/federation-eras
 状態確認の最終成功時刻はCronを含む同期が最近成功した証拠です。Cron単独の継続稼働は、管理画面から手動同期を押さず2分以上あけて再検査し、最終成功時刻が進むことでも確認します。ソースのbinding検査だけではクラウドの実配置を証明できないため、デプロイの対象名・version・bindingを合わせて記録します。
 
 障害試験は自動コマンドに含めません。検証用のA/Bについて、元の許可とrevisionを控え、片側の共有/参加許可を通常管理画面で解除し、新規利用拒否を確認してから元へ戻します。通信断は対象端末だけのオフライン操作で作り、既存Worker・DBを削除しません。サーバー停止時のoutbox再送は隔離テストで実施し、実クラウドでの滞留・再送時間は別に記録します。後片付けではテスト用の部屋・参加を通常画面で終了し、原本・履歴・DBを消さず、元の許可を照合します。
-
-### 既存Auth IDを対応付ける
-
-アプリの参加受付を止め、進行中の対戦・部屋を終了し、対象の旧アカウントとClerkアカウントで同じGoogle識別子を確認します。メールだけの旧アカウントは自動統合しません。旧Authが利用できる間に本人がGoogleを連携してから対応を確認します。原則としてClerk切替前に行います。試しログインですでにプロフィールを作成していても、表示名だけで、戦績・投稿・権限・お気に入り・通報等がない場合は対応付けできます。新しいプロフィールの行は削除せず、データを統合しません。利用記録・権限・退会状態がある場合や別組織の場合は拒否します。
-
-Git管理外の `.wrangler/clerk-mapping.json` に `[{"supabaseSubject":"旧UUID","clerkUserId":"user_..."}]` を用意します。1回100件まで、重複を拒否します。このCLIは1組織の対応付けを対象とし、同じsubjectが複数組織にあるDBでは単純な対応付けを拒否します。旧Authの管理用キーを `.env.supabase-admin` のSUPABASE_SECRET_KEYまたはSUPABASE_SERVICE_ROLE_KEYへ安全に保存し、対応確認時だけ使用します。旧AuthのURLとClerkキーは `.dev.vars`、旧DBのORGANIZATION_DATABASE_URL・戦績読取用GAME_DATABASE_URLは `.env.postgres-local` から読みます。これらの旧DB接続を通常Workerへ戻しません。
-
-```powershell
-pnpm auth:map:clerk .wrangler/clerk-mapping.json
-pnpm auth:map:clerk .wrangler/clerk-mapping.json --apply
-```
-
-先に全件を検証し、後者だけがClerkのexternalIdへ `quiz-relay:supabase:旧UUID` を保存します。途中失敗後は同じ入力で再試行できます。旧DBは `.env.postgres-local` から読取り、Clerk・旧AuthのキーはGit管理外の秘密設定から取得します。DBのsubject・actorId・戦績・権限は書き換えません。対応付け後は画面を再読み込みし、旧プロフィール・戦績・権限で本人確認できることを確認します。認証元切替の受入後に旧セッション・旧Authの個人情報と資格情報を整理し、バックアップの保持期限も確認します。
 
 <a id="federation-load"></a>
 ### 少人数の実ログインと仮想利用者の負荷試験
@@ -185,13 +172,13 @@ WebSocket要求の `canceled` は、試験で予定した再接続や試合終�
 
 ### 組織間通信の検証環境を整える
 
-移植が完了した通常APIを、まずローカルD1・隔離データで確認し、その後A/Bの公開HTTPS環境へ配置します。Cloudflareの既存アカウントでD1の使用数・残容量・Workers/DOの利用量を確認してから、無料枠にA/BのDBを作成します。空き枠を推測して既存DBを消したり、有料化したりしません。
+通常APIを、まずローカルD1・隔離データで確認し、その後A/Bの公開HTTPS環境へ配置します。Cloudflareの既存アカウントでD1の使用数・残容量・Workers/DOの利用量を確認してから、無料枠にA/BのDBを作成します。空き枠を推測して既存DBを消したり、有料化したりしません。
 
 初期の機能受入は各組織1試合4人と運営者各1人の計10人で行い、各組織の2インスタンスを順番に検証します。4インスタンスの同時試合は計16人で別に確認します。先にデータ量とClerk Backend APIの要求数を測定し、負荷試験の人数を増やします。認証確認は早押しの入力ごとには行わず、対戦中は開催元のDOセッションを使います。[ClerkのAPI制限](https://clerk.com/docs/guides/how-clerk-works/system-limits)も監視します。
 
 公開A/Bでは、許可した相手origin、署名・nonce、接続解除後の結果配送、再送・二重受信・順序入替、タイムアウト・相手停止・復帰を確認します。障害は隔離した相手・ネットワーク設定で再現し、既存サービスの停止で作りません。ChromeとiOS Safariを同じテストアカウント構成で確認します。Safariでは画面遷移・バックグラウンド復帰・Wi-Fi/モバイル回線の切替も対象にします。
 
-ログは要求ID・接続先・処理時間・D1のread/write行数・再試行回数を中心にし、トークン・署名秘密鍵・本文・メールを記録しません。難易度・同期・再送は上限と再開位置を持たせ、読み書き行数・CPU・保存量の実測で頻度を調整します。[移行と連携の完了条件](../development/plan.md)に従い、実公開環境とSafari実機を未確認のまま完了扱いにしません。
+ログは要求ID・接続先・処理時間・D1のread/write行数・再試行回数を中心にし、トークン・署名秘密鍵・本文・メールを記録しません。難易度・同期・再送は上限と再開位置を持たせ、読み書き行数・CPU・保存量の実測で頻度を調整します。[連携の完了条件](../development/plan.md)に従い、実公開環境とSafari実機を未確認のまま完了扱いにしません。
 
 <a id="phase-0-006"></a>
 ## クラウドでの実行
@@ -202,7 +189,7 @@ WebSocket要求の `canceled` は、試験で予定した再接続や試合終�
 
 [デプロイの判断基準](../development/rules.md)を参照。
 
-Cloudflare認証と対象D1・Clerk秘密・消去サービスを確認します。通常クラウドD1への本データコピーは未実施です。空のDBを既存サービスへ公開せず、移行対象とバックアップを先に確認してください。新規環境ではD1 migration、非公開消去Worker、通常Workerの順に配置し、同じD1 IDとDO script_name・service名を設定します。
+Cloudflare認証と対象D1・Clerk秘密・消去サービスを確認します。新規環境ではD1 migration、非公開消去Worker、通常Workerの順に配置し、同じD1 IDとDO script_name・service名を設定します。
 
 ```powershell
 # リポジトリのルートで実行する。
@@ -210,7 +197,7 @@ pnpm run build
 pnpm exec wrangler deploy --var PROBES_ENABLED:true
 ```
 
-上記はルート設定の対象D1へ本データを移送・照合し、移行の許可がある場合に限る手順です。現在の公開受入には、配置済みのA/B設定を使います。旧quiz-relay-probeを空のD1へ切り替えるために実行しません。
+公開受入には、配置済みのA/B設定を使います。
 
 この検証Workerはユーザー指定でPROBES_ENABLED=trueを維持します。通常のpnpm deployはfalse既定なので、上記コマンドを使います。
 
@@ -239,7 +226,7 @@ node --env-file=.wrangler/.env.cloud-probe scripts/probe.mjs
 
 検証APIは常設の管理APIとして流用しない。別アカウントへ新規配置する場合は、この手順だけでは準備が完了しない。
 
-対象アカウントのD1・DO・非公開service binding・Clerkの設定を準備します。旧Hyperdriveは追加しません。
+対象アカウントのD1・DO・非公開service binding・Clerkの設定を準備します。
 
 WebSocket検証経路 `/api/probes/socket` はAuthorizationヘッダーが必要なCLI/テスト用。
 
@@ -256,7 +243,7 @@ Vite自身の自己署名HTTPSをTailscale経由で利用する構成です。�
 
   DEV_TLS_CERTとDEV_TLS_KEYには `.wrangler/tls/dev-cert.pem` と `.wrangler/tls/dev-key.pem` を指定する。どちらもGit管理外。
 - 初回は自己署名の警告から「詳細設定」→対象サイトへ続行する。利用するブラウザーでsecure contextとWebCrypto/SHA-256の動作を確認する。
-- 移行前のSupabaseでは、Authentication → URL Configuration → Redirect URLsに上記のHTTPS URLを追加する。Googleログインは検証するHTTPS URLから開始し、同じoriginへ戻る。Clerkでは[無料検証の手順](#clerk-free)に従う。
+- Googleログインは検証するHTTPS URLから開始し、同じoriginへ戻る。Clerkの設定は[無料検証の手順](#clerk-free)に従う。
 - ログイン検証にはTailscaleのDNS名を使用する。
 
   DNS名は同じ100.102.202.80へ解決する。
@@ -280,28 +267,28 @@ TLSの検証全体を無効にせず、設定した証明書をそのプロセ�
 3. `tailscale serve --bg http://127.0.0.1:5173` を実行する。Serveが無効ならCLIが示す管理URLで有効化する。これはTailscale内向けServeで、Funnelではない。
 4. `tailscale serve status` に表示されたHTTPS URLを開く。
 
-   ClerkのDevelopmentアプリを設定し、上記のHTTPS originからGoogleログインを開始する。旧Supabaseを使う移行元だけはRedirect URLsへ登録する。
+   ClerkのDevelopmentアプリを設定し、上記のHTTPS originからGoogleログインを開始する。
 5. GoogleログインはこのHTTPS URLから開始し、同じブラウザーの同じoriginへ戻る。localhostから開始したログインをTailscale側へ引き継がない。
 6. 終了時は設定したHTTPS転送を `tailscale serve --https=443 off` で解除できる。既存の別サービスがある場合は対象を確認してから解除する。
 
-`pnpm run probe` もPROBE_ORIGINのURLを使う。ローカルだけ検証したい場合は、そのコマンドに渡すPROBE_ORIGINを `http://127.0.0.1:5173` にする。
+`pnpm run probe` はPROBE_ORIGINのURLへ要求し、未設定なら開始しない。ローカルだけ検証したい場合は、そのコマンドに渡すPROBE_ORIGINを開発サーバーのorigin（例：`http://127.0.0.1:5173`）にする。
 
 Cloudflare Vite pluginはローカルpreview用にWorker側のdistへ.dev.varsを生成することがある。distを公開ディレクトリとして丸ごと配らず、設定したclient assetsを使う。
 
 開発サーバーから元の `.dev.vars` とdist側の `.dev.vars` を取得できないことを確認する。
 
 <a id="phase-0-014"></a>
-## 外部通信と旧構成
+## 外部通信
 
-通常アプリはD1 bindingへ接続し、Hyperdrive・DB接続文字列・Supabase CAを使用しません。旧クラウドのPostgreSQL構成は移行元として保持し、旧資格情報を通常Workerへ戻しません。本データのクラウド移送は、対象・バックアップ・照合・復旧を準備して別に実行します。
+通常アプリはD1 bindingへ接続し、DB接続文字列を使用しません。
 
-連携先は検査済みの `https://worker.account.workers.dev` の完全一致です。URL参加の初回取得は公開鍵の固定GETだけを使用し、自動承認せず、既存鍵や明示禁止を上書きしません。固定path・`global_fetch_strictly_public`・redirect拒否・署名・永続nonceを併用し、未知の相手や任意URLへ送信しません。独自ドメイン・一般のDNS rebindingへの拡張は未対応です。旧 `probe-egress.mjs` の自己宛て疎通成功を、A/Bの参加・配送の受入として扱いません。
+連携先は検査済みの `https://worker.account.workers.dev` の完全一致です。URL参加の初回取得は公開鍵の固定GETだけを使用し、自動承認せず、既存鍵や明示禁止を上書きしません。固定path・`global_fetch_strictly_public`・redirect拒否・署名・永続nonceを併用し、未知の相手や任意URLへ送信しません。独自ドメイン・一般のDNS rebindingへの拡張は未対応です。
 
 ## ページと配置の現在の境界
 
 `/` は `/game/` へ転送します。正式ランク参加は `/game/`、開発参加は `/local-game/`、検証は `/debug/` です。外部参加は `/participate/`、問題共有管理は `/question-sharing/` です。配色比較の `/design/` は廃止済みです。
 現在のテーマと画面構成は[概要](../spec/overview.md)、整形は[開発ルール](../development/rules.md)を参照します。
 
-本番buildはD1 bindingを使用します。旧Hyperdrive・PostgreSQLの接続は含めません。A/Bには通常ゲームを配置済みです。通常クラウド本データの移送は別に確認します。
+本番buildはD1 bindingを使用します。A/Bには通常ゲームを配置済みです。
 PC内DBの設定をクラウドへ流用せず、配置前に既存binding・Auth・DBとの差を確認します。
 別アカウントでの初期構築・対戦保存・更新・復元を通した手順は未検証です。[構成と復旧](../design/architecture.md)。

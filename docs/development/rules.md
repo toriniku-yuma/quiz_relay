@@ -39,7 +39,7 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 ルール・問題・結果の過去版を上書きせず、migration・制約・index・権限をソース管理します。
 本人の識別に表示名やメールの一致を使いません。
 
-`.dev.vars`、`.env.supabase-admin`、`.wrangler` の秘密情報を表示・コミットしません。
+`.dev.vars`、`.env.erasure-local`、`.wrangler` の秘密情報を表示・コミットしません。
 一時QAスクリプトは内容を確認してから実行します。整理を理由に既存DB・DO・outboxの原本を消しません。
 
 ## ファイルの置き場所
@@ -50,15 +50,22 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 | `src/client/app/` | ルート一覧・ページ選択・ナビゲーション |
 | `src/client/pages/` | ページを組み立てる。API・認証処理を持たない |
 | `src/client/components/` | Button・TextField・Panelなど共通UI |
-| `src/client/features/` | auth・game・matchmaking・debugなど機能固有のUIと処理 |
+| `src/client/features/` | auth・organization・questions・rooms・federation・gameなど機能固有のUIと処理 |
+| `src/client/lib/` | クラス結合の `cn()` |
 | `src/client/styles/` | テーマと全体スタイル |
-| `src/worker/index.ts`・`routes/` | HTTPルートと共通処理の登録 |
-| `src/worker/game/`・`matchmaking/` | 対戦・待機列 |
+| `src/shared/` | APIパス・入力検証・型などクライアント・Worker・CLIの共有コード |
+| `src/worker/index.ts` | 各機能の `routes.ts`・共通HTTP処理・Cronの登録 |
+| `src/worker/game/`・`matchmaking/`・`rooms/` | 対戦・待機列・部屋 |
+| `src/worker/organization/`・`questions/`・`results/` | 組織・権限・運営、作問・審査・出題、結果・履歴・順位 |
+| `src/worker/catalog/` | 問題セット・ルールの不変版と管理CLIの処理 |
+| `src/worker/auth/` | 認証の検証 |
+| `src/worker/scheduled.ts` | 定期保守 |
 | `src/worker/probes/` | 検証API・検証DO・DBプローブ |
-| `src/worker/federation/` | 署名・正規化・送信先の検査 |
+| `src/worker/federation/` | 組織間の署名通信・外部参加・問題共有・結果配送 |
 | `src/worker/env.ts` | Worker bindingの型 |
-| `src/worker/db/`・`drizzle-d1/` | Drizzleスキーマとmigration |
-| `tests/`・`scripts/` | テストと実HTTP・DB検証 |
+| `src/worker/db/`・`drizzle-d1/` | Drizzleスキーマ・D1接続とmigration |
+| `src/erasure/` | 非公開の消去Worker（退会・完全削除・期限消去） |
+| `tests/`・`scripts/` | テストと、管理CLI・実HTTP・DB検証 |
 
 正式機能を probes に追加しません。機能が大きくなったときだけ、その中で routes・state・validation などに分けます。
 
@@ -72,15 +79,15 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 ### ルートと画面移動
 
 ルート一覧はパスとコンポーネント・転送先の宣言に限定します。認証・API・URL変更の副作用を混ぜません。
-AppがページとNotFoundを選び、redirect.tsが転送URLを作り、mainが実際に転送します。
+ApplicationがページとNotFoundを選び、redirect.tsが転送URLを作り、mainが実際に転送します。
 認証コールバックは features/auth/callback、共有パスは paths.ts に置き、ページの相互importを避けます。専用ルーター依存は追加しません。
 
-`/` はインスタンス未選択なら一覧、`/?instance=…` なら選択したインスタンスのトップを表示します。ランク参加は `/rank/`、開発参加は `/local-game/`、技術検証は `/debug/` です。旧 `/game/` と互換転送、別のホーム、`/top/`・`/information/`・`/instances/` は設けません。組織設定・インスタンス設定・運営終了・完全削除も `/rank/` の表示切替へ同居させず、用途別のパスに分けます。
+`/` はインスタンス未選択なら一覧、`/?instance=…` なら選択したインスタンスのトップを表示します。ランク参加は `/rank/`、開発参加は `/local-game/`、技術検証は `/debug/` です。別のホーム、`/top/`・`/information/`・`/instances/` は設けません。組織設定・インスタンス設定・運営終了・完全削除も `/rank/` の表示切替へ同居させず、用途別のパスに分けます。
 認証後は検証済みの同一origin内の元画面へ戻します。外部URLへ転送せず、Clerkの戻り先設定を不要に増やしません。
 
 app/navigation.tsが通常の同一タブ内クリックとHistory APIを扱います。
 外部・API・修飾キー・download・別タブ指定はブラウザーの動作を維持します。
-Applicationが共通認証・組織情報・メニューを保持し、移動でMatchPageを破棄しません。
+Applicationが共通認証・組織情報・メニューを保持し、移動でMatchPage・CasualPage・RoomsPageを破棄しません。
 OrganizationGatewayは閲覧先と対戦接続先を分け、候補登録と画面移動でも参加処理・待機・ロビー・開始済み試合の接続先を維持します。本人が取消を選んだ応答不明の参加操作は同じ操作IDで取消を確認します。
 スマートフォンのメニューは標準dialogを使い、フォーカスとEscape操作を保ちます。
 
@@ -141,7 +148,7 @@ Biome 2.5.12に統一します。Prettierは追加しません。
 | `pnpm run format` | 整形 |
 | `pnpm run format:check` | 整形の確認 |
 | `pnpm run lint` | 整形・推奨Lint・import整理 |
-| `pnpm run check` | Lint・型検査・テスト・ビルド |
+| `pnpm run check` | Lint・型検査・テスト・設定とseedの検査・ビルド |
 
 対象は src・tests・scripts・config、ルートのTS/JSON/JSONC/index.html。gitignoreを尊重し、秘密・生成物・Markdown・YAML・SQLは対象外です。
 Tailwind v4対応とHTMLの実験的対応を使い、推奨Lintの警告も失敗扱いにします。
@@ -160,8 +167,8 @@ Drizzleの型付きAPIとDrizzle Kitを使い、`src/worker/db/schema.ts` を正
 
 人数・ルール・問題セットのJSON入力はDBの不変版へ反映し、新規参加の有効版を切り替えます。
 接続・待機の運用値は `config/runtime.json`。[設定手順](../guides/configuration.md)と[DB管理](../guides/database.md)を参照してください。
-初期問題は `supabase/seeds/mock-hiragana.json`、テスト用は `tests/fixtures/questions.ts` に置き、srcからimportしません。
-新規試合の問題はDBから取得します。旧PostgreSQLは移行元の読取りにだけ残し、接続終了パッチはそのツールのために維持します。
+初期問題は `seeds/mock-hiragana.json`、テスト用は `tests/fixtures/questions.ts` に置き、srcからimportしません。
+新規試合の問題はDBから取得します。
 
 ## デプロイと既存環境の変更
 
@@ -169,4 +176,4 @@ Workersへのデプロイは、明示的な依頼、またはサーバー実環�
 デザイン・通常操作は `pnpm dev` で確認します。Cloudflare固有の挙動・binding・公開origin認証を確認する場合は、実環境が必要な理由を先に伝えます。
 この条件を満たす検証で、デプロイのためだけの再確認は挟みません。既存の無料範囲と `PROBES_ENABLED=true` の指定を維持します。
 
-実装と既存DBの移行・クラウド配置は別の作業です。対象・差分・検証・バックアップ・復旧手順を揃え、会話で許可された範囲内で実行します。
+実装と、既存DBへのmigration適用・クラウド配置は別の作業です。対象・差分・検証・バックアップ・復旧手順を揃え、会話で許可された範囲内で実行します。
