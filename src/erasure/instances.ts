@@ -317,20 +317,3 @@ export async function eraseInstance(
   }
   return eraseStoredInstance(db, operationId);
 }
-
-export async function retryInstanceDeletions(db: Database, rooms: Env['GAME_ROOM']) {
-  const due = await db
-    .select({ id: jobs.id })
-    .from(jobs)
-    .where(isNull(jobs.deletedAt))
-    .orderBy(jobs.lastAttemptAt, jobs.requestedAt)
-    .limit(erasureBatch.jobs);
-  let failed = false;
-  for (const job of due)
-    try {
-      await eraseInstance(db, rooms, job.id);
-    } catch {
-      failed = true;
-    }
-  if (failed) throw new Error('INSTANCE_ERASURE_INCOMPLETE');
-}

@@ -23,12 +23,3 @@ export async function rankingRating(env: Env, owner: string, actorId: string) {
     );
   return row.rating;
 }
-export async function rankingBand(
-  env: Env,
-  owner: string,
-  actorId: string,
-  boundaries: [number, number] = [1200, 1600],
-) {
-  const rating = await rankingRating(env, owner, actorId);
-  return rating < boundaries[0] ? 0 : rating < boundaries[1] ? 1 : 2;
-}

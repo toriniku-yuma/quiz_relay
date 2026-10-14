@@ -1,10 +1,9 @@
-import { and, eq, isNull, lte } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { changeD1, type Database } from '../worker/db/d1.ts';
 import {
   organizationAccounts as accounts,
   accountWithdrawals as jobs,
 } from '../worker/db/schema.ts';
-import { erasureBatch } from './limits.ts';
 
 type DeleteUser = (subject: string) => Promise<void>;
 
@@ -68,14 +67,4 @@ export async function eraseAuthentication(
     );
     return removed;
   });
-}
-
-export async function retryAuthentication(db: Database, remove: DeleteUser) {
-  const due = await db
-    .select({ id: jobs.id })
-    .from(jobs)
-    .where(and(isNull(jobs.authDeletedAt), lte(jobs.retryAt, new Date().toISOString())))
-    .orderBy(jobs.retryAt)
-    .limit(erasureBatch.authentication);
-  for (const job of due) await eraseAuthentication(db, job.id, remove);
 }

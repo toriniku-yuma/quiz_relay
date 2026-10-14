@@ -30,9 +30,6 @@ export default defineConfig({
     maxWorkers: 4,
     // D1 migration and 1001-row recovery tests include real storage/RPC work.
     testTimeout: 20000,
-    include:
-      process.env.GAME_CATALOG_LIVE === '1'
-        ? ['tests/catalog.live.ts']
-        : ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts'],
   },
 });
