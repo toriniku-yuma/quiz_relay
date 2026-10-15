@@ -38,7 +38,6 @@ export function resultTrials(
       {
         owner: record.owner,
         matchId: record.matchId,
-        resultId: record.result.id,
         questionId: question.id,
         generation: question.generation,
         band: bands[0],

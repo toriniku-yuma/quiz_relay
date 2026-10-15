@@ -67,7 +67,7 @@ export async function moderationWorkflow(
         !scope ||
         !evidence ||
         evidence.owner !== scope.owner ||
-        evidence.result.id !== input.resultId ||
+        evidence.matchId !== input.matchId ||
         !evidence.players.some((player) => player.id === account.actorId) ||
         !evidence.players.some((player) => player.id === actorId && !player.guest) ||
         actorId === account.actorId
@@ -81,7 +81,7 @@ export async function moderationWorkflow(
           instanceId,
           actorId,
           reporterId: account.actorId,
-          resultId: validId(input.resultId),
+          matchId: validId(input.matchId),
           reason: reasonOf(input.reason),
         }),
       );

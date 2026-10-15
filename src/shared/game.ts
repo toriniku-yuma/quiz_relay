@@ -26,7 +26,6 @@ export type Panel = {
   deadline: number;
 };
 export type Result = {
-  id: string;
   winnerId: string | null;
   reason:
     | 'target_reached'

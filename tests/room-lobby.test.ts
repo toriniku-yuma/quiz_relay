@@ -302,7 +302,6 @@ it('未知の開始応答を再送しても子は1試合。再接続・次試合
       saved.state.phase = 'FINISHED';
       saved.state.startedAt = Date.now() - 1;
       saved.state.result = {
-        id: crypto.randomUUID(),
         finishedAt: Date.now(),
         winnerId: actor(0).id,
         reason: 'exhausted',
@@ -592,7 +591,6 @@ it('500問の持込を保存・開始・DO復帰しても内容を維持する',
       stored.state.phase = 'FINISHED';
       stored.state.startedAt = Date.now() - 1000;
       stored.state.result = {
-        id: crypto.randomUUID(),
         finishedAt: Date.now(),
         winnerId: null,
         reason: 'question_limit',

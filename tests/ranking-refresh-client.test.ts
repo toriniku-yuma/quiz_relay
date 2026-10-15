@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
     game: {
       roomId: 'old-a',
       roomInstanceId: 'instance-a',
-      snapshot: { phase: 'FINISHED', result: { id: 'result-a', storage: 'pending' } },
+      snapshot: { matchId: 'match-a', phase: 'FINISHED', result: { storage: 'pending' } },
     },
     busy: false,
     viewing: false,
@@ -123,9 +123,9 @@ it.each(['ranked', 'casual'] as const)(
     expect(other).toContain('マッチングする');
     expect(other).not.toContain('/history/?instance=instance-a');
     const original = markup('instance-a');
-    expect(original).toContain('/history/?instance=instance-a&amp;result=result-a');
+    expect(original).toContain('/history/?instance=instance-a&amp;result=match-a');
     expect(original).toContain('対戦履歴');
     expect(mocks.match.game.roomId).toBe('old-a');
-    expect(mocks.match.game.snapshot.result.id).toBe('result-a');
+    expect(mocks.match.game.snapshot.matchId).toBe('match-a');
   },
 );

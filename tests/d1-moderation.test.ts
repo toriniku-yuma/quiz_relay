@@ -383,7 +383,7 @@ it('組織一覧は全インスタンスの権限・処分・通報を集計し�
           instanceId: index ? otherInstanceId : instanceId,
           actorId,
           reporterId: reporter.account.actorId,
-          resultId: crypto.randomUUID(),
+          matchId: crypto.randomUUID(),
           reason: '確認対象',
         })),
       ),
@@ -452,7 +452,7 @@ it('組織全体で選んだ通報と異議申し立てを管理者が処理で�
     instanceId: id,
     actorId,
     reporterId: reporter.account.actorId,
-    resultId: crypto.randomUUID(),
+    matchId: crypto.randomUUID(),
     reason: '確認対象',
   }));
   await changeD1(db, async (writes) => {
@@ -497,16 +497,16 @@ it('参加結果に基づく通報を限定し、100件の通報解決と再送�
     .select()
     .from(instances)
     .where(eq(instances.id, instanceId));
-  const resultId = crypto.randomUUID();
+  const matchId = crypto.randomUUID();
   const evidence = {
     owner: instance.owner,
-    result: { id: resultId },
+    matchId,
     players: [{ id: reporter.account.actorId }, { id: actorId }],
   } as ResultRecord;
   const input = workflow('report', {
     instanceId,
     actorId,
-    resultId,
+    matchId,
     reason: '不適切な行為',
   });
   await moderationWorkflow(db, 'reporter', input, evidence);
@@ -515,7 +515,7 @@ it('参加結果に基づく通報を限定し、100件の通報解決と再送�
     moderationWorkflow(
       db,
       playerSubject,
-      workflow('report', { instanceId, actorId, resultId, reason: '自己通報' }),
+      workflow('report', { instanceId, actorId, matchId, reason: '自己通報' }),
       evidence,
     ),
   ).rejects.toThrow('REPORT_NOT_ALLOWED');
@@ -525,7 +525,7 @@ it('参加結果に基づく通報を限定し、100件の通報解決と再送�
     instanceId,
     actorId,
     reporterId: reporter.account.actorId,
-    resultId,
+    matchId,
     reason: '確認対象',
   }));
   await changeD1(db, async (writes) => {

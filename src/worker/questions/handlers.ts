@@ -34,7 +34,7 @@ export const questionsHandler: Handler<AuthEnv> = async (context) => {
               context.env,
               context.get('subject'),
               instanceId,
-              body.resultId,
+              body.matchId,
               body.questionId,
             )
           : undefined,

@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { connectD1 } from '../db/d1.ts';
-import { matchResults, resultPlayers } from '../db/schema.ts';
+import { matches, resultPlayers } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 
 export async function rankingRating(env: Env, owner: string, actorId: string) {
@@ -13,12 +13,12 @@ export async function rankingRating(env: Env, owner: string, actorId: string) {
       ),
     })
     .from(resultPlayers)
-    .innerJoin(matchResults, eq(matchResults.resultId, resultPlayers.resultId))
+    .innerJoin(matches, eq(matches.matchId, resultPlayers.matchId))
     .where(
       and(
-        eq(matchResults.owner, owner),
+        eq(matches.owner, owner),
         eq(resultPlayers.actorId, actorId),
-        sql`json_extract(${matchResults.payload}, '$.kind') = 'ranked'`,
+        sql`json_extract(${matches.payload}, '$.kind') = 'ranked'`,
       ),
     );
   return row.rating;

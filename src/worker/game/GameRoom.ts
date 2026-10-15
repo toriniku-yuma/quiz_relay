@@ -393,7 +393,7 @@ export class GameRoom extends DurableObject<Env> {
     if (room?.scope.id !== instanceId) return null;
     return {
       phase: room.state.phase,
-      resultId: room.state.result?.id ?? null,
+      matchId: room.state.matchId ?? null,
       storage: room.state.result?.storage ?? null,
       errorCode: room.resultErrorCode ?? null,
     };
@@ -996,7 +996,7 @@ export class GameRoom extends DurableObject<Env> {
       if (!(error instanceof ResultConflict)) {
         await this.ctx.blockConcurrencyWhile(async () => {
           const room = await this.readMatchRoom();
-          if (!room || room.state.result?.id !== pending.record.result.id) return;
+          if (!room || room.state.matchId !== pending.record.matchId) return;
           room.resultErrorCode = failureCode(error);
           if (room.resultErrorCode === 'CPU_LIMIT')
             room.resultRetryAt = Date.now() + 60000;
@@ -1010,8 +1010,8 @@ export class GameRoom extends DurableObject<Env> {
       const room = await this.readMatchRoom();
       if (
         !room ||
-        room.state.result?.id !== pending.record.result.id ||
-        room.state.result.storage !== 'pending'
+        room.state.matchId !== pending.record.matchId ||
+        room.state.result?.storage !== 'pending'
       )
         return;
       room.state.result.storage = status;
@@ -1023,7 +1023,7 @@ export class GameRoom extends DurableObject<Env> {
     });
     if (status === 'confirmed')
       this.ctx.waitUntil(
-        dispatchSavedResult(this.env, pending.record.result.id).catch((error) => {
+        dispatchSavedResult(this.env, pending.record.matchId).catch((error) => {
           console.error(
             JSON.stringify({
               event: 'federation_result_dispatch_failed',

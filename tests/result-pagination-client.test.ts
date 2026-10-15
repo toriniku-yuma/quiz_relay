@@ -45,7 +45,7 @@ function render(query: ResultsQuery = { section: 'history' }, guest = false) {
 }
 function entry(id: string): HistoryEntry {
   return {
-    resultId: id,
+    matchId: id,
     finishedAt: '2026-10-01T00:00:00.000Z',
     reason: 'exhausted',
     winnerId: null,
@@ -60,21 +60,21 @@ const page = (
   nextCursor: ResultsOverview['nextCursor'] = null,
 ): ResultsOverview => ({ history: ids.map(entry), ranking: [], nextCursor });
 it('追加取得失敗でも表示とcursorを保持し、同じ読取を再試行して重複を除く', async () => {
-  const cursor = { finishedAt: '2026-10-01T00:00:00.000Z', resultId: 'a' };
+  const cursor = { finishedAt: '2026-10-01T00:00:00.000Z', matchId: 'a' };
   mocks.request
     .mockResolvedValueOnce(page(['a'], cursor))
     .mockRejectedValueOnce(new Error('offline'))
     .mockResolvedValueOnce(page(['a', 'b']));
   await render().refresh();
   await render().loadMore();
-  expect(render().data?.history.map((row) => row.resultId)).toEqual(['a']);
+  expect(render().data?.history.map((row) => row.matchId)).toEqual(['a']);
   expect(render().error).not.toBe('');
   await render().retry();
   expect(mocks.request.mock.calls[1].slice(0, 3)).toEqual(
     mocks.request.mock.calls[2].slice(0, 3),
   );
   expect(mocks.request.mock.calls[1][1]).toEqual({ section: 'history', cursor });
-  expect(render().data?.history.map((row) => row.resultId)).toEqual(['a', 'b']);
+  expect(render().data?.history.map((row) => row.matchId)).toEqual(['a', 'b']);
 });
 it('絞込先の描画後に届いた旧応答を無視し、ゲスト用APIで詳細を読む', async () => {
   let resolve!: (value: ResultsOverview) => void;
@@ -90,7 +90,7 @@ it('絞込先の描画後に届いた旧応答を無視し、ゲスト用APIで�
   await earlier;
   expect(render(nextQuery).data).toBeNull();
   mocks.request.mockResolvedValue(page(['detail']));
-  const detail = { section: 'history' as const, resultId: crypto.randomUUID() };
+  const detail = { section: 'history' as const, matchId: crypto.randomUUID() };
   await render(detail, true).refresh();
   expect(mocks.request).toHaveBeenLastCalledWith(
     API_PATHS.playResults,
@@ -98,5 +98,5 @@ it('絞込先の描画後に届いた旧応答を無視し、ゲスト用APIで�
     'instance-a',
     expect.any(AbortSignal),
   );
-  expect(render(detail, true).data?.history[0].resultId).toBe('detail');
+  expect(render(detail, true).data?.history[0].matchId).toBe('detail');
 });

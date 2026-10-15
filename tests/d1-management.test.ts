@@ -211,14 +211,14 @@ it('参加済みの結果だけを通報でき、操作の再送で通報件数�
         environment,
         subject,
         instance.id,
-        record.result.id,
+        record.matchId,
         'original-test',
       )
     ).text,
   ).toBe(question.text);
   const input = {
     operationId: crypto.randomUUID(),
-    resultId: record.result.id,
+    matchId: record.matchId,
     action: 'question',
     questionId: 'original-test',
     kind: 'defect',
@@ -239,7 +239,7 @@ it('参加済みの結果だけを通報でき、操作の再送で通報件数�
       environment,
       'other',
       instance.id,
-      record.result.id,
+      record.matchId,
       'original-test',
     ),
   ).rejects.toThrow('QUESTION_NOT_FOUND');
@@ -249,7 +249,7 @@ it('参加済みの結果だけを通報でき、操作の再送で通報件数�
       environment,
       subject,
       other.id,
-      record.result.id,
+      record.matchId,
       'original-test',
     ),
   ).rejects.toThrow();
@@ -257,10 +257,10 @@ it('参加済みの結果だけを通報でき、操作の再送で通報件数�
     db,
     instance.owner,
     account.actorId,
-    record.result.id,
+    record.matchId,
     {},
   );
-  expect(investigation.reported?.resultId).toBe(record.result.id);
+  expect(investigation.reported?.matchId).toBe(record.matchId);
 });
 it('保存期限を過ぎた証跡だけを消し、通報の集計件数を残った記録に合わせる', async () => {
   const instance = await target(),

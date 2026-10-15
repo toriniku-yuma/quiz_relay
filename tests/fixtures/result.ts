@@ -25,7 +25,6 @@ export function resultFixture() {
     connected: true,
   }));
   const result: Result = {
-    id: crypto.randomUUID(),
     reason: 'target_reached',
     winnerId: 'a',
     finishedAt: 2000,

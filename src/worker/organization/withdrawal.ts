@@ -85,7 +85,7 @@ export async function recordWithdrawal(
     );
     // Queue this organization's original results once; routine expiry uses the due index.
     writes.push(
-      sql`insert into quiz_game_result_privacy_jobs (result_id,due_at) select result_id,${now} from quiz_game_match_results where owner in (select owner from quiz_game_instances where organization_id=${organization.id}) on conflict(result_id) do update set due_at=min(due_at,excluded.due_at)`,
+      sql`insert into quiz_game_result_privacy_jobs (match_id,due_at) select match_id,${now} from quiz_game_matches where owner in (select owner from quiz_game_instances where organization_id=${organization.id}) on conflict(match_id) do update set due_at=min(due_at,excluded.due_at)`,
     );
     writes.push(
       tx.delete(instanceGrants).where(eq(instanceGrants.actorId, account.actorId)),

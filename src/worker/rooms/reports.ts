@@ -4,7 +4,7 @@ import { contentHash } from '../catalog/hash.ts';
 import { changeD1, readD1 } from '../db/d1.ts';
 import {
   guestSessions,
-  matchResults,
+  matches,
   moderationRequests,
   organizationAccounts,
   resultPlayers,
@@ -75,7 +75,7 @@ export async function report(
   input: Record<string, unknown>,
 ) {
   const operationId = validId(input.operationId),
-    resultId = validId(input.resultId),
+    matchId = validId(input.matchId),
     hash = await contentHash(input),
     { db } = organizationDatabase(env);
   return changeD1(db, async (writes) => {
@@ -91,16 +91,16 @@ export async function report(
     }
     const [row] = await db
       .select({
-        payload: privateResultSQL(matchResults.payload).mapWith(
+        payload: privateResultSQL(matches.payload).mapWith(
           (value) => JSON.parse(value) as ResultRecord,
         ),
       })
-      .from(matchResults)
-      .innerJoin(resultPlayers, eq(resultPlayers.resultId, matchResults.resultId))
+      .from(matches)
+      .innerJoin(resultPlayers, eq(resultPlayers.matchId, matches.matchId))
       .where(
         and(
-          eq(matchResults.resultId, resultId),
-          eq(matchResults.owner, identity.instance.owner),
+          eq(matches.matchId, matchId),
+          eq(matches.owner, identity.instance.owner),
           eq(resultPlayers.actorId, identity.actor.id),
         ),
       );
@@ -149,7 +149,7 @@ export async function report(
           instanceId: identity.instance.id,
           actorId: target.id,
           reporterId: identity.actor.id,
-          resultId,
+          matchId,
           reason: input.reason.trim(),
         }),
       );

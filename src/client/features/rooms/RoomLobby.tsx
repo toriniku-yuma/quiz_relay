@@ -234,12 +234,16 @@ export default function RoomLobby({
         </>
       )}
       {finished &&
+        session.game.snapshot &&
         (foreign ? (
           <a className="font-bold underline" href={foreign.homeHistory}>
             所属元の履歴を確認
           </a>
         ) : (
-          <ResultLinks instanceId={room.instanceId} result={finished} />
+          <ResultLinks
+            instanceId={room.instanceId}
+            matchId={session.game.snapshot.matchId}
+          />
         ))}
     </div>
   );

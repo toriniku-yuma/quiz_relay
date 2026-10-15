@@ -212,10 +212,10 @@ export async function anonymizeWithdrawal(
   return changeD1(db, async (writes) => {
     const [current] = await db.select().from(jobs).where(eq(jobs.id, id));
     const [remaining] = await db
-      .select({ id: resultPrivacyJobs.resultId })
+      .select({ id: resultPrivacyJobs.matchId })
       .from(resultPrivacyJobs)
       .where(
-        sql`${resultPrivacyJobs.dueAt}<=${new Date().toISOString()} and ${resultPrivacyJobs.resultId} in (select result_id from quiz_game_match_results where owner in (select owner from quiz_game_instances where organization_id=${job.organizationId}))`,
+        sql`${resultPrivacyJobs.dueAt}<=${new Date().toISOString()} and ${resultPrivacyJobs.matchId} in (select match_id from quiz_game_matches where owner in (select owner from quiz_game_instances where organization_id=${job.organizationId}))`,
       )
       .limit(1);
     if (!current?.authDeletedAt || remaining) return false;

@@ -9,7 +9,7 @@ import {
   difficultySamples,
   difficultyTrials,
   instances,
-  matchResults,
+  matches,
   questionDifficulty,
   questionSettings,
   questionSubmissions,
@@ -152,16 +152,18 @@ async function target() {
 async function saveRecords(records: ResultRecord[]) {
   const rows = await Promise.all(
     records.map(async (record) => ({
-      resultId: record.result.id,
-      owner: record.owner,
       matchId: record.matchId,
+      owner: record.owner,
+      status: 'confirmed' as const,
+      createdAt: new Date(record.startedAt).toISOString(),
+      startedAt: new Date(record.startedAt).toISOString(),
       finishedAt: new Date(record.result.finishedAt).toISOString(),
       payloadHash: await contentHash(record),
       payload: record,
     })),
   );
   await changeD1(db, async (writes) => {
-    writes.push(rowsD1(matchResults, rows));
+    writes.push(rowsD1(matches, rows));
     appendResultTrials(writes, records);
   });
 }

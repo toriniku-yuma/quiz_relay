@@ -282,19 +282,32 @@ export const competitions = sqliteTable(
   ],
 );
 
-export const matchResults = sqliteTable(
-  'quiz_game_match_results',
+export const matches = sqliteTable(
+  'quiz_game_matches',
   {
-    resultId: text('result_id').primaryKey(),
+    matchId: text('match_id').primaryKey(),
     owner: text().notNull(),
-    matchId: text('match_id').notNull(),
-    finishedAt: text('finished_at').notNull(),
-    payloadHash: text('payload_hash').notNull(),
-    payload: text({ mode: 'json' }).$type<ResultRecord>().notNull(),
+    parentRoomId: text('parent_room_id'),
+    status: text({
+      enum: ['waiting', 'running', 'confirmed', 'invalid', 'conflict', 'cancelled'],
+    }).notNull(),
+    createdAt: text('created_at').notNull(),
+    startedAt: text('started_at'),
+    finishedAt: text('finished_at'),
+    payloadHash: text('payload_hash'),
+    payload: text({ mode: 'json' }).$type<ResultRecord>(),
   },
   (table) => [
-    unique('d1_matchResults_1').on(table.owner, table.matchId),
-    index('d1_matchResults_2').on(table.owner, table.finishedAt),
+    index('matches_finished').on(table.owner, table.finishedAt),
+    index('matches_status').on(table.owner, table.status),
+    check(
+      'match_status',
+      sql`${table.status} IN ('waiting', 'running', 'confirmed', 'invalid', 'conflict', 'cancelled')`,
+    ),
+    check(
+      'match_result_state',
+      sql`(${table.status} IN ('confirmed', 'invalid', 'conflict') AND ${table.payload} IS NOT NULL AND ${table.payloadHash} IS NOT NULL AND ${table.finishedAt} IS NOT NULL) OR (${table.status} IN ('waiting', 'running', 'cancelled') AND ${table.payload} IS NULL AND ${table.payloadHash} IS NULL)`,
+    ),
     check(
       'match_results_hash',
       sql`(length(${table.payloadHash}) = 64 AND ${table.payloadHash} NOT GLOB '*[^0-9a-f]*')`,
@@ -304,9 +317,9 @@ export const matchResults = sqliteTable(
 
 // An erasure permit exists only inside the batch that updates all three originals.
 export const resultPrivacyChanges = sqliteTable('quiz_game_result_privacy_changes', {
-  resultId: text('result_id')
+  matchId: text('match_id')
     .primaryKey()
-    .references(() => matchResults.resultId),
+    .references(() => matches.matchId),
   previousHash: text('previous_hash').notNull(),
   payloadHash: text('payload_hash').notNull(),
   payload: text({ mode: 'json' }).$type<ResultRecord>().notNull(),
@@ -315,15 +328,15 @@ export const resultPrivacyChanges = sqliteTable('quiz_game_result_privacy_change
 export const resultPlayers = sqliteTable(
   'quiz_game_result_players',
   {
-    resultId: text('result_id')
+    matchId: text('match_id')
       .notNull()
-      .references(() => matchResults.resultId),
+      .references(() => matches.matchId),
     actorId: text('actor_id').notNull(),
     name: text().notNull(),
     ratingDelta: integer('rating_delta').notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.resultId, table.actorId] }),
+    primaryKey({ columns: [table.matchId, table.actorId] }),
     index('d1_resultPlayers_1').on(table.actorId),
     check('result_players_delta', sql`${table.ratingDelta} IN (-20, 0, 20)`),
   ],
@@ -333,9 +346,9 @@ export const resultPlayers = sqliteTable(
 export const resultOutbox = sqliteTable(
   'quiz_game_result_outbox',
   {
-    resultId: text('result_id')
+    matchId: text('match_id')
       .primaryKey()
-      .references(() => matchResults.resultId),
+      .references(() => matches.matchId),
     payloadHash: text('payload_hash').notNull(),
     payload: text({ mode: 'json' }).$type<ResultRecord>().notNull(),
   },
@@ -899,11 +912,10 @@ export const difficultyTrials = sqliteTable(
   'quiz_game_difficulty_trials',
   {
     owner: text().notNull(),
-    matchId: text('match_id').notNull(),
     questionId: text('question_id').notNull(),
-    resultId: text('result_id')
+    matchId: text('match_id')
       .notNull()
-      .references(() => matchResults.resultId, { onDelete: 'cascade' }),
+      .references(() => matches.matchId, { onDelete: 'cascade' }),
     generation: text().notNull(),
     band: integer().notNull(),
     players: integer().notNull(),
@@ -914,7 +926,7 @@ export const difficultyTrials = sqliteTable(
   },
   (table) => [
     primaryKey({ columns: [table.owner, table.matchId, table.questionId] }),
-    index('difficulty_trials_result').on(table.resultId),
+    index('difficulty_trials_result').on(table.matchId),
     index('difficulty_trials_generation').on(table.owner, table.generation),
   ],
 );
@@ -975,12 +987,12 @@ export const maintenanceCheckpoints = sqliteTable('quiz_maintenance_checkpoints'
 export const resultPrivacyJobs = sqliteTable(
   'quiz_game_result_privacy_jobs',
   {
-    resultId: text('result_id')
+    matchId: text('match_id')
       .primaryKey()
-      .references(() => matchResults.resultId, { onDelete: 'cascade' }),
+      .references(() => matches.matchId, { onDelete: 'cascade' }),
     dueAt: text('due_at').notNull(),
   },
-  (table) => [index('result_privacy_due').on(table.dueAt, table.resultId)],
+  (table) => [index('result_privacy_due').on(table.dueAt, table.matchId)],
 );
 
 export const userReports = sqliteTable(
@@ -997,7 +1009,7 @@ export const userReports = sqliteTable(
       .notNull()
       .references(() => organizationAccounts.actorId),
     reporterId: text('reporter_id').notNull(),
-    resultId: text('result_id').notNull(),
+    matchId: text('match_id').notNull(),
     reason: text().notNull(),
     createdAt: text('created_at')
       .notNull()
@@ -1529,7 +1541,7 @@ export const federationResultDeliveries = sqliteTable(
   'quiz_federation_result_deliveries',
   {
     eventId: text('event_id').primaryKey(),
-    resultId: text('result_id').notNull(),
+    matchId: text('match_id').notNull(),
     instanceId: text('instance_id').notNull(),
     peerOrigin: text('peer_origin')
       .notNull()
@@ -1552,7 +1564,7 @@ export const federationResultDeliveries = sqliteTable(
       table.quarantined,
       table.nextAttemptAt,
     ),
-    unique().on(table.resultId, table.peerOrigin, table.sourceActorId),
+    unique().on(table.matchId, table.peerOrigin, table.sourceActorId),
   ],
 );
 export const federationResultInbox = sqliteTable(

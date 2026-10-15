@@ -17,16 +17,16 @@ import { useResults } from './useResults';
 export default function ResultsPanel({
   section = 'history',
   instanceId = '',
-  resultId = '',
+  matchId = '',
 }: {
   section?: 'history' | 'ranking';
   instanceId?: string;
-  resultId?: string;
+  matchId?: string;
 }) {
   const { auth, organization, guest, url } = useApp();
   const kind = url.searchParams.get('kind') ?? '';
-  const query: ResultsQuery = resultId
-    ? { section: 'history', resultId }
+  const query: ResultsQuery = matchId
+    ? { section: 'history', matchId }
     : {
         section,
         ...(section === 'history' && ['ranked', 'casual', 'room'].includes(kind)
@@ -50,13 +50,13 @@ export default function ResultsPanel({
       title={
         section === 'ranking'
           ? 'ランキング（上位100人）'
-          : resultId
+          : matchId
             ? '試合の詳細'
             : '対戦履歴'
       }
     >
       <div className="my-4 flex flex-wrap items-center gap-4">
-        {resultId ? (
+        {matchId ? (
           <a className="underline" href={historyHref}>
             対戦履歴へ戻る
           </a>
@@ -118,7 +118,7 @@ export default function ResultsPanel({
             <p className="mt-3">保存済みのランクマッチはありません。</p>
           )}
         </>
-      ) : resultId ? (
+      ) : matchId ? (
         entry && (
           <>
             <p className="my-3">
@@ -153,7 +153,7 @@ export default function ResultsPanel({
                         input={{
                           action: 'user',
                           actorId: player.id,
-                          resultId: entry.resultId,
+                          matchId: entry.matchId,
                         }}
                       />
                     )}
@@ -183,7 +183,7 @@ export default function ResultsPanel({
                           input={{
                             action: 'question',
                             questionId: question.id,
-                            resultId: entry.resultId,
+                            matchId: entry.matchId,
                           }}
                         />
                       )}
@@ -213,7 +213,7 @@ export default function ResultsPanel({
             busy={results.busy}
           >
             {results.data?.history.map((match) => (
-              <tr key={match.resultId}>
+              <tr key={match.matchId}>
                 <td>{new Date(match.finishedAt).toLocaleString()}</td>
                 <td>{resultKinds[match.kind ?? 'ranked']}</td>
                 <td>{resultOutcomes[match.outcome]}</td>
@@ -227,7 +227,7 @@ export default function ResultsPanel({
                 <td>
                   <a
                     className="underline"
-                    href={`${historyHref}&result=${match.resultId}`}
+                    href={`${historyHref}&result=${match.matchId}`}
                   >
                     詳細
                   </a>
@@ -244,7 +244,7 @@ export default function ResultsPanel({
       )}
       {results.data && !results.data.history.length && section === 'history' && (
         <p className="mt-3">
-          {resultId
+          {matchId
             ? 'この試合の詳細を表示できません。保存中の場合は更新してください。'
             : '保存済みの対戦はありません。'}
         </p>

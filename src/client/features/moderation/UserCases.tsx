@@ -135,7 +135,7 @@ export default function UserCases({
                       / {row.sanction.reason}
                     </p>
                   )}
-                  {'resultId' in row && (
+                  {'matchId' in row && (
                     <div className="grid gap-2">
                       <p>
                         {scopes.find((scope) => scope.id === row.instanceId)?.name ??

@@ -219,7 +219,7 @@ export async function receiveControlEvent(
             .where(
               sql`${federationSessions.reservationId} in (select ${federationReservations.id} from ${federationReservations} where ${federationReservations.actorId}=${actor.actorId})`,
             ),
-          sql`insert into quiz_game_result_privacy_jobs (result_id,due_at) select result_id,${retiredAt} from quiz_game_result_players where actor_id=${actor.actorId} on conflict(result_id) do update set due_at=min(due_at,excluded.due_at)`,
+          sql`insert into quiz_game_result_privacy_jobs (match_id,due_at) select match_id,${retiredAt} from quiz_game_result_players where actor_id=${actor.actorId} on conflict(match_id) do update set due_at=min(due_at,excluded.due_at)`,
         );
         await planControlEvent(
           db,

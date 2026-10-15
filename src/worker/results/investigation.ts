@@ -3,7 +3,7 @@ import type { Investigation } from '../../shared/investigation.ts';
 import { paginationInput } from '../../shared/pagination.ts';
 import { compareValues, investigationSortKeys, sortInput } from '../../shared/sorting.ts';
 import { type Database, readD1 } from '../db/d1.ts';
-import { matchResults, resultPlayers } from '../db/schema.ts';
+import { matches, resultPlayers } from '../db/schema.ts';
 import { privateResultSQL } from './privacy.ts';
 import type { ResultRecord } from './record.ts';
 
@@ -14,7 +14,7 @@ export async function readInvestigation(
   db: Database,
   owner: string,
   actorId: string,
-  resultId: string | null,
+  matchId: string | null,
   input: Record<string, unknown>,
 ): Promise<Investigation> {
   const { page: requested, pageSize } = paginationInput(input);
@@ -24,36 +24,36 @@ export async function readInvestigation(
     throw new Error('INVALID_SAMPLE');
   return readD1(db, async () => {
     const tx = db;
-    const [anchor] = resultId
+    const [anchor] = matchId
       ? await tx
           .select({
-            payload: privateResultSQL(matchResults.payload).mapWith(
+            payload: privateResultSQL(matches.payload).mapWith(
               (value) => JSON.parse(value) as ResultRecord,
             ),
-            finishedAt: matchResults.finishedAt,
+            finishedAt: matches.finishedAt,
           })
-          .from(matchResults)
-          .where(and(eq(matchResults.owner, owner), eq(matchResults.resultId, resultId)))
+          .from(matches)
+          .where(and(eq(matches.owner, owner), eq(matches.matchId, matchId)))
       : [];
-    if (resultId && !anchor?.payload.players.some((player) => player.id === actorId))
+    if (matchId && !anchor?.payload.players.some((player) => player.id === actorId))
       throw new Error('RESULT_NOT_FOUND');
     // ponytail: 原本を直接集計。蓄積量で遅くなったらDB内の同一集計へ移す。
     const all = await tx
       .select({
-        payload: privateResultSQL(matchResults.payload).mapWith(
+        payload: privateResultSQL(matches.payload).mapWith(
           (value) => JSON.parse(value) as ResultRecord,
         ),
       })
-      .from(matchResults)
-      .innerJoin(resultPlayers, eq(resultPlayers.resultId, matchResults.resultId))
+      .from(matches)
+      .innerJoin(resultPlayers, eq(resultPlayers.matchId, matches.matchId))
       .where(
         and(
-          eq(matchResults.owner, owner),
+          eq(matches.owner, owner),
           eq(resultPlayers.actorId, actorId),
-          anchor ? lt(matchResults.finishedAt, anchor.finishedAt) : undefined,
+          anchor?.finishedAt ? lt(matches.finishedAt, anchor.finishedAt) : undefined,
         ),
       )
-      .orderBy(desc(matchResults.finishedAt), desc(matchResults.resultId));
+      .orderBy(desc(matches.finishedAt), desc(matches.matchId));
     const page = Math.min(requested, Math.max(1, Math.ceil(all.length / pageSize)));
     return {
       reported: anchor ? resultStatistics(anchor.payload, actorId) : null,
@@ -65,7 +65,7 @@ export async function readInvestigation(
               leftMatch[sorting.sort as (typeof investigationSortKeys)[number]],
               rightMatch[sorting.sort as (typeof investigationSortKeys)[number]],
               sorting.direction,
-            ) || rightMatch.resultId.localeCompare(leftMatch.resultId),
+            ) || rightMatch.matchId.localeCompare(leftMatch.matchId),
         )
         .slice((page - 1) * pageSize, page * pageSize),
       pagination: { page, pageSize, total: all.length },

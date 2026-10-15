@@ -85,7 +85,7 @@ export default function Investigation({
           >
             {[...(data.reported ? [data.reported] : []), ...data.rows].map(
               (result, i) => (
-                <tr key={result.resultId}>
+                <tr key={result.matchId}>
                   <td>
                     {data.reported && i === 0 && <strong>通報対象 / </strong>}
                     {new Date(result.finishedAt).toLocaleString()}

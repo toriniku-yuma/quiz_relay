@@ -4,7 +4,7 @@ import { beforeAll, expect, it, vi } from 'vitest';
 import type { OrganizationOverview } from '../src/shared/organization';
 import type { ResultsOverview } from '../src/shared/results';
 import { changeD1, connectD1 } from '../src/worker/db/d1';
-import { instances, matchResults, resultOutbox } from '../src/worker/db/schema';
+import { instances, matches, resultOutbox } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
 import { readStored, writeStored } from '../src/worker/game/storage';
 import app from '../src/worker/index';
@@ -104,26 +104,26 @@ it('通常APIで作った組織に、対戦DOがD1へ保存した結果と本人
     ).toBe('confirmed');
     await object.alarm();
   });
-  const resultId = state.result.id;
+  const matchId = state.matchId;
   expect(
-    await db.select().from(matchResults).where(eq(matchResults.resultId, resultId)),
+    await db.select().from(matches).where(eq(matches.matchId, matchId)),
   ).toHaveLength(1);
   expect(
-    await db.select().from(resultOutbox).where(eq(resultOutbox.resultId, resultId)),
+    await db.select().from(resultOutbox).where(eq(resultOutbox.matchId, matchId)),
   ).toHaveLength(1);
   const path = `/api/results/overview?instance=${instance.id}`;
   const history = await (
     await request(path, { section: 'history' })
   ).json<ResultsOverview>();
   expect(history.history).toHaveLength(1);
-  expect(history.history[0]).toMatchObject({ resultId, ratingDelta: 20, outcome: 'win' });
+  expect(history.history[0]).toMatchObject({ matchId, ratingDelta: 20, outcome: 'win' });
   expect(JSON.stringify(history)).not.toContain(state.questions[0].text);
   const ranking = await (
     await request(path, { section: 'self' })
   ).json<ResultsOverview>();
   expect(ranking.self).toEqual({ rank: 1, rating: 1020 });
   const stranger = await (
-    await request(path, { section: 'history', resultId }, 'runtime-stranger')
+    await request(path, { section: 'history', matchId }, 'runtime-stranger')
   ).json<ResultsOverview>();
   expect(stranger.history).toEqual([]);
 });

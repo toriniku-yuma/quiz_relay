@@ -18,8 +18,8 @@ import {
   instanceRooms,
   instances,
   instanceDeletions as jobs,
+  matches,
   matchmakingSettings,
-  matchResults,
   moderationEvents,
   moderationRequests,
   moderationSanctions,
@@ -103,13 +103,13 @@ async function eraseStoredInstance(db: Database, operationId: string) {
       federationMetadata,
     ])
       writes.push(db.delete(table).where(eq(table.instanceId, job.instanceId)));
-    const resultIds = sql`select ${matchResults.resultId} from ${matchResults} where ${matchResults.owner}=${job.owner}`;
+    const matchIds = sql`select ${matches.matchId} from ${matches} where ${matches.owner}=${job.owner}`;
     for (const table of [difficultyActors, difficultySamples, difficultyTrials])
       writes.push(db.delete(table).where(eq(table.owner, job.owner)));
     writes.push(
-      db.delete(resultOutbox).where(sql`${resultOutbox.resultId} in (${resultIds})`),
-      db.delete(resultPlayers).where(sql`${resultPlayers.resultId} in (${resultIds})`),
-      db.delete(matchResults).where(eq(matchResults.owner, job.owner)),
+      db.delete(resultOutbox).where(sql`${resultOutbox.matchId} in (${matchIds})`),
+      db.delete(resultPlayers).where(sql`${resultPlayers.matchId} in (${matchIds})`),
+      db.delete(matches).where(eq(matches.owner, job.owner)),
     );
     for (const table of [
       matchmakingSettings,

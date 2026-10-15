@@ -140,7 +140,7 @@ export default function CasualLobby({
         </p>
       )}
       {game.snapshot?.result && (
-        <ResultLinks instanceId={game.roomInstanceId} result={game.snapshot.result} />
+        <ResultLinks instanceId={game.roomInstanceId} matchId={game.snapshot.matchId} />
       )}
       {namePrompt && guest && (
         <GuestName

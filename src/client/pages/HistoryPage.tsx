@@ -32,7 +32,7 @@ export default function HistoryPage() {
       ) : external ? null : instanceId ? (
         <ResultsPanel
           instanceId={instanceId}
-          resultId={url.searchParams.get('result') ?? ''}
+          matchId={url.searchParams.get('result') ?? ''}
         />
       ) : (
         <a className="underline" href={GAME_PATH}>

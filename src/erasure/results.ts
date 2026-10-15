@@ -1,20 +1,20 @@
 import { and, eq, lte, sql } from 'drizzle-orm';
 import { changeD1, type Database } from '../worker/db/d1.ts';
-import { matchResults, resultPrivacyJobs } from '../worker/db/schema.ts';
+import { matches, resultPrivacyJobs } from '../worker/db/schema.ts';
 import { eraseResult } from '../worker/results/database.ts';
 import { privateResultSQL } from '../worker/results/privacy.ts';
 
 function resultPrivacyPending() {
-  const projection = privateResultSQL(matchResults.payload);
-  return sql`exists(select fullkey, type, atom from json_tree(${matchResults.payload}) except select fullkey, type, atom from json_tree(${projection})) or exists(select fullkey, type, atom from json_tree(${projection}) except select fullkey, type, atom from json_tree(${matchResults.payload}))`;
+  const projection = privateResultSQL(matches.payload);
+  return sql`exists(select fullkey, type, atom from json_tree(${matches.payload}) except select fullkey, type, atom from json_tree(${projection})) or exists(select fullkey, type, atom from json_tree(${projection}) except select fullkey, type, atom from json_tree(${matches.payload}))`;
 }
 
 export async function eraseResultNames(db: Database) {
   const rows = await db
-    .select({ id: resultPrivacyJobs.resultId, dueAt: resultPrivacyJobs.dueAt })
+    .select({ id: resultPrivacyJobs.matchId, dueAt: resultPrivacyJobs.dueAt })
     .from(resultPrivacyJobs)
     .where(lte(resultPrivacyJobs.dueAt, new Date().toISOString()))
-    .orderBy(resultPrivacyJobs.dueAt, resultPrivacyJobs.resultId)
+    .orderBy(resultPrivacyJobs.dueAt, resultPrivacyJobs.matchId)
     .limit(1);
   for (const row of rows) {
     await eraseResult(db, row.id);
@@ -22,17 +22,14 @@ export async function eraseResultNames(db: Database) {
       const [pending] = await db
         .select()
         .from(resultPrivacyJobs)
-        .where(eq(resultPrivacyJobs.resultId, row.id));
+        .where(eq(resultPrivacyJobs.matchId, row.id));
       if (!pending || pending.dueAt !== row.dueAt) return;
-      const [result] = await db
-        .select()
-        .from(matchResults)
-        .where(eq(matchResults.resultId, row.id));
+      const [result] = await db.select().from(matches).where(eq(matches.matchId, row.id));
       // A concurrent withdrawal can require a fresh projection even if the receipt time matches.
       const [changed] = await db
-        .select({ id: matchResults.resultId })
-        .from(matchResults)
-        .where(and(eq(matchResults.resultId, row.id), resultPrivacyPending()))
+        .select({ id: matches.matchId })
+        .from(matches)
+        .where(and(eq(matches.matchId, row.id), resultPrivacyPending()))
         .limit(1);
       if (changed) return;
       const now = Date.now(),
@@ -53,8 +50,8 @@ export async function eraseResultNames(db: Database) {
           ? db
               .update(resultPrivacyJobs)
               .set({ dueAt: new Date(next).toISOString() })
-              .where(eq(resultPrivacyJobs.resultId, row.id))
-          : db.delete(resultPrivacyJobs).where(eq(resultPrivacyJobs.resultId, row.id)),
+              .where(eq(resultPrivacyJobs.matchId, row.id))
+          : db.delete(resultPrivacyJobs).where(eq(resultPrivacyJobs.matchId, row.id)),
       );
     });
   }

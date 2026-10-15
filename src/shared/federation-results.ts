@@ -1,7 +1,6 @@
 export type FederatedResult = {
   version: 1;
   eventId: string;
-  resultId: string;
   matchId: string;
   reservationId: string;
   hostInstanceId: string;

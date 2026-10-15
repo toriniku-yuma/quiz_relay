@@ -107,7 +107,6 @@ it('全員切断で全員減少。一時切断から期限前に復帰したら�
   expect(state.reconnect).toBeNull();
   expect(
     makeResultRecord(state, {
-      id: crypto.randomUUID(),
       winnerId: 'a',
       reason: 'target_reached',
       finishedAt: deadline,

@@ -29,7 +29,7 @@ import {
   questionDifficulty as difficulty,
   questionSubmissionEvents as events,
   federationQuestionLinks,
-  matchResults,
+  matches,
   questionNotifications as notifications,
   organizationAccounts,
   questionVersions,
@@ -276,19 +276,19 @@ async function readQuestionOverview(
   ) {
     const reported = new Set(reviewCases.map((reviewCase) => reviewCase.questionId));
     const originals = await db
-      .select({ payload: matchResults.payload })
-      .from(matchResults)
+      .select({ payload: matches.payload })
+      .from(matches)
       .where(
         and(
-          eq(matchResults.owner, ctx.instance.owner),
-          sql`${matchResults.finishedAt} > strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')`,
-          sql`json_extract(${matchResults.payload},'$.definition.original')=1`,
-          sql`exists(select 1 from json_each(${matchResults.payload},'$.completedQuestions') question join json_each(${JSON.stringify([...reported])}) reported on reported.value=json_extract(question.value,'$.id'))`,
+          eq(matches.owner, ctx.instance.owner),
+          sql`${matches.finishedAt} > strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')`,
+          sql`json_extract(${matches.payload},'$.definition.original')=1`,
+          sql`exists(select 1 from json_each(${matches.payload},'$.completedQuestions') question join json_each(${JSON.stringify([...reported])}) reported on reported.value=json_extract(question.value,'$.id'))`,
         ),
       );
     for (const { payload: record } of originals) {
       if (
-        !record.definition.original ||
+        !record?.definition.original ||
         Date.now() - record.result.finishedAt >= 30 * 86400000
       )
         continue;

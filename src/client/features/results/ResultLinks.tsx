@@ -1,13 +1,12 @@
-import type { Result } from '../../../shared/game';
 import { useApp } from '../../app/context';
 import { HISTORY_PATH } from '../../app/paths';
 
 export default function ResultLinks({
   instanceId,
-  result,
+  matchId,
 }: {
   instanceId: string;
-  result: Result;
+  matchId: string;
 }) {
   const { auth, url } = useApp();
   if ((url.searchParams.get('instance') ?? '') !== instanceId) return null;
@@ -16,7 +15,7 @@ export default function ResultLinks({
   const href = `${HISTORY_PATH}?${params}`;
   return (
     <div className="my-4 flex flex-wrap gap-4">
-      <a className="underline" href={`${href}&result=${result.id}`}>
+      <a className="underline" href={`${href}&result=${matchId}`}>
         試合の詳細
       </a>
       <a className="underline" href={href}>

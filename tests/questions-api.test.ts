@@ -84,7 +84,7 @@ it('入力された他人のsubjectや権限を認証情報として使わない
 it('通報では本人の出題済み記録の検証結果だけを渡す', async () => {
   const body = {
     operation: 'report',
-    resultId: 'result',
+    matchId: 'result',
     questionId: 'observed',
     observedQuestion: { id: 'fake' },
   };

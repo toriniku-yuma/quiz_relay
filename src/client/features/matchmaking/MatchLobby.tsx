@@ -37,7 +37,7 @@ export default function MatchLobby({
   const playing = !!game.snapshot && game.snapshot.phase !== 'WAITING' && !finished;
   const retained = match.busy || (!!roomId && !finished);
   const confirmedResultId =
-    game.snapshot?.result?.storage === 'confirmed' ? game.snapshot.result.id : undefined;
+    game.snapshot?.result?.storage === 'confirmed' ? game.snapshot.matchId : undefined;
   useEffect(() => {
     onStatus?.({
       instanceId: game.roomInstanceId,
@@ -168,7 +168,7 @@ export default function MatchLobby({
         </Modal>
       )}
       {game.snapshot?.result && (
-        <ResultLinks instanceId={game.roomInstanceId} result={game.snapshot.result} />
+        <ResultLinks instanceId={game.roomInstanceId} matchId={game.snapshot.matchId} />
       )}
       <Button
         className="mt-5"

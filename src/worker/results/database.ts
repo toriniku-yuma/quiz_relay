@@ -1,9 +1,9 @@
 import canonicalize from 'canonicalize';
-import { and, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { contentHash } from '../catalog/hash.ts';
 import { changeD1, changeD1Batch, connectD1, type Database } from '../db/d1.ts';
 import {
-  matchResults,
+  matches,
   resultOutbox,
   resultPlayers,
   resultPrivacyChanges,
@@ -28,15 +28,12 @@ function playerRows(record: ResultRecord) {
 }
 
 async function originals(db: Database, id: string) {
-  const [result] = await db
-    .select()
-    .from(matchResults)
-    .where(eq(matchResults.resultId, id));
-  if (!result) return;
+  const [result] = await db.select().from(matches).where(eq(matches.matchId, id));
+  if (!result?.payload) return;
   const [outbox] = await db
     .select()
     .from(resultOutbox)
-    .where(eq(resultOutbox.resultId, id));
+    .where(eq(resultOutbox.matchId, id));
   const players = await db
     .select({
       actorId: resultPlayers.actorId,
@@ -44,8 +41,9 @@ async function originals(db: Database, id: string) {
       ratingDelta: resultPlayers.ratingDelta,
     })
     .from(resultPlayers)
-    .where(eq(resultPlayers.resultId, id));
+    .where(eq(resultPlayers.matchId, id));
   if (
+    !result.payloadHash ||
     !outbox ||
     result.payloadHash !== (await contentHash(result.payload)) ||
     outbox.payloadHash !== (await contentHash(outbox.payload)) ||
@@ -56,11 +54,29 @@ async function originals(db: Database, id: string) {
   ) {
     throw new ResultConflict();
   }
-  return { result, outbox };
+  return {
+    result: { ...result, payload: result.payload, payloadHash: result.payloadHash },
+    outbox,
+  };
 }
 
 export async function commitD1Result(binding: D1Database, source: ResultRecord) {
-  return commitResult(connectD1(binding), source);
+  const db = connectD1(binding);
+  try {
+    return await commitResult(db, source);
+  } catch (error) {
+    if (!(error instanceof ResultConflict)) throw error;
+    await changeD1(db, async (writes) => {
+      writes.push(
+        db
+          .update(matches)
+          .set({ status: 'conflict' })
+          .where(eq(matches.matchId, source.matchId)),
+      );
+    });
+    console.error('RESULT_CONFLICT', source.matchId, JSON.stringify(source));
+    throw error;
+  }
 }
 
 export async function saveResult(env: Env, owner: string, record: ResultRecord) {
@@ -82,8 +98,9 @@ async function commitResult(db: Database, source: ResultRecord) {
       canonicalize(await privateResult(db, source)) as string,
     ) as ResultRecord;
     const hash = await contentHash(record);
-    const existing = await originals(db, record.result.id);
+    const existing = await originals(db, record.matchId);
     if (existing) {
+      if (existing.result.status === 'conflict') throw new ResultConflict();
       const [saved, delivered] = await Promise.all([
         privateResult(db, existing.result.payload),
         privateResult(db, existing.outbox.payload),
@@ -95,29 +112,25 @@ async function commitResult(db: Database, source: ResultRecord) {
         throw new ResultConflict();
       return;
     }
-    const [sameMatch] = await db
-      .select({ id: matchResults.resultId })
-      .from(matchResults)
-      .where(
-        and(
-          eq(matchResults.owner, record.owner),
-          eq(matchResults.matchId, record.matchId),
-        ),
-      )
-      .limit(1);
-    if (sameMatch) throw new ResultConflict();
     writes.push(
-      db.insert(matchResults).values({
-        resultId: record.result.id,
-        owner: record.owner,
+      db.insert(matches).values({
         matchId: record.matchId,
+        owner: record.owner,
+        parentRoomId: record.parentRoomId,
+        status:
+          record.result.reason === 'connections' ||
+          record.result.reason === 'disqualifications'
+            ? 'invalid'
+            : 'confirmed',
+        createdAt: new Date(record.startedAt).toISOString(),
+        startedAt: new Date(record.startedAt).toISOString(),
         finishedAt: new Date(record.result.finishedAt).toISOString(),
         payloadHash: hash,
         payload: record,
       }),
       db.insert(resultPlayers).values(
         record.players.map((player) => ({
-          resultId: record.result.id,
+          matchId: record.matchId,
           actorId: player.id,
           name: player.name,
           ratingDelta: player.ratingDelta,
@@ -125,7 +138,7 @@ async function commitResult(db: Database, source: ResultRecord) {
       ),
       db
         .insert(resultOutbox)
-        .values({ resultId: record.result.id, payloadHash: hash, payload: record }),
+        .values({ matchId: record.matchId, payloadHash: hash, payload: record }),
     );
     appendResultTrials(writes, [record]);
     await planResultDeliveries(db, writes, record);
@@ -150,29 +163,26 @@ export async function eraseResult(db: Database, id: string) {
     const payloadHash = await contentHash(payload);
     writes.push(
       db.insert(resultPrivacyChanges).values({
-        resultId: id,
+        matchId: id,
         previousHash: existing.result.payloadHash,
         payloadHash,
         payload,
       }),
-      db
-        .update(matchResults)
-        .set({ payload, payloadHash })
-        .where(eq(matchResults.resultId, id)),
+      db.update(matches).set({ payload, payloadHash }).where(eq(matches.matchId, id)),
       db
         .update(resultOutbox)
         .set({ payload, payloadHash })
-        .where(eq(resultOutbox.resultId, id)),
+        .where(eq(resultOutbox.matchId, id)),
       db
         .update(resultPlayers)
         .set({
           name: sql`(select json_extract(player.value, '$.name')
         from ${resultPrivacyChanges}, json_each(${resultPrivacyChanges.payload}, '$.players') player
-        where ${resultPrivacyChanges.resultId} = ${resultPlayers.resultId}
+        where ${resultPrivacyChanges.matchId} = ${resultPlayers.matchId}
           and json_extract(player.value, '$.id') = ${resultPlayers.actorId})`,
         })
-        .where(eq(resultPlayers.resultId, id)),
-      db.delete(resultPrivacyChanges).where(eq(resultPrivacyChanges.resultId, id)),
+        .where(eq(resultPlayers.matchId, id)),
+      db.delete(resultPrivacyChanges).where(eq(resultPrivacyChanges.matchId, id)),
     );
     return true;
   });

@@ -61,7 +61,6 @@ export async function planResultDeliveries(
       payload: FederatedResult = {
         version: 1,
         eventId,
-        resultId: record.result.id,
         matchId: record.matchId,
         reservationId: row.id,
         hostInstanceId: instance.id,
@@ -105,7 +104,7 @@ export async function planResultDeliveries(
       };
     deliveries.push({
       eventId,
-      resultId: record.result.id,
+      matchId: record.matchId,
       instanceId: instance.id,
       peerOrigin: row.peerOrigin,
       sourceActorId: row.sourceActorId,
@@ -121,7 +120,7 @@ function resultEvent(value: unknown): FederatedResult {
   const result = value as FederatedResult;
   if (
     Object.keys(result).sort().join(',') !==
-      'definition,eventId,finishedAt,hostInstanceId,hostInstanceName,kind,matchId,players,reason,reservationId,resultId,selfId,sourceActorId,sourceOrganizationId,startedAt,version,winnerId' ||
+      'definition,eventId,finishedAt,hostInstanceId,hostInstanceName,kind,matchId,players,reason,reservationId,selfId,sourceActorId,sourceOrganizationId,startedAt,version,winnerId' ||
     result.version !== 1 ||
     !/^[a-f0-9]{64}$/.test(result.sourceActorId) ||
     !/^[a-f0-9]{64}$/.test(result.selfId) ||
@@ -147,7 +146,6 @@ function resultEvent(value: unknown): FederatedResult {
     throw new OrganizationError('INVALID_RESULT_EVENT', 400);
   for (const id of [
     result.eventId,
-    result.resultId,
     result.matchId,
     result.reservationId,
     result.hostInstanceId,
@@ -450,23 +448,23 @@ export async function hostResultReview(env: Env, peerOrigin: string, value: unkn
     !value ||
     typeof value !== 'object' ||
     Array.isArray(value) ||
-    Object.keys(value).sort().join(',') !== 'resultId,sourceActorId,sourceOrganizationId'
+    Object.keys(value).sort().join(',') !== 'matchId,sourceActorId,sourceOrganizationId'
   )
     throw new OrganizationError('INVALID_RESULT_REVIEW', 400);
   const input = value as {
-      resultId: string;
+      matchId: string;
       sourceActorId: string;
       sourceOrganizationId: string;
     },
     db = federationDatabase(env);
-  validId(input.resultId);
+  validId(input.matchId);
   validId(input.sourceOrganizationId);
   const [delivery] = await db
     .select()
     .from(federationResultDeliveries)
     .where(
       and(
-        eq(federationResultDeliveries.resultId, input.resultId),
+        eq(federationResultDeliveries.matchId, input.matchId),
         eq(federationResultDeliveries.peerOrigin, peerOrigin),
         eq(federationResultDeliveries.sourceActorId, input.sourceActorId),
         sql`json_extract(${federationResultDeliveries.payload}, '$.sourceOrganizationId')=${input.sourceOrganizationId}`,
@@ -479,7 +477,7 @@ export async function hostResultReview(env: Env, peerOrigin: string, value: unkn
     throw new OrganizationError('RESULT_REVIEW_UNAVAILABLE', 404);
   const result = await readResults(db, instance.owner, delivery.payload.selfId, [], {
     section: 'history',
-    resultId: input.resultId,
+    matchId: input.matchId,
   });
   if (!result.history.length)
     throw new OrganizationError('RESULT_REVIEW_UNAVAILABLE', 404);
@@ -523,7 +521,7 @@ export async function reviewForeignResult(
       'event',
       'event.receipt',
       {
-        resultId: row.payload.resultId,
+        matchId: row.payload.matchId,
         sourceActorId: row.actorId,
         sourceOrganizationId: row.sourceOrganizationId,
       },
@@ -570,13 +568,13 @@ export async function reviewForeignResult(
     throw new OrganizationError('INVALID_RESULT_REVIEW', 503);
   return body as unknown as { questions: NonNullable<HistoryEntry['questions']> };
 }
-export async function dispatchSavedResult(env: Env, resultId: string) {
+export async function dispatchSavedResult(env: Env, matchId: string) {
   // Deployments without federation never create result deliveries.
   if (!federationEnabled(env)) return;
   const db = federationDatabase(env),
     erasure = env.ACCOUNT_ERASURE;
   if (!erasure) throw new OrganizationError('FEDERATION_NOT_CONFIGURED', 503);
-  for (const job of await dueResultDeliveries(db, Date.now(), resultId)) {
+  for (const job of await dueResultDeliveries(db, Date.now(), matchId)) {
     const response = await erasure.fetch('https://account-erasure.internal/maintenance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -586,7 +584,7 @@ export async function dispatchSavedResult(env: Env, resultId: string) {
     if (!response.ok) throw new OrganizationError('FEDERATION_RESULT_UNAVAILABLE', 503);
   }
 }
-export async function dueResultDeliveries(db: Database, now: number, resultId?: string) {
+export async function dueResultDeliveries(db: Database, now: number, matchId?: string) {
   return db
     .select({ eventId: federationResultDeliveries.eventId })
     .from(federationResultDeliveries)
@@ -596,7 +594,7 @@ export async function dueResultDeliveries(db: Database, now: number, resultId?: 
         eq(federationResultDeliveries.quarantined, false),
         lte(federationResultDeliveries.nextAttemptAt, now),
         lte(federationResultDeliveries.leaseUntil, now),
-        resultId ? eq(federationResultDeliveries.resultId, resultId) : undefined,
+        matchId ? eq(federationResultDeliveries.matchId, matchId) : undefined,
       ),
     )
     .orderBy(federationResultDeliveries.nextAttemptAt)

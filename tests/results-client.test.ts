@@ -113,8 +113,8 @@ it('順位の保存確定通知で、追加表示済みの履歴とcursorを巻�
   await vi.waitFor(() => expect(requests).toHaveLength(1));
   const history = {
     ranking: [],
-    history: Array.from({ length: 40 }, (_, i) => ({ resultId: `result-${i}` })),
-    nextCursor: { finishedAt: '2026-10-01T00:00:00.000Z', resultId: 'cursor' },
+    history: Array.from({ length: 40 }, (_, i) => ({ matchId: `result-${i}` })),
+    nextCursor: { finishedAt: '2026-10-01T00:00:00.000Z', matchId: 'cursor' },
   };
   requests[0].resolve(Response.json(history));
   await vi.waitFor(() => expect(harness.state[2]).toBe(false));

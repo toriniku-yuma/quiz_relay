@@ -257,7 +257,6 @@ it('完全削除は進行中・未保存結果を拒否し、保存済み部屋�
     if (!saved) throw new Error('MISSING_ROOM');
     saved.state.phase = 'FINISHED';
     saved.state.result = {
-      id: crypto.randomUUID(),
       winnerId: 'a',
       reason: 'exhausted',
       finishedAt: Date.now(),

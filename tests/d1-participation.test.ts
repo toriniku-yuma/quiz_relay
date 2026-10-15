@@ -384,7 +384,7 @@ it('自分の参加記録に一致する結果だけを未承認の開催元か�
     ).rejects.toThrow('FEDERATION_RESULT_DENIED');
   }
   await deliverResult(host, job.eventId);
-  expect(await deliveredHistory(job.resultId)).toHaveLength(1);
+  expect(await deliveredHistory(job.matchId)).toHaveLength(1);
 });
 it('新しい参加は組織単位で、所属元のインスタンス停止に依存せず、組織BANを確認する', async () => {
   const [organization] = await sourceDb.select().from(organizations);
@@ -512,7 +512,7 @@ it('禁止以外を許可する開催元は未登録組織の鍵だけを取得�
   const [job] = await hostDb
     .select()
     .from(federationResultDeliveries)
-    .where(eq(federationResultDeliveries.resultId, record.result.id));
+    .where(eq(federationResultDeliveries.matchId, record.matchId));
   await deliverResult(host, job.eventId);
   expect((await foreignHistory(newcomer, 'source-admin')).history).toContainEqual(
     expect.objectContaining({ eventId: job.eventId }),
@@ -701,7 +701,7 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
     game = realHost.GAME_ROOM.getByName(`match:${gameSession.room}`);
     await open(game, gameSession.token);
     await open(game, nativeGame.token);
-    let resultId = '';
+    let matchId = '';
     await runInDurableObject(game, async (object, context) => {
       const room = await readStored<{ state: State }>(context.storage, 'room');
       if (!room) throw new Error('ROOM_REQUIRED');
@@ -711,7 +711,7 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
       room.state.deadline = Date.now() - 1;
       room.state.judgment = { actorId: null, result: 'unanswered' };
       advance(room.state, Date.now());
-      resultId = room.state.result?.id ?? '';
+      matchId = room.state.matchId ?? '';
       await context.storage.transaction((transaction) =>
         writeStored(transaction, 'room', room),
       );
@@ -720,14 +720,14 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
     const [job] = await hostDb
       .select()
       .from(federationResultDeliveries)
-      .where(eq(federationResultDeliveries.resultId, resultId));
+      .where(eq(federationResultDeliveries.matchId, matchId));
     expect(job.payload.kind).toBe('room');
     expect(job.payload.players.every((player) => player.ratingDelta === 0)).toBe(true);
     expect(JSON.stringify(job.payload)).not.toContain(input.questions[0].text);
     await deliverResult(realHost, job.eventId);
     expect((await foreignHistory(source, 'source-admin')).history[0]).toMatchObject({
       kind: 'room',
-      resultId,
+      matchId,
     });
     expect(
       await hostParticipationStatus(realHost, sourceOrigin, {
@@ -793,9 +793,9 @@ it('終了済みの試合は所属元の枠だけ解放し、開催元の結果�
   );
 });
 // The actor's history spans every test, so each test reads only its own result.
-const deliveredHistory = async (resultId: string) =>
+const deliveredHistory = async (matchId: string) =>
   (await foreignHistory(source, 'source-admin')).history.filter(
-    (entry) => entry.resultId === resultId,
+    (entry) => entry.matchId === matchId,
   );
 async function savedForeignResult(stopHostReceiving = false) {
   const ticket = await authorize(),
@@ -838,7 +838,7 @@ async function savedForeignResult(stopHostReceiving = false) {
   const [job] = await hostDb
     .select()
     .from(federationResultDeliveries)
-    .where(eq(federationResultDeliveries.resultId, record.result.id));
+    .where(eq(federationResultDeliveries.matchId, record.matchId));
   return { record, job };
 }
 it('保存直後の配送障害でも送信記録を残し、再試行で本人履歴へ一度だけ届ける', async () => {
@@ -848,9 +848,7 @@ it('保存直後の配送障害でも送信記録を残し、再試行で本人�
     ...host,
     ACCOUNT_ERASURE: { fetch: dispatch },
   } as unknown as Env;
-  await expect(
-    dispatchSavedResult(immediateHost, record.result.id),
-  ).rejects.toMatchObject({
+  await expect(dispatchSavedResult(immediateHost, record.matchId)).rejects.toMatchObject({
     code: 'FEDERATION_RESULT_UNAVAILABLE',
   });
   expect(
@@ -865,7 +863,7 @@ it('保存直後の配送障害でも送信記録を残し、再試行で本人�
     await deliverResult(host, job.eventId);
     return Response.json({ ready: true });
   });
-  await dispatchSavedResult(immediateHost, record.result.id);
+  await dispatchSavedResult(immediateHost, record.matchId);
   expect(dispatch.mock.calls[1]).toEqual([
     'https://account-erasure.internal/maintenance',
     expect.objectContaining({
@@ -873,14 +871,14 @@ it('保存直後の配送障害でも送信記録を残し、再試行で本人�
       body: JSON.stringify({ task: 'federationResult', eventId: job.eventId }),
     }),
   ]);
-  await dispatchSavedResult(immediateHost, record.result.id);
+  await dispatchSavedResult(immediateHost, record.matchId);
   expect(dispatch).toHaveBeenCalledTimes(2);
-  expect(await deliveredHistory(record.result.id)).toHaveLength(1);
+  expect(await deliveredHistory(record.matchId)).toHaveLength(1);
 });
 it('開始後に開催元の受入設定を削除しても、参加済みの本人への結果配送を失わない', async () => {
   const { job } = await savedForeignResult(true);
   await deliverResult(host, job.eventId);
-  expect(await deliveredHistory(job.resultId)).toHaveLength(1);
+  expect(await deliveredHistory(job.matchId)).toHaveLength(1);
 });
 it('確定結果を署名して本人履歴へ配送し、所属元レートと未出題情報を混ぜない', async () => {
   const before = await readResults(sourceDb, sourceOwner, actorId, [], {
@@ -890,12 +888,12 @@ it('確定結果を署名して本人履歴へ配送し、所属元レートと�
   expect(JSON.stringify(job.payload)).not.toContain('出題済みの本文');
   expect(JSON.stringify(job.payload)).not.toContain('せいとう');
   await deliverResult(host, job.eventId);
-  const history = await deliveredHistory(record.result.id);
+  const history = await deliveredHistory(record.matchId);
   expect(history).toHaveLength(1);
   expect(history[0]).toMatchObject({
     peerOrigin: hostOrigin,
     sourceActorId: actorId,
-    resultId: record.result.id,
+    matchId: record.matchId,
   });
   expect(
     (await readResults(sourceDb, sourceOwner, actorId, [], { section: 'self' })).self,
@@ -911,7 +909,7 @@ it('確定結果を署名して本人履歴へ配送し、所属元レートと�
   expect(
     (
       await hostResultReview(host, sourceOrigin, {
-        resultId: record.result.id,
+        matchId: record.matchId,
         sourceActorId: actorId,
         sourceOrganizationId: sourceId,
       })
@@ -919,7 +917,7 @@ it('確定結果を署名して本人履歴へ配送し、所属元レートと�
   ).toBe('出題済みの本文');
   await expect(
     hostResultReview(host, sourceOrigin, {
-      resultId: record.result.id,
+      matchId: record.matchId,
       sourceActorId: 'd'.repeat(64),
       sourceOrganizationId: sourceId,
     }),
@@ -955,7 +953,7 @@ it('通信断でも原本と未配送を保ち、復旧時に同じイベント�
   expect(saved.payloadHash).toBe(failed.payloadHash);
   expect(saved.receivedAt).not.toBeNull();
   vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
-  expect(await deliveredHistory(job.resultId)).toHaveLength(1);
+  expect(await deliveredHistory(job.matchId)).toHaveLength(1);
 });
 it('同一イベントの別内容を409で隔離し、既に受信した原本を更新しない', async () => {
   const { job } = await savedForeignResult();

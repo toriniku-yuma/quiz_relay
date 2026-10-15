@@ -72,7 +72,6 @@ it('実績は出題単位で重複排除し、ランク戦で実力帯の揃っ�
     {
       owner: record.owner,
       matchId: record.matchId,
-      resultId: record.result.id,
       questionId: 'q',
       generation: 'generation',
       band: 0,

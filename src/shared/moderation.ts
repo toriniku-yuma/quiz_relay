@@ -117,7 +117,7 @@ type UserReport = {
   actorId: string;
   reporterId: string;
   reporterName: string;
-  resultId: string;
+  matchId: string;
   reason: string;
   createdAt: string;
   resolvedAt: string | null;

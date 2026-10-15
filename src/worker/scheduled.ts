@@ -130,7 +130,7 @@ export async function scheduledD1(env: Env, now = Date.now()) {
   if (inventory.pending) tasks.push({ task: 'inventory' });
   tasks.push(...deletions.map((job) => ({ task: 'instance', operationId: job.id })));
   const [privacy] = await db
-    .select({ id: resultPrivacyJobs.resultId })
+    .select({ id: resultPrivacyJobs.matchId })
     .from(resultPrivacyJobs)
     .where(lte(resultPrivacyJobs.dueAt, time))
     .limit(1);

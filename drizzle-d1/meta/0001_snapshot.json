@@ -1,8 +1,8 @@
 {
-  "id": "1765fea4-f474-40e4-9b0e-788310ec5f1f",
-  "prevId": "588ae938-8300-4d4f-8f65-2467cd6f57ef",
   "version": "6",
   "dialect": "sqlite",
+  "id": "6fccf143-931a-4a72-b12e-b8b9a37b0f4b",
+  "prevId": "8aa3683f-1dc1-43d9-ae6b-a9850dbfdb45",
   "tables": {
     "quiz_game_account_instance_selections": {
       "name": "quiz_game_account_instance_selections",
@@ -35,28 +35,28 @@
         "quiz_game_account_instance_selections_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_account_instance_selections_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_account_instance_selections",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         },
         "quiz_game_account_instance_selections_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_account_instance_selections_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_account_instance_selections",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -169,28 +169,28 @@
         "quiz_game_account_withdrawals_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_account_withdrawals_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_account_withdrawals",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_account_withdrawals_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_account_withdrawals_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_account_withdrawals",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -280,41 +280,41 @@
         "quiz_game_administrator_transfers_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_administrator_transfers_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_administrator_transfers",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_administrator_transfers_sender_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_administrator_transfers_sender_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_administrator_transfers",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "sender_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_administrator_transfers_target_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_administrator_transfers_target_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_administrator_transfers",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "target_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -395,36 +395,36 @@
         "competitions_owner_ruleset_id_ruleset_version_fkey": {
           "name": "competitions_owner_ruleset_id_ruleset_version_fkey",
           "tableFrom": "quiz_game_competitions",
+          "tableTo": "quiz_game_ruleset_versions",
           "columnsFrom": [
             "owner",
             "ruleset_id",
             "ruleset_version"
           ],
-          "tableTo": "quiz_game_ruleset_versions",
           "columnsTo": [
             "owner",
             "ruleset_id",
             "version"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "competitions_owner_set_id_set_version_fkey": {
           "name": "competitions_owner_set_id_set_version_fkey",
           "tableFrom": "quiz_game_competitions",
+          "tableTo": "quiz_game_question_sets",
           "columnsFrom": [
             "owner",
             "set_id",
             "set_version"
           ],
-          "tableTo": "quiz_game_question_sets",
           "columnsTo": [
             "owner",
             "set_id",
             "version"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -646,13 +646,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "match_id": {
-          "name": "match_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "question_id": {
           "name": "question_id",
           "type": "text",
@@ -660,8 +653,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -721,7 +714,7 @@
         "difficulty_trials_result": {
           "name": "difficulty_trials_result",
           "columns": [
-            "result_id"
+            "match_id"
           ],
           "isUnique": false
         },
@@ -735,18 +728,18 @@
         }
       },
       "foreignKeys": {
-        "quiz_game_difficulty_trials_result_id_quiz_game_match_results_result_id_fk": {
-          "name": "quiz_game_difficulty_trials_result_id_quiz_game_match_results_result_id_fk",
+        "quiz_game_difficulty_trials_match_id_quiz_game_matches_match_id_fk": {
+          "name": "quiz_game_difficulty_trials_match_id_quiz_game_matches_match_id_fk",
           "tableFrom": "quiz_game_difficulty_trials",
+          "tableTo": "quiz_game_matches",
           "columnsFrom": [
-            "result_id"
+            "match_id"
           ],
-          "tableTo": "quiz_game_match_results",
           "columnsTo": [
-            "result_id"
+            "match_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -808,28 +801,28 @@
         "quiz_federation_actors_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_federation_actors_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_federation_actors",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_actors_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_actors_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_actors",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -943,15 +936,15 @@
         "quiz_federation_control_deliveries_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_control_deliveries_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_control_deliveries",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1047,15 +1040,15 @@
         "quiz_federation_control_inbox_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_control_inbox_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_control_inbox",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1100,15 +1093,15 @@
         "quiz_federation_deleted_instances_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_deleted_instances_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_deleted_instances",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1153,28 +1146,28 @@
         "quiz_federation_favorites_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_federation_favorites_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_federation_favorites",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_favorites_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_favorites_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_favorites",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1264,15 +1257,15 @@
         "quiz_federation_login_sessions_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_login_sessions_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_login_sessions",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1331,15 +1324,15 @@
         "quiz_federation_metadata_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_metadata_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_metadata",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1424,15 +1417,15 @@
         "quiz_federation_metadata_jobs_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_metadata_jobs_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_metadata_jobs",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1576,28 +1569,28 @@
         "quiz_federation_participations_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_participations_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_participations",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_participations_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_federation_participations_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_federation_participations",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1649,15 +1642,15 @@
         "quiz_federation_peer_keys_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_peer_keys_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_peer_keys",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -1836,28 +1829,28 @@
         "quiz_federation_policies_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_federation_policies_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_federation_policies",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_policies_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_policies_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_policies",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2001,15 +1994,15 @@
         "quiz_federation_question_imports_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_federation_question_imports_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_federation_question_imports",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2172,41 +2165,41 @@
         "quiz_federation_question_links_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_federation_question_links_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_federation_question_links",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_question_links_import_id_quiz_federation_question_imports_id_fk": {
           "name": "quiz_federation_question_links_import_id_quiz_federation_question_imports_id_fk",
           "tableFrom": "quiz_federation_question_links",
+          "tableTo": "quiz_federation_question_imports",
           "columnsFrom": [
             "import_id"
           ],
-          "tableTo": "quiz_federation_question_imports",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_question_links_submission_id_quiz_game_question_submissions_id_fk": {
           "name": "quiz_federation_question_links_submission_id_quiz_game_question_submissions_id_fk",
           "tableFrom": "quiz_federation_question_links",
+          "tableTo": "quiz_game_question_submissions",
           "columnsFrom": [
             "submission_id"
           ],
-          "tableTo": "quiz_game_question_submissions",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2292,15 +2285,15 @@
         "quiz_federation_question_sources_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_federation_question_sources_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_federation_question_sources",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2360,15 +2353,15 @@
         "quiz_federation_question_staging_import_id_quiz_federation_question_imports_id_fk": {
           "name": "quiz_federation_question_staging_import_id_quiz_federation_question_imports_id_fk",
           "tableFrom": "quiz_federation_question_staging",
+          "tableTo": "quiz_federation_question_imports",
           "columnsFrom": [
             "import_id"
           ],
-          "tableTo": "quiz_federation_question_imports",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2437,15 +2430,15 @@
         "quiz_federation_reservation_closures_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_reservation_closures_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_reservation_closures",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2627,41 +2620,41 @@
         "quiz_federation_reservations_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_reservations_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_reservations",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_reservations_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_federation_reservations_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_federation_reservations",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_reservations_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_federation_reservations_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_federation_reservations",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2678,8 +2671,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -2791,10 +2784,10 @@
           ],
           "isUnique": false
         },
-        "quiz_federation_result_deliveries_result_id_peer_origin_source_actor_id_unique": {
-          "name": "quiz_federation_result_deliveries_result_id_peer_origin_source_actor_id_unique",
+        "quiz_federation_result_deliveries_match_id_peer_origin_source_actor_id_unique": {
+          "name": "quiz_federation_result_deliveries_match_id_peer_origin_source_actor_id_unique",
           "columns": [
-            "result_id",
+            "match_id",
             "peer_origin",
             "source_actor_id"
           ],
@@ -2805,15 +2798,15 @@
         "quiz_federation_result_deliveries_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_result_deliveries_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_result_deliveries",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2917,28 +2910,28 @@
         "quiz_federation_result_inbox_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_result_inbox_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_result_inbox",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_federation_result_inbox_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_federation_result_inbox_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_federation_result_inbox",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -2983,15 +2976,15 @@
         "quiz_federation_retired_identities_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_retired_identities_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_retired_identities",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3044,15 +3037,15 @@
         "quiz_federation_sessions_reservation_id_quiz_federation_reservations_id_fk": {
           "name": "quiz_federation_sessions_reservation_id_quiz_federation_reservations_id_fk",
           "tableFrom": "quiz_federation_sessions",
+          "tableTo": "quiz_federation_reservations",
           "columnsFrom": [
             "reservation_id"
           ],
-          "tableTo": "quiz_federation_reservations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3103,15 +3096,15 @@
         "quiz_federation_targets_peer_origin_quiz_federation_peers_origin_fk": {
           "name": "quiz_federation_targets_peer_origin_quiz_federation_peers_origin_fk",
           "tableFrom": "quiz_federation_targets",
+          "tableTo": "quiz_federation_peers",
           "columnsFrom": [
             "peer_origin"
           ],
-          "tableTo": "quiz_federation_peers",
           "columnsTo": [
             "origin"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3172,15 +3165,15 @@
         "quiz_game_guest_sessions_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_guest_sessions_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_guest_sessions",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3303,15 +3296,15 @@
         "quiz_game_instance_deletions_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_instance_deletions_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_instance_deletions",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3356,28 +3349,28 @@
         "quiz_game_instance_grants_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_instance_grants_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_instance_grants",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_instance_grants_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_instance_grants_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_instance_grants",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3438,15 +3431,15 @@
         "quiz_game_instance_rooms_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_instance_rooms_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_instance_rooms",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3558,15 +3551,15 @@
         "quiz_game_instances_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_instances_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_instances",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3610,11 +3603,11 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "quiz_game_match_results": {
-      "name": "quiz_game_match_results",
+    "quiz_game_matches": {
+      "name": "quiz_game_matches",
       "columns": {
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
@@ -3627,60 +3620,89 @@
           "notNull": true,
           "autoincrement": false
         },
-        "match_id": {
-          "name": "match_id",
+        "parent_room_id": {
+          "name": "parent_room_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "finished_at": {
           "name": "finished_at",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "payload_hash": {
           "name": "payload_hash",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "payload": {
           "name": "payload",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         }
       },
       "indexes": {
-        "d1_matchResults_2": {
-          "name": "d1_matchResults_2",
+        "matches_finished": {
+          "name": "matches_finished",
           "columns": [
             "owner",
             "finished_at"
           ],
           "isUnique": false
         },
-        "d1_matchResults_1": {
-          "name": "d1_matchResults_1",
+        "matches_status": {
+          "name": "matches_status",
           "columns": [
             "owner",
-            "match_id"
+            "status"
           ],
-          "isUnique": true
+          "isUnique": false
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {
+        "match_status": {
+          "name": "match_status",
+          "value": "\"quiz_game_matches\".\"status\" IN ('waiting', 'running', 'confirmed', 'invalid', 'conflict', 'cancelled')"
+        },
+        "match_result_state": {
+          "name": "match_result_state",
+          "value": "(\"quiz_game_matches\".\"status\" IN ('confirmed', 'invalid', 'conflict') AND \"quiz_game_matches\".\"payload\" IS NOT NULL AND \"quiz_game_matches\".\"payload_hash\" IS NOT NULL AND \"quiz_game_matches\".\"finished_at\" IS NOT NULL) OR (\"quiz_game_matches\".\"status\" IN ('waiting', 'running', 'cancelled') AND \"quiz_game_matches\".\"payload\" IS NULL AND \"quiz_game_matches\".\"payload_hash\" IS NULL)"
+        },
         "match_results_hash": {
           "name": "match_results_hash",
-          "value": "(length(\"quiz_game_match_results\".\"payload_hash\") = 64 AND \"quiz_game_match_results\".\"payload_hash\" NOT GLOB '*[^0-9a-f]*')"
+          "value": "(length(\"quiz_game_matches\".\"payload_hash\") = 64 AND \"quiz_game_matches\".\"payload_hash\" NOT GLOB '*[^0-9a-f]*')"
         }
       }
     },
@@ -3721,19 +3743,19 @@
         "matchmaking_settings_owner_competition_id_competition_vers_fkey": {
           "name": "matchmaking_settings_owner_competition_id_competition_vers_fkey",
           "tableFrom": "quiz_game_matchmaking_settings",
+          "tableTo": "quiz_game_competitions",
           "columnsFrom": [
             "owner",
             "competition_id",
             "competition_version"
           ],
-          "tableTo": "quiz_game_competitions",
           "columnsTo": [
             "owner",
             "competition_id",
             "version"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -3856,28 +3878,28 @@
         "quiz_game_moderation_events_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_moderation_events_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_moderation_events",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_moderation_events_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_moderation_events_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_moderation_events",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -3941,15 +3963,15 @@
         "quiz_game_moderation_requests_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_moderation_requests_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_moderation_requests",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4045,41 +4067,41 @@
         "quiz_game_moderation_sanctions_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_moderation_sanctions_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_moderation_sanctions",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_moderation_sanctions_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_moderation_sanctions_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_moderation_sanctions",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_moderation_sanctions_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_moderation_sanctions_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_moderation_sanctions",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4180,15 +4202,15 @@
         "quiz_game_organization_accounts_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_organization_accounts_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_organization_accounts",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4430,28 +4452,28 @@
         "quiz_game_personal_question_sets_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_personal_question_sets_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_personal_question_sets",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_personal_question_sets_author_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_personal_question_sets_author_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_personal_question_sets",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "author_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4541,28 +4563,28 @@
         "quiz_game_question_authors_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_authors_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_authors",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_question_authors_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_question_authors_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_question_authors",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4701,15 +4723,15 @@
         "quiz_game_question_categories_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_categories_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_categories",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4799,7 +4821,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'自己申告'"
+          "default": "'\u81ea\u5df1\u7533\u544a'"
         }
       },
       "indexes": {},
@@ -4807,15 +4829,15 @@
         "quiz_game_question_difficulty_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_difficulty_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_difficulty",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4879,28 +4901,28 @@
         "quiz_game_question_imports_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_imports_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_imports",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_question_imports_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_question_imports_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_question_imports",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -4985,28 +5007,28 @@
         "quiz_game_question_notifications_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_notifications_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_notifications",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_question_notifications_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_question_notifications_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_question_notifications",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5099,15 +5121,15 @@
         "quiz_game_question_reports_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_reports_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_reports",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5195,15 +5217,15 @@
         "quiz_game_question_review_cases_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_review_cases_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_review_cases",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5287,36 +5309,36 @@
         "question_set_items_owner_question_id_question_version_fkey": {
           "name": "question_set_items_owner_question_id_question_version_fkey",
           "tableFrom": "quiz_game_question_set_items",
+          "tableTo": "quiz_game_question_versions",
           "columnsFrom": [
             "owner",
             "question_id",
             "question_version"
           ],
-          "tableTo": "quiz_game_question_versions",
           "columnsTo": [
             "owner",
             "question_id",
             "version"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "question_set_items_owner_set_id_set_version_fkey": {
           "name": "question_set_items_owner_set_id_set_version_fkey",
           "tableFrom": "quiz_game_question_set_items",
+          "tableTo": "quiz_game_question_sets",
           "columnsFrom": [
             "owner",
             "set_id",
             "set_version"
           ],
-          "tableTo": "quiz_game_question_sets",
           "columnsTo": [
             "owner",
             "set_id",
             "version"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5440,15 +5462,15 @@
         "quiz_game_question_settings_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_settings_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_settings",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5542,28 +5564,28 @@
         "quiz_game_question_submission_events_submission_id_quiz_game_question_submissions_id_fk": {
           "name": "quiz_game_question_submission_events_submission_id_quiz_game_question_submissions_id_fk",
           "tableFrom": "quiz_game_question_submission_events",
+          "tableTo": "quiz_game_question_submissions",
           "columnsFrom": [
             "submission_id"
           ],
-          "tableTo": "quiz_game_question_submissions",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_question_submission_events_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_submission_events_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_submission_events",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5579,7 +5601,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'作問者'"
+          "default": "'\u4f5c\u554f\u8005'"
         },
         "provenance": {
           "name": "provenance",
@@ -5716,28 +5738,28 @@
         "quiz_game_question_submissions_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_submissions_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_submissions",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_question_submissions_author_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_question_submissions_author_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_question_submissions",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "author_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5791,15 +5813,15 @@
         "quiz_game_question_tags_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_question_tags_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_question_tags",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
@@ -5881,8 +5903,8 @@
     "quiz_game_result_outbox": {
       "name": "quiz_game_result_outbox",
       "columns": {
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
@@ -5905,18 +5927,18 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "quiz_game_result_outbox_result_id_quiz_game_match_results_result_id_fk": {
-          "name": "quiz_game_result_outbox_result_id_quiz_game_match_results_result_id_fk",
+        "quiz_game_result_outbox_match_id_quiz_game_matches_match_id_fk": {
+          "name": "quiz_game_result_outbox_match_id_quiz_game_matches_match_id_fk",
           "tableFrom": "quiz_game_result_outbox",
+          "tableTo": "quiz_game_matches",
           "columnsFrom": [
-            "result_id"
+            "match_id"
           ],
-          "tableTo": "quiz_game_match_results",
           "columnsTo": [
-            "result_id"
+            "match_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -5926,8 +5948,8 @@
     "quiz_game_result_players": {
       "name": "quiz_game_result_players",
       "columns": {
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -5965,27 +5987,27 @@
         }
       },
       "foreignKeys": {
-        "quiz_game_result_players_result_id_quiz_game_match_results_result_id_fk": {
-          "name": "quiz_game_result_players_result_id_quiz_game_match_results_result_id_fk",
+        "quiz_game_result_players_match_id_quiz_game_matches_match_id_fk": {
+          "name": "quiz_game_result_players_match_id_quiz_game_matches_match_id_fk",
           "tableFrom": "quiz_game_result_players",
+          "tableTo": "quiz_game_matches",
           "columnsFrom": [
-            "result_id"
+            "match_id"
           ],
-          "tableTo": "quiz_game_match_results",
           "columnsTo": [
-            "result_id"
+            "match_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
-        "quiz_game_result_players_result_id_actor_id_pk": {
+        "quiz_game_result_players_match_id_actor_id_pk": {
           "columns": [
-            "result_id",
+            "match_id",
             "actor_id"
           ],
-          "name": "quiz_game_result_players_result_id_actor_id_pk"
+          "name": "quiz_game_result_players_match_id_actor_id_pk"
         }
       },
       "uniqueConstraints": {},
@@ -5999,8 +6021,8 @@
     "quiz_game_result_privacy_changes": {
       "name": "quiz_game_result_privacy_changes",
       "columns": {
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
@@ -6030,18 +6052,18 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "quiz_game_result_privacy_changes_result_id_quiz_game_match_results_result_id_fk": {
-          "name": "quiz_game_result_privacy_changes_result_id_quiz_game_match_results_result_id_fk",
+        "quiz_game_result_privacy_changes_match_id_quiz_game_matches_match_id_fk": {
+          "name": "quiz_game_result_privacy_changes_match_id_quiz_game_matches_match_id_fk",
           "tableFrom": "quiz_game_result_privacy_changes",
+          "tableTo": "quiz_game_matches",
           "columnsFrom": [
-            "result_id"
+            "match_id"
           ],
-          "tableTo": "quiz_game_match_results",
           "columnsTo": [
-            "result_id"
+            "match_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6051,8 +6073,8 @@
     "quiz_game_result_privacy_jobs": {
       "name": "quiz_game_result_privacy_jobs",
       "columns": {
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
@@ -6071,24 +6093,24 @@
           "name": "result_privacy_due",
           "columns": [
             "due_at",
-            "result_id"
+            "match_id"
           ],
           "isUnique": false
         }
       },
       "foreignKeys": {
-        "quiz_game_result_privacy_jobs_result_id_quiz_game_match_results_result_id_fk": {
-          "name": "quiz_game_result_privacy_jobs_result_id_quiz_game_match_results_result_id_fk",
+        "quiz_game_result_privacy_jobs_match_id_quiz_game_matches_match_id_fk": {
+          "name": "quiz_game_result_privacy_jobs_match_id_quiz_game_matches_match_id_fk",
           "tableFrom": "quiz_game_result_privacy_jobs",
+          "tableTo": "quiz_game_matches",
           "columnsFrom": [
-            "result_id"
+            "match_id"
           ],
-          "tableTo": "quiz_game_match_results",
           "columnsTo": [
-            "result_id"
+            "match_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "cascade"
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6143,15 +6165,15 @@
         "quiz_game_room_directory_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_room_directory_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_room_directory",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6382,49 +6404,49 @@
           "columns": [
             "sanction_id"
           ],
-          "where": "\"quiz_game_sanction_appeals\".\"resolved_at\" IS NULL",
-          "isUnique": true
+          "isUnique": true,
+          "where": "\"quiz_game_sanction_appeals\".\"resolved_at\" IS NULL"
         }
       },
       "foreignKeys": {
         "quiz_game_sanction_appeals_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_sanction_appeals_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_sanction_appeals",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_sanction_appeals_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_sanction_appeals_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_sanction_appeals",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_sanction_appeals_sanction_id_quiz_game_moderation_sanctions_id_fk": {
           "name": "quiz_game_sanction_appeals_sanction_id_quiz_game_moderation_sanctions_id_fk",
           "tableFrom": "quiz_game_sanction_appeals",
+          "tableTo": "quiz_game_moderation_sanctions",
           "columnsFrom": [
             "sanction_id"
           ],
-          "tableTo": "quiz_game_moderation_sanctions",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6486,8 +6508,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "result_id": {
-          "name": "result_id",
+        "match_id": {
+          "name": "match_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -6545,41 +6567,41 @@
         "quiz_game_user_reports_organization_id_quiz_game_organizations_id_fk": {
           "name": "quiz_game_user_reports_organization_id_quiz_game_organizations_id_fk",
           "tableFrom": "quiz_game_user_reports",
+          "tableTo": "quiz_game_organizations",
           "columnsFrom": [
             "organization_id"
           ],
-          "tableTo": "quiz_game_organizations",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_user_reports_instance_id_quiz_game_instances_id_fk": {
           "name": "quiz_game_user_reports_instance_id_quiz_game_instances_id_fk",
           "tableFrom": "quiz_game_user_reports",
+          "tableTo": "quiz_game_instances",
           "columnsFrom": [
             "instance_id"
           ],
-          "tableTo": "quiz_game_instances",
           "columnsTo": [
             "id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         },
         "quiz_game_user_reports_actor_id_quiz_game_organization_accounts_actor_id_fk": {
           "name": "quiz_game_user_reports_actor_id_quiz_game_organization_accounts_actor_id_fk",
           "tableFrom": "quiz_game_user_reports",
+          "tableTo": "quiz_game_organization_accounts",
           "columnsFrom": [
             "actor_id"
           ],
-          "tableTo": "quiz_game_organization_accounts",
           "columnsTo": [
             "actor_id"
           ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6603,9 +6625,9 @@
   "views": {},
   "enums": {},
   "_meta": {
-    "columns": {},
     "schemas": {},
-    "tables": {}
+    "tables": {},
+    "columns": {}
   },
   "internal": {
     "indexes": {}

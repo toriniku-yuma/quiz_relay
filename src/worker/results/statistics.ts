@@ -16,7 +16,7 @@ export function resultStatistics(record: ResultRecord, actorId: string): MatchSt
       )
       .map((answerStat) => answerStat.elapsedMs as number);
   return {
-    resultId: record.result.id,
+    matchId: record.matchId,
     finishedAt: new Date(record.result.finishedAt).toISOString(),
     outcome:
       player.role === 'presenter'

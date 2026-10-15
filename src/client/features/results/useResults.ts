@@ -53,7 +53,7 @@ export function useResults(
                     ...previous.history,
                     ...value.history.filter(
                       (entry) =>
-                        !previous.history.some((old) => old.resultId === entry.resultId),
+                        !previous.history.some((old) => old.matchId === entry.matchId),
                     ),
                   ],
                 }

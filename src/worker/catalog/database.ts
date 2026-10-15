@@ -4,7 +4,7 @@ import {
   questionAvailability as a,
   competitions as c,
   questionSetItems as i,
-  matchResults,
+  matches,
   questionVersions as q,
   rulesetVersions as r,
   resultPlayers,
@@ -117,12 +117,12 @@ export async function loadMatchDefinition(
             ),
         })
         .from(resultPlayers)
-        .innerJoin(matchResults, eq(matchResults.resultId, resultPlayers.resultId))
+        .innerJoin(matches, eq(matches.matchId, resultPlayers.matchId))
         .where(
           and(
-            eq(matchResults.owner, owner),
+            eq(matches.owner, owner),
             eq(resultPlayers.actorId, actorId),
-            sql`json_extract(${matchResults.payload}, '$.kind') = 'ranked'`,
+            sql`json_extract(${matches.payload}, '$.kind') = 'ranked'`,
           ),
         );
       const boundaries = rows[0].questionSet.selection?.boundaries ?? [1200, 1600];

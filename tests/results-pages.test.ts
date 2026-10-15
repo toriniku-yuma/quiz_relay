@@ -62,7 +62,7 @@ beforeEach(() => {
   mocks.data.self = { rank: 104, rating: 980 };
   mocks.data.history = [
     {
-      resultId: mocks.result,
+      matchId: mocks.result,
       kind: 'casual',
       outcome: 'draw',
       reason: 'exhausted',
@@ -166,7 +166,7 @@ it('履歴は7列のテーブルと個別詳細リンク、ランキングは別
 it('詳細だけに振り返りを表示し、ゲスト参加者への個人通報を表示しない', () => {
   mocks.guest = true;
   const detail = renderToStaticMarkup(
-    createElement(ResultsPanel, { instanceId: 'instance-a', resultId: mocks.result }),
+    createElement(ResultsPanel, { instanceId: 'instance-a', matchId: mocks.result }),
   );
   expect(detail).toContain('問題本文');
   expect(detail).toContain('ゲスト参加者');

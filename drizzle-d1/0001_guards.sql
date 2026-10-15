@@ -19,7 +19,7 @@ CREATE TRIGGER "d1_deleted_instance" before INSERT on "quiz_game_instances" when
 --> statement-breakpoint
 CREATE TRIGGER "d1_deleted_matchmaking" before INSERT on "quiz_game_matchmaking_settings" when not (not exists(select 1 from "quiz_game_instance_deletions" where owner=NEW."owner" )) BEGIN select raise(abort, 'INSTANCE_DELETION_RECORDED'); END;
 --> statement-breakpoint
-CREATE TRIGGER "d1_deleted_result" before INSERT on "quiz_game_match_results" when not (not exists(select 1 from "quiz_game_instance_deletions" where owner=NEW."owner" and (accepted_at is not null or deleted_at is not null))) BEGIN select raise(abort, 'INSTANCE_DELETION_RECORDED'); END;
+CREATE TRIGGER "d1_deleted_result" before INSERT on "quiz_game_matches" when not (not exists(select 1 from "quiz_game_instance_deletions" where owner=NEW."owner" and (accepted_at is not null or deleted_at is not null))) BEGIN select raise(abort, 'INSTANCE_DELETION_RECORDED'); END;
 --> statement-breakpoint
 CREATE TRIGGER "d1_deleted_ruleset" before INSERT on "quiz_game_ruleset_versions" when not (not exists(select 1 from "quiz_game_instance_deletions" where owner=NEW."owner" )) BEGIN select raise(abort, 'INSTANCE_DELETION_RECORDED'); END;
 --> statement-breakpoint
@@ -45,29 +45,29 @@ CREATE TRIGGER "d1_organization_event_delete" before DELETE on "quiz_game_organi
 --> statement-breakpoint
 CREATE TRIGGER "d1_organization_event_update" before UPDATE on "quiz_game_organization_events" when not ((NEW."id" is OLD."id" and NEW."actor_id" is OLD."actor_id" and NEW."instance_id" is OLD."instance_id" and NEW."action" is OLD."action" and NEW."occurred_at" is OLD."occurred_at" and NEW."details" is OLD."details" ) or (exists(select 1 from "quiz_game_organization_accounts" where "quiz_game_organization_accounts"."withdrawn_at" is not null and ("quiz_game_organization_accounts"."actor_id" = OLD."actor_id" or json_extract(OLD."details", '$.actorId') = "quiz_game_organization_accounts"."actor_id" or exists(select 1 from json_each(OLD."details", '$.targets') target where target.value = "quiz_game_organization_accounts"."actor_id" or json_extract(case when target.type = 'object' then target.value else '{}' end, '$.actorId') = "quiz_game_organization_accounts"."actor_id"))) and NEW."id" is OLD."id" and NEW."actor_id" is OLD."actor_id" and NEW."instance_id" is OLD."instance_id" and NEW."action" is OLD."action" and NEW."occurred_at" is OLD."occurred_at" and NEW."details" is json_object('action', json_extract(OLD."details", '$.action'), 'redacted', json('true')))) BEGIN select raise(abort, 'IMMUTABLE_AUDIT'); END;
 --> statement-breakpoint
-CREATE TRIGGER "d1_outbox_delete" before DELETE on "quiz_game_result_outbox" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = (select owner from "quiz_game_match_results" where result_id=OLD.result_id) and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_OUTBOX'); END;
+CREATE TRIGGER "d1_outbox_delete" before DELETE on "quiz_game_result_outbox" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = (select owner from "quiz_game_matches" where match_id=OLD.match_id) and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_OUTBOX'); END;
 --> statement-breakpoint
 CREATE TRIGGER d1_outbox_identity BEFORE INSERT ON quiz_game_result_outbox
 WHEN NOT EXISTS (
-  SELECT 1 FROM quiz_game_match_results AS result
-  WHERE result.result_id = NEW.result_id AND result.payload_hash = NEW.payload_hash AND result.payload = NEW.payload
+  SELECT 1 FROM quiz_game_matches AS result
+  WHERE result.match_id = NEW.match_id AND result.payload_hash = NEW.payload_hash AND result.payload = NEW.payload
 )
 BEGIN SELECT RAISE(ABORT, 'INVALID_RESULT_OUTBOX'); END;
 --> statement-breakpoint
 CREATE TRIGGER d1_outbox_update BEFORE UPDATE ON quiz_game_result_outbox
     WHEN NOT (
-      NEW.result_id = OLD.result_id AND EXISTS (SELECT 1 FROM quiz_game_result_privacy_changes permit
-        WHERE permit.result_id = OLD.result_id AND permit.previous_hash = OLD.payload_hash
+      NEW.match_id = OLD.match_id AND EXISTS (SELECT 1 FROM quiz_game_result_privacy_changes permit
+        WHERE permit.match_id = OLD.match_id AND permit.previous_hash = OLD.payload_hash
           AND permit.payload_hash = NEW.payload_hash AND permit.payload = NEW.payload)
     ) BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_OUTBOX'); END;
 --> statement-breakpoint
 CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_changes
     WHEN NOT EXISTS (
-      SELECT 1 FROM "quiz_game_match_results" JOIN quiz_game_result_outbox outbox ON outbox.result_id = "quiz_game_match_results"."result_id"
-      WHERE "quiz_game_match_results"."result_id" = NEW.result_id AND "quiz_game_match_results"."payload_hash" = NEW.previous_hash
-        AND outbox.payload_hash = "quiz_game_match_results"."payload_hash" AND outbox.payload = "quiz_game_match_results"."payload"
+      SELECT 1 FROM "quiz_game_matches" JOIN quiz_game_result_outbox outbox ON outbox.match_id = "quiz_game_matches"."match_id"
+      WHERE "quiz_game_matches"."match_id" = NEW.match_id AND "quiz_game_matches"."payload_hash" = NEW.previous_hash
+        AND outbox.payload_hash = "quiz_game_matches"."payload_hash" AND outbox.payload = "quiz_game_matches"."payload"
         AND length(NEW.payload_hash) = 64 AND NEW.payload_hash NOT GLOB '*[^0-9a-f]*'
-        AND NOT EXISTS (SELECT fullkey,type,atom FROM json_tree((with original as materialized (select "quiz_game_match_results"."payload" as data),
+        AND NOT EXISTS (SELECT fullkey,type,atom FROM json_tree((with original as materialized (select "quiz_game_matches"."payload" as data),
     protected_players as materialized (select json_set(data, '$.players', json((select json_group_array(json(case
     when json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000 and json_extract(player.value, '$.guest') then json_set(case
     when exists (select 1 from "quiz_game_organization_accounts"
@@ -146,7 +146,7 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
   ) then '退会ユーザー' else author.value end)
     from json_each(data, '$.definition.selection.authorNames') author)))
       else data end from protected_questions)) EXCEPT SELECT fullkey,type,atom FROM json_tree(NEW.payload))
-        AND NOT EXISTS (SELECT fullkey,type,atom FROM json_tree(NEW.payload) EXCEPT SELECT fullkey,type,atom FROM json_tree((with original as materialized (select "quiz_game_match_results"."payload" as data),
+        AND NOT EXISTS (SELECT fullkey,type,atom FROM json_tree(NEW.payload) EXCEPT SELECT fullkey,type,atom FROM json_tree((with original as materialized (select "quiz_game_matches"."payload" as data),
     protected_players as materialized (select json_set(data, '$.players', json((select json_group_array(json(case
     when json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000 and json_extract(player.value, '$.guest') then json_set(case
     when exists (select 1 from "quiz_game_organization_accounts"
@@ -311,28 +311,27 @@ WHEN NOT (
  ))
 BEGIN SELECT RAISE(ABORT,'IMMUTABLE_CATALOG'); END;
 --> statement-breakpoint
-CREATE TRIGGER d1_result_conflict BEFORE INSERT ON quiz_game_match_results
+CREATE TRIGGER d1_result_conflict BEFORE INSERT ON quiz_game_matches
 WHEN EXISTS (
-  SELECT 1 FROM quiz_game_match_results AS stored
-  WHERE (stored.result_id = NEW.result_id OR (stored.owner = NEW.owner AND stored.match_id = NEW.match_id))
-    AND (stored.result_id <> NEW.result_id OR stored.owner <> NEW.owner OR stored.match_id <> NEW.match_id OR stored.payload_hash <> NEW.payload_hash)
+  SELECT 1 FROM quiz_game_matches AS stored
+  WHERE (stored.match_id = NEW.match_id OR (stored.owner = NEW.owner AND stored.match_id = NEW.match_id))
+    AND (stored.match_id <> NEW.match_id OR stored.owner <> NEW.owner OR stored.match_id <> NEW.match_id OR stored.payload_hash <> NEW.payload_hash)
 )
 BEGIN SELECT RAISE(ABORT, 'RESULT_CONFLICT'); END;
 --> statement-breakpoint
-CREATE TRIGGER "d1_result_delete" before DELETE on "quiz_game_match_results" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = OLD."owner" and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_RESULT'); END;
+CREATE TRIGGER "d1_result_delete" before DELETE on "quiz_game_matches" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = OLD."owner" and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_RESULT'); END;
 --> statement-breakpoint
-CREATE TRIGGER d1_result_identity BEFORE INSERT ON quiz_game_match_results
-WHEN json_extract(NEW.payload, '$.owner') IS NOT NEW.owner
-  OR json_extract(NEW.payload, '$.matchId') IS NOT NEW.match_id
-  OR json_extract(NEW.payload, '$.result.id') IS NOT NEW.result_id
+CREATE TRIGGER d1_match_identity BEFORE INSERT ON quiz_game_matches
+WHEN NEW.payload IS NOT NULL AND (json_extract(NEW.payload, '$.owner') IS NOT NEW.owner
+  OR json_extract(NEW.payload, '$.matchId') IS NOT NEW.match_id)
 BEGIN SELECT RAISE(ABORT, 'INVALID_RESULT_IDENTITY'); END;
 --> statement-breakpoint
-CREATE TRIGGER "d1_result_player_delete" before DELETE on "quiz_game_result_players" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = (select owner from "quiz_game_match_results" where result_id=OLD.result_id) and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_RESULT_PLAYER'); END;
+CREATE TRIGGER "d1_result_player_delete" before DELETE on "quiz_game_result_players" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = (select owner from "quiz_game_matches" where match_id=OLD.match_id) and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_RESULT_PLAYER'); END;
 --> statement-breakpoint
 CREATE TRIGGER d1_result_player_membership BEFORE INSERT ON quiz_game_result_players
 WHEN NOT EXISTS (
-  SELECT 1 FROM quiz_game_match_results AS result, json_each(result.payload, '$.players') AS player
-  WHERE result.result_id = NEW.result_id
+  SELECT 1 FROM quiz_game_matches AS result, json_each(result.payload, '$.players') AS player
+  WHERE result.match_id = NEW.match_id
     AND json_extract(player.value, '$.id') = NEW.actor_id
     AND json_extract(player.value, '$.name') = NEW.name
     AND json_extract(player.value, '$.ratingDelta') = NEW.rating_delta
@@ -341,18 +340,18 @@ BEGIN SELECT RAISE(ABORT, 'INVALID_RESULT_PLAYER'); END;
 --> statement-breakpoint
 CREATE TRIGGER d1_result_player_update BEFORE UPDATE ON quiz_game_result_players
     WHEN NOT (
-      NEW.result_id = OLD.result_id AND NEW.actor_id = OLD.actor_id AND NEW.rating_delta = OLD.rating_delta
+      NEW.match_id = OLD.match_id AND NEW.actor_id = OLD.actor_id AND NEW.rating_delta = OLD.rating_delta
       AND EXISTS (SELECT 1 FROM quiz_game_result_privacy_changes permit, json_each(permit.payload, '$.players') player
-        WHERE permit.result_id = OLD.result_id AND json_extract(player.value, '$.id') = OLD.actor_id
+        WHERE permit.match_id = OLD.match_id AND json_extract(player.value, '$.id') = OLD.actor_id
           AND json_extract(player.value, '$.name') = NEW.name)
     ) BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_RESULT_PLAYER'); END;
 --> statement-breakpoint
-CREATE TRIGGER d1_result_update BEFORE UPDATE ON quiz_game_match_results
+CREATE TRIGGER d1_result_update BEFORE UPDATE ON quiz_game_matches
     WHEN NOT (
-      NEW.result_id = OLD.result_id AND NEW.owner = OLD.owner AND NEW.match_id = OLD.match_id AND NEW.finished_at = OLD.finished_at
-      AND EXISTS (SELECT 1 FROM quiz_game_result_privacy_changes permit
-        WHERE permit.result_id = OLD.result_id AND permit.previous_hash = OLD.payload_hash
-          AND permit.payload_hash = NEW.payload_hash AND permit.payload = NEW.payload)
+      NEW.match_id = OLD.match_id AND NEW.owner = OLD.owner AND NEW.parent_room_id IS OLD.parent_room_id AND NEW.created_at = OLD.created_at AND NEW.started_at IS OLD.started_at AND NEW.finished_at IS OLD.finished_at
+      AND ((NEW.status = 'conflict' AND OLD.status IN ('confirmed','invalid','conflict') AND NEW.payload = OLD.payload AND NEW.payload_hash = OLD.payload_hash) OR (NEW.status = OLD.status AND EXISTS (SELECT 1 FROM quiz_game_result_privacy_changes permit
+        WHERE permit.match_id = OLD.match_id AND permit.previous_hash = OLD.payload_hash
+          AND permit.payload_hash = NEW.payload_hash AND permit.payload = NEW.payload)))
     ) BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_RESULT'); END;
 --> statement-breakpoint
 CREATE TRIGGER "d1_ruleset_delete" before DELETE on "quiz_game_ruleset_versions" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = OLD."owner" and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_CATALOG'); END;
@@ -370,7 +369,7 @@ CREATE TRIGGER "d1_transfer_update" before UPDATE on "quiz_game_administrator_tr
 --> statement-breakpoint
 CREATE TRIGGER "d1_user_report_delete" before DELETE on "quiz_game_user_reports" when not (OLD."created_at" <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-365 days') or exists(select 1 from "quiz_game_instance_deletions" job where job.owner = (select owner from "quiz_game_instances" where id=OLD.instance_id) and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_AUDIT'); END;
 --> statement-breakpoint
-CREATE TRIGGER "d1_user_report_update" before UPDATE on "quiz_game_user_reports" when not ((NEW."id" is OLD."id" and NEW."organization_id" is OLD."organization_id" and NEW."instance_id" is OLD."instance_id" and NEW."actor_id" is OLD."actor_id" and NEW."reporter_id" is OLD."reporter_id" and NEW."result_id" is OLD."result_id" and NEW."reason" is OLD."reason" and NEW."created_at" is OLD."created_at" and (OLD.resolved_at is null or NEW."id" is OLD."id" and NEW."organization_id" is OLD."organization_id" and NEW."instance_id" is OLD."instance_id" and NEW."actor_id" is OLD."actor_id" and NEW."reporter_id" is OLD."reporter_id" and NEW."result_id" is OLD."result_id" and NEW."reason" is OLD."reason" and NEW."created_at" is OLD."created_at" and NEW."resolved_at" is OLD."resolved_at" and NEW."operator_id" is OLD."operator_id" and NEW."resolution" is OLD."resolution")) or (exists(select 1 from "quiz_game_organization_accounts" where "quiz_game_organization_accounts"."withdrawn_at" is not null and ("quiz_game_organization_accounts"."actor_id" = OLD."actor_id" or "quiz_game_organization_accounts"."actor_id" = OLD."reporter_id" or "quiz_game_organization_accounts"."actor_id" = OLD."operator_id")) and NEW."id" is OLD."id" and NEW."organization_id" is OLD."organization_id" and NEW."instance_id" is OLD."instance_id" and NEW."actor_id" is OLD."actor_id" and NEW."reporter_id" is OLD."reporter_id" and NEW."result_id" is OLD."result_id" and NEW."created_at" is OLD."created_at" and NEW."resolved_at" is OLD."resolved_at" and NEW."operator_id" is OLD."operator_id" and NEW."reason" is case when OLD."reason" is null then null else '退会に伴い削除' end and NEW."resolution" is case when OLD."resolution" is null then null else '退会に伴い削除' end)) BEGIN select raise(abort, 'IMMUTABLE_AUDIT'); END;
+CREATE TRIGGER "d1_user_report_update" before UPDATE on "quiz_game_user_reports" when not ((NEW."id" is OLD."id" and NEW."organization_id" is OLD."organization_id" and NEW."instance_id" is OLD."instance_id" and NEW."actor_id" is OLD."actor_id" and NEW."reporter_id" is OLD."reporter_id" and NEW."match_id" is OLD."match_id" and NEW."reason" is OLD."reason" and NEW."created_at" is OLD."created_at" and (OLD.resolved_at is null or NEW."id" is OLD."id" and NEW."organization_id" is OLD."organization_id" and NEW."instance_id" is OLD."instance_id" and NEW."actor_id" is OLD."actor_id" and NEW."reporter_id" is OLD."reporter_id" and NEW."match_id" is OLD."match_id" and NEW."reason" is OLD."reason" and NEW."created_at" is OLD."created_at" and NEW."resolved_at" is OLD."resolved_at" and NEW."operator_id" is OLD."operator_id" and NEW."resolution" is OLD."resolution")) or (exists(select 1 from "quiz_game_organization_accounts" where "quiz_game_organization_accounts"."withdrawn_at" is not null and ("quiz_game_organization_accounts"."actor_id" = OLD."actor_id" or "quiz_game_organization_accounts"."actor_id" = OLD."reporter_id" or "quiz_game_organization_accounts"."actor_id" = OLD."operator_id")) and NEW."id" is OLD."id" and NEW."organization_id" is OLD."organization_id" and NEW."instance_id" is OLD."instance_id" and NEW."actor_id" is OLD."actor_id" and NEW."reporter_id" is OLD."reporter_id" and NEW."match_id" is OLD."match_id" and NEW."created_at" is OLD."created_at" and NEW."resolved_at" is OLD."resolved_at" and NEW."operator_id" is OLD."operator_id" and NEW."reason" is case when OLD."reason" is null then null else '退会に伴い削除' end and NEW."resolution" is case when OLD."resolution" is null then null else '退会に伴い削除' end)) BEGIN select raise(abort, 'IMMUTABLE_AUDIT'); END;
 --> statement-breakpoint
 CREATE TRIGGER difficulty_trial_append AFTER INSERT ON quiz_game_difficulty_trials BEGIN
   INSERT INTO quiz_game_difficulty_samples(owner,generation,band,players,rules_hash,band_revision,trials,correct)
@@ -424,7 +423,7 @@ CREATE TRIGGER federation_result_delivery_original_delete BEFORE DELETE ON quiz_
 BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_FEDERATION_RESULT'); END;
 --> statement-breakpoint
 CREATE TRIGGER federation_result_delivery_original_update BEFORE UPDATE ON quiz_federation_result_deliveries
-WHEN NEW.event_id IS NOT OLD.event_id OR NEW.result_id IS NOT OLD.result_id OR NEW.instance_id IS NOT OLD.instance_id OR NEW.peer_origin IS NOT OLD.peer_origin
+WHEN NEW.event_id IS NOT OLD.event_id OR NEW.match_id IS NOT OLD.match_id OR NEW.instance_id IS NOT OLD.instance_id OR NEW.peer_origin IS NOT OLD.peer_origin
   OR NEW.source_actor_id IS NOT OLD.source_actor_id OR NEW.payload IS NOT OLD.payload OR NEW.payload_hash IS NOT OLD.payload_hash
   OR (OLD.message IS NOT NULL AND NEW.message IS NOT OLD.message)
 BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_FEDERATION_RESULT'); END;
@@ -451,10 +450,10 @@ BEGIN
   SELECT RAISE(ABORT, 'STALE_D1_SNAPSHOT');
 END;
 --> statement-breakpoint
-CREATE TRIGGER result_privacy_schedule AFTER INSERT ON quiz_game_match_results
+CREATE TRIGGER result_privacy_schedule AFTER INSERT ON quiz_game_matches
 WHEN json_type(NEW.payload,'$.completedQuestions')='array' OR EXISTS(SELECT 1 FROM json_each(NEW.payload,'$.players') WHERE json_extract(value,'$.guest')=1)
 BEGIN
- INSERT INTO quiz_game_result_privacy_jobs(result_id,due_at) VALUES(NEW.result_id,
+ INSERT INTO quiz_game_result_privacy_jobs(match_id,due_at) VALUES(NEW.match_id,
  strftime('%Y-%m-%dT%H:%M:%fZ',json_extract(NEW.payload,'$.result.finishedAt')/1000.0,'unixepoch',
  CASE WHEN json_extract(NEW.payload,'$.definition.original')=1 OR EXISTS(SELECT 1 FROM json_each(NEW.payload,'$.players') WHERE json_extract(value,'$.guest')=1) THEN '+30 days' ELSE '+365 days' END));
 END;

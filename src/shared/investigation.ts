@@ -1,6 +1,6 @@
 import type { Pagination } from './pagination.ts';
 export type MatchStatistics = {
-  resultId: string;
+  matchId: string;
   finishedAt: string;
   outcome: string;
   correct: number;

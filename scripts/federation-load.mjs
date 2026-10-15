@@ -319,13 +319,13 @@ async function match(cohort, mode, presenter = null) {
     `${mode} result saved`,
     30000,
   );
-  const resultId = first.state.result.id;
+  const matchId = first.state.matchId;
   await until(
-    () => cohort.every((client) => client.state.result?.id === resultId),
+    () => cohort.every((client) => client.state.matchId === matchId),
     'cohort result consistency',
   );
   report[mode].games++;
-  return resultId;
+  return matchId;
 }
 async function ranked() {
   let end = Infinity;
@@ -344,9 +344,9 @@ async function ranked() {
       report.ranked.activeStartedAt = new Date().toISOString();
       end = Date.now() + minutes * 60000;
     }
-    const resultId = await match(cohort, 'ranked');
+    const matchId = await match(cohort, 'ranked');
     const delivery = {
-      resultId,
+      matchId,
       finishedAt: cohort[0].state.result.finishedAt,
       confirmedAt: Date.now(),
       historyAt: null,
@@ -356,7 +356,7 @@ async function ranked() {
     const deadline = Date.now() + 90000;
     while (true) {
       const page = await api('b', 'history', { index: 3 });
-      if (page.history.some((entry) => entry.resultId === resultId)) {
+      if (page.history.some((entry) => entry.matchId === matchId)) {
         delivery.historyAt = Date.now();
         delivery.latencyMs = delivery.historyAt - delivery.confirmedAt;
         break;

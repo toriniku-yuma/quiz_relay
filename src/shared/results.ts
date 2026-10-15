@@ -13,7 +13,7 @@ export type ResultsOverview = {
       explanation: string;
       source: string;
     }[];
-    resultId: string;
+    matchId: string;
     finishedAt: string;
     reason: string;
     winnerId: string | null;
@@ -34,11 +34,11 @@ export type ResultsOverview = {
 };
 
 export type HistoryEntry = ResultsOverview['history'][number];
-export type HistoryCursor = { finishedAt: string; resultId: string };
+export type HistoryCursor = { finishedAt: string; matchId: string };
 export type ResultsQuery = {
   section?: 'history' | 'ranking' | 'self';
   kind?: 'ranked' | 'casual' | 'room';
-  resultId?: string;
+  matchId?: string;
   cursor?: HistoryCursor;
 };
 export function resultsQuery(input: unknown): ResultsQuery {
@@ -52,17 +52,17 @@ export function resultsQuery(input: unknown): ResultsQuery {
     (value.section !== undefined &&
       !['history', 'ranking', 'self'].includes(value.section)) ||
     (value.kind !== undefined && !['ranked', 'casual', 'room'].includes(value.kind)) ||
-    (value.resultId !== undefined && !id(value.resultId)) ||
-    (value.resultId !== undefined &&
+    (value.matchId !== undefined && !id(value.matchId)) ||
+    (value.matchId !== undefined &&
       (value.cursor !== undefined || value.kind !== undefined)) ||
     ((value.section === 'ranking' || value.section === 'self') &&
       (value.kind !== undefined ||
-        value.resultId !== undefined ||
+        value.matchId !== undefined ||
         value.cursor !== undefined)) ||
     (value.cursor !== undefined &&
       (!value.cursor ||
         typeof value.cursor !== 'object' ||
-        !id(value.cursor.resultId) ||
+        !id(value.cursor.matchId) ||
         typeof value.cursor.finishedAt !== 'string' ||
         !Number.isFinite(Date.parse(value.cursor.finishedAt)) ||
         new Date(value.cursor.finishedAt).toISOString() !== value.cursor.finishedAt))
@@ -71,12 +71,12 @@ export function resultsQuery(input: unknown): ResultsQuery {
   return {
     ...(value.section ? { section: value.section } : {}),
     ...(value.kind ? { kind: value.kind } : {}),
-    ...(value.resultId ? { resultId: value.resultId } : {}),
+    ...(value.matchId ? { matchId: value.matchId } : {}),
     ...(value.cursor
       ? {
           cursor: {
             finishedAt: value.cursor.finishedAt,
-            resultId: value.cursor.resultId,
+            matchId: value.cursor.matchId,
           },
         }
       : {}),

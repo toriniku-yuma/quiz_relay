@@ -243,7 +243,7 @@ app.post('/api/probes/game/deliveries', async (context) => {
   const deliveries = await db
     .select({
       eventId: federationResultDeliveries.eventId,
-      resultId: federationResultDeliveries.resultId,
+      matchId: federationResultDeliveries.matchId,
       finishedAt: sql<number>`json_extract(${federationResultDeliveries.payload}, '$.finishedAt')`,
       attempts: federationResultDeliveries.attempts,
       nextAttemptAt: federationResultDeliveries.nextAttemptAt,
@@ -543,7 +543,7 @@ app.post('/api/probes/game/load/history', async (context) => {
     throw new OrganizationError('QA_TARGET_MISMATCH', 403);
   const page = await foreignHistory(context.env, identity.subject);
   return context.json({
-    history: page.history.map((entry) => ({ resultId: entry.resultId })),
+    history: page.history.map((entry) => ({ matchId: entry.matchId })),
   });
 });
 app.post('/api/probes/game/load/config', async (context) => {

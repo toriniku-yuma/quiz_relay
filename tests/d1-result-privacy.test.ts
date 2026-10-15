@@ -11,7 +11,7 @@ import {
   federationQuestionImports,
   federationQuestionLinks,
   instances,
-  matchResults,
+  matches,
   organizationAccounts,
   questionSubmissions,
   questionVersions,
@@ -80,26 +80,23 @@ it('24問と作問者名を持つ結果を保存・再読取し、出題済み�
   expect(projected).toEqual(record);
   await commitD1Result(runtime.GAME_D1, record);
   expect(
-    (
-      await db
-        .select()
-        .from(matchResults)
-        .where(eq(matchResults.resultId, record.result.id))
-    )[0].payload,
+    (await db.select().from(matches).where(eq(matches.matchId, record.matchId)))[0]
+      .payload,
   ).toEqual(record);
   await withdraw(account.actorId);
-  expect(await eraseResult(db, record.result.id)).toBe(true);
+  expect(await eraseResult(db, record.matchId)).toBe(true);
   const [anonymous] = await db
     .select()
-    .from(matchResults)
-    .where(eq(matchResults.resultId, record.result.id));
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
+  if (!anonymous.payload || !anonymous.payloadHash) throw new Error('RESULT_NOT_SAVED');
   expect(anonymous.payload.players[0].name).toBe('退会ユーザー');
   expect(anonymous.payload.completedQuestions).toHaveLength(24);
   const invalid = structuredClone(anonymous.payload);
   invalid.players[0].correct++;
   await expect(
     db.insert(resultPrivacyChanges).values({
-      resultId: record.result.id,
+      matchId: record.matchId,
       previousHash: anonymous.payloadHash,
       payload: invalid,
       payloadHash: await contentHash(invalid),
@@ -234,7 +231,7 @@ it('共有作問者を匿名化し、完全削除された共有元の振り返�
   expect((await privateResult(db, record)).completedQuestions?.[0].authorName).toBe(
     '退会ユーザー',
   );
-  expect(await eraseResult(db, record.result.id)).toBe(true);
+  expect(await eraseResult(db, record.matchId)).toBe(true);
   await changeD1(db, async (writes) => {
     writes.push(
       db
@@ -246,7 +243,7 @@ it('共有作問者を匿名化し、完全削除された共有元の振り返�
   expect(closed.completedQuestions?.[0].text).toContain('削除された共有元');
   expect(closed.completedQuestions?.[0].readings).toEqual([]);
   expect(closed.completedQuestions?.[0].authorName).toBe('退会ユーザー');
-  expect(await eraseResult(db, record.result.id)).toBe(true);
+  expect(await eraseResult(db, record.matchId)).toBe(true);
 });
 
 it('退会した参加者と作問者の名前を隠し、3つの原本を一緒に匿名化する', async () => {
@@ -265,19 +262,19 @@ it('退会した参加者と作問者の名前を隠し、3つの原本を一緒
   expect(projected.players[0].name).toBe('退会ユーザー');
   expect(projected.completedQuestions?.[0].authorName).toBe('退会ユーザー');
   expect(projected.definition.selection?.authorNames?.[id]).toBe('退会ユーザー');
-  expect(await eraseResult(db, record.result.id)).toBe(true);
+  expect(await eraseResult(db, record.matchId)).toBe(true);
   const [saved] = await db
     .select()
-    .from(matchResults)
-    .where(eq(matchResults.resultId, record.result.id));
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
   const [outbox] = await db
     .select()
     .from(resultOutbox)
-    .where(eq(resultOutbox.resultId, record.result.id));
+    .where(eq(resultOutbox.matchId, record.matchId));
   const players = await db
     .select()
     .from(resultPlayers)
-    .where(eq(resultPlayers.resultId, record.result.id));
+    .where(eq(resultPlayers.matchId, record.matchId));
   expect(saved.payload).toEqual(projected);
   expect(outbox.payload).toEqual(projected);
   expect(saved.payloadHash).toBe(await contentHash(projected));
@@ -286,15 +283,11 @@ it('退会した参加者と作問者の名前を隠し、3つの原本を一緒
     '退会ユーザー',
   );
   expect(await db.select().from(resultPrivacyChanges)).toEqual([]);
-  expect(await eraseResult(db, record.result.id)).toBe(false);
+  expect(await eraseResult(db, record.matchId)).toBe(false);
   expect((await commitD1Result(runtime.GAME_D1, record)).rowsWritten).toBe(0);
   expect(
-    (
-      await db
-        .select()
-        .from(matchResults)
-        .where(eq(matchResults.resultId, record.result.id))
-    )[0].payload,
+    (await db.select().from(matches).where(eq(matches.matchId, record.matchId)))[0]
+      .payload,
   ).toEqual(projected);
 });
 
@@ -304,7 +297,7 @@ it('D1の順位は同点を同順位とし、除外後も本人のレートを�
   record.result.finishedAt = Date.now();
   await commitD1Result(runtime.GAME_D1, record);
   const second = structuredClone(record);
-  second.result.id = crypto.randomUUID();
+  second.matchId = crypto.randomUUID();
   second.matchId = crypto.randomUUID();
   second.players[0].id = 'c';
   second.players[0].name = 'C';
@@ -343,8 +336,8 @@ it('同時刻の履歴もカーソルで重複・欠落なく読み、一覧に�
   const ids = [];
   for (let index = 0; index < 23; index++) {
     record.matchId = crypto.randomUUID();
-    record.result.id = crypto.randomUUID();
-    ids.push(record.result.id);
+    record.matchId = crypto.randomUUID();
+    ids.push(record.matchId);
     await commitD1Result(runtime.GAME_D1, record);
   }
   const first = await readResults(db, record.owner, 'a', [], { section: 'history' });
@@ -359,11 +352,11 @@ it('同時刻の履歴もカーソルで重複・欠落なく読み、一覧に�
   expect(second.history).toHaveLength(3);
   expect(second.nextCursor).toBe(null);
   expect(
-    [...first.history, ...second.history].map((entry) => entry.resultId).sort(),
+    [...first.history, ...second.history].map((entry) => entry.matchId).sort(),
   ).toEqual(ids.sort());
   const detail = await readResults(db, record.owner, 'a', [], {
     section: 'history',
-    resultId: ids[0],
+    matchId: ids[0],
   });
   expect(detail.history[0].questions?.[0].displayAnswer).toBe(
     record.completedQuestions[0].displayAnswer,
@@ -372,7 +365,7 @@ it('同時刻の履歴もカーソルで重複・欠落なく読み、一覧に�
     (
       await readResults(db, record.owner, 'someone-else', [], {
         section: 'history',
-        resultId: ids[0],
+        matchId: ids[0],
       })
     ).history,
   ).toEqual([]);
@@ -419,12 +412,8 @@ it('30日でゲスト名と持込み問題、365日で通常の問題本文を�
   expect((await privateResult(db, record)).completedQuestions).toBeUndefined();
   await commitD1Result(runtime.GAME_D1, record);
   expect(
-    (
-      await db
-        .select()
-        .from(matchResults)
-        .where(eq(matchResults.resultId, record.result.id))
-    )[0].payload.completedQuestions,
+    (await db.select().from(matches).where(eq(matches.matchId, record.matchId)))[0]
+      .payload?.completedQuestions,
   ).toBeUndefined();
 });
 
@@ -433,8 +422,10 @@ it('匿名化を装った得点・回答・名前の改変をDBの許可証検�
   await commitD1Result(runtime.GAME_D1, record);
   const [stored] = await db
     .select()
-    .from(matchResults)
-    .where(eq(matchResults.resultId, record.result.id));
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
+  if (!stored.payloadHash) throw new Error('RESULT_NOT_SAVED');
+  const previousHash = stored.payloadHash;
   for (const change of [
     (value: typeof record) => {
       value.players[0].correct += 1;
@@ -454,8 +445,8 @@ it('匿名化を装った得点・回答・名前の改変をDBの許可証検�
       changeD1(db, async (writes) => {
         writes.push(
           db.insert(resultPrivacyChanges).values({
-            resultId: record.result.id,
-            previousHash: stored.payloadHash,
+            matchId: record.matchId,
+            previousHash,
             payloadHash: await contentHash(payload),
             payload,
           }),
@@ -465,9 +456,9 @@ it('匿名化を装った得点・回答・名前の改変をDBの許可証検�
   }
   await expect(
     runtime.GAME_D1.prepare(
-      'update quiz_game_result_players set rating_delta = 0 where result_id = ?',
+      'update quiz_game_result_players set rating_delta = 0 where match_id = ?',
     )
-      .bind(record.result.id)
+      .bind(record.matchId)
       .run(),
   ).rejects.toThrow('IMMUTABLE_RESULT_PLAYER');
   expect(await db.select().from(resultPrivacyChanges)).toEqual([]);
@@ -479,41 +470,36 @@ it('匿名化途中で失敗しても原本・参加者名・許可証を残さ�
   await withdraw(account.actorId);
   const [stored] = await db
     .select()
-    .from(matchResults)
-    .where(eq(matchResults.resultId, record.result.id));
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
+  if (!stored.payloadHash) throw new Error('RESULT_NOT_SAVED');
+  const previousHash = stored.payloadHash;
   const payload = await privateResult(db, record),
     payloadHash = await contentHash(payload);
   await expect(
     changeD1(db, async (writes) => {
       writes.push(
         db.insert(resultPrivacyChanges).values({
-          resultId: record.result.id,
-          previousHash: stored.payloadHash,
+          matchId: record.matchId,
+          previousHash,
           payloadHash,
           payload,
         }),
         db
-          .update(matchResults)
+          .update(matches)
           .set({ payload, payloadHash })
-          .where(eq(matchResults.resultId, record.result.id)),
+          .where(eq(matches.matchId, record.matchId)),
         sql`insert into no_such_table (id) values ('fail')`,
       );
     }),
   ).rejects.toThrow();
   expect(
-    (
-      await db
-        .select()
-        .from(matchResults)
-        .where(eq(matchResults.resultId, record.result.id))
-    )[0].payload,
+    (await db.select().from(matches).where(eq(matches.matchId, record.matchId)))[0]
+      .payload,
   ).toEqual(record);
   expect(
     (
-      await db
-        .select()
-        .from(resultOutbox)
-        .where(eq(resultOutbox.resultId, record.result.id))
+      await db.select().from(resultOutbox).where(eq(resultOutbox.matchId, record.matchId))
     )[0].payload,
   ).toEqual(record);
   expect(await db.select().from(resultPrivacyChanges)).toEqual([]);

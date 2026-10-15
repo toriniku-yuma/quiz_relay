@@ -2,7 +2,7 @@ import { and, asc, desc, eq, sql, sum } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { ResultsOverview, ResultsQuery } from '../../shared/results.ts';
 import { type Database, readD1 } from '../db/d1.ts';
-import { resultPlayers as p, matchResults as r } from '../db/schema.ts';
+import { resultPlayers as p, matches as r } from '../db/schema.ts';
 import { privateResultSQL } from './privacy.ts';
 import { ratingPolicy } from './rating.ts';
 import type { ResultRecord } from './record.ts';
@@ -24,7 +24,7 @@ export async function readResults(
             from ${r} as ${sql.identifier('latest_result')}, json_each(${privateResultSQL(latest.payload)}, '$.players') player
             where ${latest.owner} = ${owner} and json_extract(${latest.payload}, '$.kind') = 'ranked'
               and json_extract(player.value, '$.id') = ${p.actorId}
-            order by ${latest.finishedAt} desc, ${latest.resultId} desc limit 1)`.as(
+            order by ${latest.finishedAt} desc, ${latest.matchId} desc limit 1)`.as(
           'name',
         ),
         rating: sql<number>`${ratingPolicy.initial} + ${sum(p.ratingDelta)}`
@@ -35,7 +35,7 @@ export async function readResults(
           .as('rank'),
       })
       .from(p)
-      .innerJoin(r, eq(r.resultId, p.resultId))
+      .innerJoin(r, eq(r.matchId, p.matchId))
       .where(
         and(
           eq(r.owner, owner),
@@ -71,7 +71,7 @@ export async function readResults(
               ),
           })
           .from(p)
-          .innerJoin(r, eq(r.resultId, p.resultId))
+          .innerJoin(r, eq(r.matchId, p.matchId))
           .where(
             and(
               eq(r.owner, owner),
@@ -88,34 +88,34 @@ export async function readResults(
         ? []
         : await db
             .select({
-              resultId: r.resultId,
-              finishedAt: r.finishedAt,
+              matchId: r.matchId,
+              finishedAt: sql<string>`${r.finishedAt}`,
               reason: sql<string>`${r.payload}->'result'->>'reason'`,
               winnerId: sql<string | null>`${r.payload}->'result'->>'winnerId'`,
               ratingDelta: p.ratingDelta,
-              payload: (query.section === 'history' && !query.resultId
+              payload: (query.section === 'history' && !query.matchId
                 ? sql`json_remove(${privateResultSQL(r.payload)}, '$.completedQuestions')`
                 : privateResultSQL(r.payload)
               ).mapWith((value: string) => JSON.parse(value) as ResultRecord),
             })
             .from(p)
-            .innerJoin(r, eq(r.resultId, p.resultId))
+            .innerJoin(r, eq(r.matchId, p.matchId))
             .where(
               and(
                 eq(r.owner, owner),
                 eq(p.actorId, actorId),
                 query.kind ? sql`${r.payload}->>'kind' = ${query.kind}` : undefined,
-                query.resultId ? eq(r.resultId, query.resultId) : undefined,
+                query.matchId ? eq(r.matchId, query.matchId) : undefined,
                 query.finishedAfter
                   ? sql`${r.finishedAt} > ${query.finishedAfter}`
                   : undefined,
                 query.cursor
-                  ? sql`(${r.finishedAt}, ${r.resultId}) < (${query.cursor.finishedAt}, ${query.cursor.resultId})`
+                  ? sql`(${r.finishedAt}, ${r.matchId}) < (${query.cursor.finishedAt}, ${query.cursor.matchId})`
                   : undefined,
               ),
             )
-            .orderBy(desc(r.finishedAt), desc(r.resultId))
-            .limit(query.resultId ? 1 : query.section === 'history' ? 21 : 20);
+            .orderBy(desc(r.finishedAt), desc(r.matchId))
+            .limit(query.matchId ? 1 : query.section === 'history' ? 21 : 20);
 
     const page = history.slice(0, 20),
       last = page.at(-1);
@@ -123,13 +123,13 @@ export async function readResults(
     return {
       ranking,
       ...(self ? { self } : {}),
-      ...(query.section === 'history' && !query.resultId
+      ...(query.section === 'history' && !query.matchId
         ? {
             nextCursor:
               history.length > 20 && last
                 ? {
                     finishedAt: new Date(last.finishedAt).toISOString(),
-                    resultId: last.resultId,
+                    matchId: last.matchId,
                   }
                 : null,
           }

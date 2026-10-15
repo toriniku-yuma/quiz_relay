@@ -90,9 +90,8 @@ CREATE TABLE `quiz_game_difficulty_samples` (
 --> statement-breakpoint
 CREATE TABLE `quiz_game_difficulty_trials` (
 	`owner` text NOT NULL,
-	`match_id` text NOT NULL,
 	`question_id` text NOT NULL,
-	`result_id` text NOT NULL,
+	`match_id` text NOT NULL,
 	`generation` text NOT NULL,
 	`band` integer NOT NULL,
 	`players` integer NOT NULL,
@@ -101,10 +100,10 @@ CREATE TABLE `quiz_game_difficulty_trials` (
 	`correct` integer NOT NULL,
 	`actors` text NOT NULL,
 	PRIMARY KEY(`owner`, `match_id`, `question_id`),
-	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`match_id`) REFERENCES `quiz_game_matches`(`match_id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `difficulty_trials_result` ON `quiz_game_difficulty_trials` (`result_id`);--> statement-breakpoint
+CREATE INDEX `difficulty_trials_result` ON `quiz_game_difficulty_trials` (`match_id`);--> statement-breakpoint
 CREATE INDEX `difficulty_trials_generation` ON `quiz_game_difficulty_trials` (`owner`,`generation`);--> statement-breakpoint
 CREATE TABLE `quiz_federation_actors` (
 	`actor_id` text PRIMARY KEY NOT NULL,
@@ -374,7 +373,7 @@ CREATE INDEX `federation_reservation_identity` ON `quiz_federation_reservations`
 CREATE UNIQUE INDEX `quiz_federation_reservations_peer_origin_operation_id_unique` ON `quiz_federation_reservations` (`peer_origin`,`operation_id`);--> statement-breakpoint
 CREATE TABLE `quiz_federation_result_deliveries` (
 	`event_id` text PRIMARY KEY NOT NULL,
-	`result_id` text NOT NULL,
+	`match_id` text NOT NULL,
 	`instance_id` text NOT NULL,
 	`peer_origin` text NOT NULL,
 	`source_actor_id` text NOT NULL,
@@ -392,7 +391,7 @@ CREATE TABLE `quiz_federation_result_deliveries` (
 );
 --> statement-breakpoint
 CREATE INDEX `federation_result_due` ON `quiz_federation_result_deliveries` (`received_at`,`quarantined`,`next_attempt_at`);--> statement-breakpoint
-CREATE UNIQUE INDEX `quiz_federation_result_deliveries_result_id_peer_origin_source_actor_id_unique` ON `quiz_federation_result_deliveries` (`result_id`,`peer_origin`,`source_actor_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `quiz_federation_result_deliveries_match_id_peer_origin_source_actor_id_unique` ON `quiz_federation_result_deliveries` (`match_id`,`peer_origin`,`source_actor_id`);--> statement-breakpoint
 CREATE TABLE `quiz_federation_result_inbox` (
 	`peer_origin` text NOT NULL,
 	`event_id` text NOT NULL,
@@ -509,18 +508,23 @@ CREATE TABLE `quiz_maintenance_checkpoints` (
 	`completed_day` text NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE `quiz_game_match_results` (
-	`result_id` text PRIMARY KEY NOT NULL,
+CREATE TABLE `quiz_game_matches` (
+	`match_id` text PRIMARY KEY NOT NULL,
 	`owner` text NOT NULL,
-	`match_id` text NOT NULL,
-	`finished_at` text NOT NULL,
-	`payload_hash` text NOT NULL,
-	`payload` text NOT NULL,
-	CONSTRAINT "match_results_hash" CHECK((length("quiz_game_match_results"."payload_hash") = 64 AND "quiz_game_match_results"."payload_hash" NOT GLOB '*[^0-9a-f]*'))
+	`parent_room_id` text,
+	`status` text NOT NULL,
+	`created_at` text NOT NULL,
+	`started_at` text,
+	`finished_at` text,
+	`payload_hash` text,
+	`payload` text,
+	CONSTRAINT "match_status" CHECK("quiz_game_matches"."status" IN ('waiting', 'running', 'confirmed', 'invalid', 'conflict', 'cancelled')),
+	CONSTRAINT "match_result_state" CHECK(("quiz_game_matches"."status" IN ('confirmed', 'invalid', 'conflict') AND "quiz_game_matches"."payload" IS NOT NULL AND "quiz_game_matches"."payload_hash" IS NOT NULL AND "quiz_game_matches"."finished_at" IS NOT NULL) OR ("quiz_game_matches"."status" IN ('waiting', 'running', 'cancelled') AND "quiz_game_matches"."payload" IS NULL AND "quiz_game_matches"."payload_hash" IS NULL)),
+	CONSTRAINT "match_results_hash" CHECK((length("quiz_game_matches"."payload_hash") = 64 AND "quiz_game_matches"."payload_hash" NOT GLOB '*[^0-9a-f]*'))
 );
 --> statement-breakpoint
-CREATE INDEX `d1_matchResults_2` ON `quiz_game_match_results` (`owner`,`finished_at`);--> statement-breakpoint
-CREATE UNIQUE INDEX `d1_matchResults_1` ON `quiz_game_match_results` (`owner`,`match_id`);--> statement-breakpoint
+CREATE INDEX `matches_finished` ON `quiz_game_matches` (`owner`,`finished_at`);--> statement-breakpoint
+CREATE INDEX `matches_status` ON `quiz_game_matches` (`owner`,`status`);--> statement-breakpoint
 CREATE TABLE `quiz_game_matchmaking_settings` (
 	`owner` text NOT NULL,
 	`profile` text NOT NULL,
@@ -844,38 +848,38 @@ CREATE TABLE `quiz_game_question_versions` (
 );
 --> statement-breakpoint
 CREATE TABLE `quiz_game_result_outbox` (
-	`result_id` text PRIMARY KEY NOT NULL,
+	`match_id` text PRIMARY KEY NOT NULL,
 	`payload_hash` text NOT NULL,
 	`payload` text NOT NULL,
-	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`match_id`) REFERENCES `quiz_game_matches`(`match_id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `quiz_game_result_players` (
-	`result_id` text NOT NULL,
+	`match_id` text NOT NULL,
 	`actor_id` text NOT NULL,
 	`name` text NOT NULL,
 	`rating_delta` integer NOT NULL,
-	PRIMARY KEY(`result_id`, `actor_id`),
-	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE no action,
+	PRIMARY KEY(`match_id`, `actor_id`),
+	FOREIGN KEY (`match_id`) REFERENCES `quiz_game_matches`(`match_id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "result_players_delta" CHECK("quiz_game_result_players"."rating_delta" IN (-20, 0, 20))
 );
 --> statement-breakpoint
 CREATE INDEX `d1_resultPlayers_1` ON `quiz_game_result_players` (`actor_id`);--> statement-breakpoint
 CREATE TABLE `quiz_game_result_privacy_changes` (
-	`result_id` text PRIMARY KEY NOT NULL,
+	`match_id` text PRIMARY KEY NOT NULL,
 	`previous_hash` text NOT NULL,
 	`payload_hash` text NOT NULL,
 	`payload` text NOT NULL,
-	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`match_id`) REFERENCES `quiz_game_matches`(`match_id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
 CREATE TABLE `quiz_game_result_privacy_jobs` (
-	`result_id` text PRIMARY KEY NOT NULL,
+	`match_id` text PRIMARY KEY NOT NULL,
 	`due_at` text NOT NULL,
-	FOREIGN KEY (`result_id`) REFERENCES `quiz_game_match_results`(`result_id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`match_id`) REFERENCES `quiz_game_matches`(`match_id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-CREATE INDEX `result_privacy_due` ON `quiz_game_result_privacy_jobs` (`due_at`,`result_id`);--> statement-breakpoint
+CREATE INDEX `result_privacy_due` ON `quiz_game_result_privacy_jobs` (`due_at`,`match_id`);--> statement-breakpoint
 CREATE TABLE `quiz_game_room_directory` (
 	`id` text PRIMARY KEY NOT NULL,
 	`instance_id` text NOT NULL,
@@ -937,7 +941,7 @@ CREATE TABLE `quiz_game_user_reports` (
 	`instance_id` text NOT NULL,
 	`actor_id` text NOT NULL,
 	`reporter_id` text NOT NULL,
-	`result_id` text NOT NULL,
+	`match_id` text NOT NULL,
 	`reason` text NOT NULL,
 	`created_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
 	`resolved_at` text,

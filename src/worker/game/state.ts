@@ -528,7 +528,7 @@ function finish(
 ) {
   state.phase =
     reason === 'connections' || reason === 'disqualifications' ? 'INVALID' : 'FINISHED';
-  state.result = { id: crypto.randomUUID(), reason, winnerId, finishedAt: now };
+  state.result = { reason, winnerId, finishedAt: now };
   state.completed = makeResultRecord(state, state.result);
   if (state.completed) {
     state.result.storage = 'pending';

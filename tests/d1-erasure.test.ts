@@ -15,7 +15,7 @@ import {
   instanceGrants,
   instanceRooms,
   instances,
-  matchResults,
+  matches,
   organizationAccounts,
   organizationEvents,
   questionVersions,
@@ -229,10 +229,7 @@ it('結果原本・outbox・参加者を匿名化してから退会を完了し�
   ).toBe(pending.auditErasedAt);
   expect(
     (
-      await db
-        .select()
-        .from(resultOutbox)
-        .where(eq(resultOutbox.resultId, record.result.id))
+      await db.select().from(resultOutbox).where(eq(resultOutbox.matchId, record.matchId))
     )[0].payload.players[0].name,
   ).toBe('退会ユーザー');
   expect(
@@ -240,7 +237,7 @@ it('結果原本・outbox・参加者を匿名化してから退会を完了し�
       await db
         .select()
         .from(resultPlayers)
-        .where(eq(resultPlayers.resultId, record.result.id))
+        .where(eq(resultPlayers.matchId, record.matchId))
     ).find((player) => player.actorId === account.actorId)?.name,
   ).toBe('退会ユーザー');
   expect(matchmaker.anonymizeAccount).toHaveBeenCalled();
@@ -283,16 +280,10 @@ it('削除は対象の原本だけを消し、他インスタンスと削除済�
   expect(queries.mock.calls.length).toBeLessThanOrEqual(50);
   queries.mockRestore();
   expect(
-    await db
-      .select()
-      .from(matchResults)
-      .where(eq(matchResults.owner, first.instance.owner)),
+    await db.select().from(matches).where(eq(matches.owner, first.instance.owner)),
   ).toEqual([]);
   expect(
-    await db
-      .select()
-      .from(matchResults)
-      .where(eq(matchResults.owner, second.instance.owner)),
+    await db.select().from(matches).where(eq(matches.owner, second.instance.owner)),
   ).toHaveLength(1);
   const [receipt] = await db
     .select()

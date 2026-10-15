@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Handler } from 'hono';
 import type { AuthEnv } from '../auth/handlers.ts';
-import { instances, matchResults } from '../db/schema.ts';
+import { instances, matches } from '../db/schema.ts';
 import { readInvestigation } from '../results/investigation.ts';
 import { OrganizationError, validId } from './access.ts';
 import { bulkSanctions } from './bulk.ts';
@@ -41,16 +41,22 @@ export const manageUsers: Handler<AuthEnv> = async (context) => {
       return context.json({ ok: true });
     }
     if (context.req.path.endsWith('/workflow')) {
-      let evidence: typeof matchResults.$inferSelect.payload | undefined;
+      let evidence: typeof matches.$inferSelect.payload | undefined;
       if (value.action === 'report') {
         const rows = await db
           .select()
-          .from(matchResults)
-          .where(eq(matchResults.resultId, validId(value.resultId)));
+          .from(matches)
+          .where(eq(matches.matchId, validId(value.matchId)));
         evidence = rows[0]?.payload;
+        if (!evidence) throw new OrganizationError('RESULT_NOT_FOUND', 404);
       }
       return context.json(
-        await moderationWorkflow(db, context.get('subject'), value, evidence),
+        await moderationWorkflow(
+          db,
+          context.get('subject'),
+          value,
+          evidence === null ? undefined : evidence,
+        ),
       );
     }
     const result = await moderationOverview(db, context.get('subject'), value);
@@ -71,7 +77,7 @@ export const manageUsers: Handler<AuthEnv> = async (context) => {
             db,
             scope.owner,
             result.target.actorId,
-            report?.resultId ?? null,
+            report?.matchId ?? null,
             value,
           ),
         );
