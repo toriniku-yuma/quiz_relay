@@ -389,6 +389,7 @@ it('開始の応答不明をalarmで回復し、失効を先に受けた子sessi
     ).toBe(false);
     expect(
       await child.initializeRoomMatch(
+        id,
         definition,
         scope,
         [actor(0), actor(1)],

@@ -20,7 +20,7 @@ import { questions } from './fixtures/questions';
 const runtime = env as unknown as Env;
 
 function playing() {
-  const state = createState(questions, 0, 2);
+  const state = createState(crypto.randomUUID(), questions, 0, 2);
   state.players = ['alice', 'bob'].map((id) => ({
     id,
     name: id,

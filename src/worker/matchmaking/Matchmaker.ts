@@ -435,6 +435,7 @@ export class Matchmaker extends DurableObject<Env> {
           entry.scope,
         )
       : this.room(entry.room).reserve(
+          entry.room,
           actor,
           entry.name,
           entry.token,

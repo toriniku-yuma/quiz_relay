@@ -219,7 +219,7 @@ function lobbySession(waiting = false) {
     room: { ...roomView('room-a'), waiting },
     connection: 'open',
     error: '',
-    game: { leave: vi.fn(), snapshot: { result: { id: 'result-a' } } },
+    game: { leave: vi.fn(), snapshot: { matchId: 'match-a', result: {} } },
     exit: { submit: vi.fn(), busy: false, uncertain: false, error: '' },
     refresh: vi.fn().mockResolvedValue(undefined),
     leave: vi.fn(),

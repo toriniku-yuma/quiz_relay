@@ -28,7 +28,7 @@ it('作問者名は設定を固定し、問題終了後だけに表示する', (
       authorNames: { [question.id]: '検証作問者' },
     },
   };
-  const state = createState([question], 0, 2, true, definition);
+  const state = createState(crypto.randomUUID(), [question], 0, 2, true, definition);
   definition.selection.authorNames[question.id] = '改名後';
   state.players = structuredClone(original.players);
   state.phase = 'REVEALING';
@@ -37,7 +37,7 @@ it('作問者名は設定を固定し、問題終了後だけに表示する', (
   expect(JSON.stringify(snapshot(state))).not.toContain('検証作問者');
   advance(state, 2);
   expect(snapshot(state).revealedAnswer?.authorName).toBe('検証作問者');
-  const hidden = createState([question], 0, 2, true, {
+  const hidden = createState(crypto.randomUUID(), [question], 0, 2, true, {
     ...definition,
     selection: { ...definition.selection, authorNames: {} },
   });

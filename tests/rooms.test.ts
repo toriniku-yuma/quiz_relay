@@ -62,12 +62,17 @@ it('部屋は8回答者まで。ランクの上限を広げない', () => {
     playersPerMatch: 8,
     kind: 'room',
   } as MatchDefinition;
-  expect(createState(state.questions, 0, 8, true, definition).matchKind).toBe('room');
-  expect(() => createState(state.questions, 0, 9, true, definition)).toThrow(
-    'INVALID_SETUP',
-  );
+  expect(
+    createState(crypto.randomUUID(), state.questions, 0, 8, true, definition).matchKind,
+  ).toBe('room');
   expect(() =>
-    createState(state.questions, 0, 8, true, { ...definition, kind: 'ranked' }),
+    createState(crypto.randomUUID(), state.questions, 0, 9, true, definition),
+  ).toThrow('INVALID_SETUP');
+  expect(() =>
+    createState(crypto.randomUUID(), state.questions, 0, 8, true, {
+      ...definition,
+      kind: 'ranked',
+    }),
   ).toThrow('INVALID_SETUP');
 });
 it('最後の未失格者が勝者。終端後の切断で原本・勝敗を変更しない', () => {

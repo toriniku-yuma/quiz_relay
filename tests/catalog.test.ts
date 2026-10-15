@@ -79,13 +79,14 @@ describe('fixed catalog', () => {
     };
     const loaded = await validateDefinition(source);
     expect(
-      createState(loaded.questions, 0, 3, true, loaded).questions[0].authorName,
+      createState(crypto.randomUUID(), loaded.questions, 0, 3, true, loaded).questions[0]
+        .authorName,
     ).toBe(name);
   });
   it('G14: fixed settings drive panels and deadlines without mutating older matches', async () => {
     const source = await definition();
-    const previous = createState(questions, 0, 2);
-    const state = createState(source.questions, 0, 3, true, source);
+    const previous = createState(crypto.randomUUID(), questions, 0, 2);
+    const state = createState(crypto.randomUUID(), source.questions, 0, 3, true, source);
     source.rules.choiceCount = 2;
     source.questions[0].answer = 'あ';
     source.competition.version = 9;
@@ -168,12 +169,12 @@ describe('fixed catalog', () => {
         competition: { ...original.competition, version: 0 },
       }),
     ).rejects.toThrow('INVALID_VERSION');
-    expect(() => createState(original.questions, 0, 2, true, original)).toThrow(
-      'INVALID_SETUP',
-    );
-    expect(() => createState(original.questions, 1, 3, true, original)).toThrow(
-      'INVALID_SETUP',
-    );
+    expect(() =>
+      createState(crypto.randomUUID(), original.questions, 0, 2, true, original),
+    ).toThrow('INVALID_SETUP');
+    expect(() =>
+      createState(crypto.randomUUID(), original.questions, 1, 3, true, original),
+    ).toThrow('INVALID_SETUP');
   });
 
   it('fails closed without a game DB instead of using probe credentials or bundled mocks', async () => {
@@ -261,5 +262,5 @@ it('D1 loader rejects absent/retired data and invalid immutable versions', async
 });
 
 it('requires an explicit non-empty question set to create a match', () => {
-  expect(() => createState([], 0, 2)).toThrow('INVALID_SETUP');
+  expect(() => createState(crypto.randomUUID(), [], 0, 2)).toThrow('INVALID_SETUP');
 });

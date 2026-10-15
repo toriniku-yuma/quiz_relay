@@ -556,6 +556,7 @@ export class RoomLobby {
     const initial = await this.read();
     if (!initial) throw new OrganizationError('ROOM_NOT_FOUND', 404);
     await this.child(fixed.id).initializeRoomMatch(
+      fixed.id,
       fixed.definition,
       initial.scope,
       fixed.members,

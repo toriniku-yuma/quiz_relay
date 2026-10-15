@@ -176,9 +176,16 @@ it('通知が届かなくても待機列の定期確認で取消対象を解除�
 it('受付後に権限が変わった遅延reserveを拒否する', async () => {
   mocks.blocked.add('a');
   const definition = await mocks.load();
-  const result = await runtime.GAME_ROOM.getByName(
-    `match:${crypto.randomUUID()}`,
-  ).reserve('a', 'A', 'late', definition, { id, owner }, 'generation');
+  const matchId = crypto.randomUUID();
+  const result = await runtime.GAME_ROOM.getByName(`match:${matchId}`).reserve(
+    matchId,
+    'a',
+    'A',
+    'late',
+    definition,
+    { id, owner },
+    'generation',
+  );
   expect(result).toEqual({ ok: false, code: 'INSTANCE_NOT_FOUND' });
 });
 
@@ -282,6 +289,14 @@ it('完全削除は進行中・未保存結果を拒否し、保存済み部屋�
   await room.eraseInstance(id);
   expect(await room.inventoryScope()).toBeNull();
   expect(
-    await room.reserve('a', '再入室', 'token', undefined, { id, owner }, 'generation'),
+    await room.reserve(
+      firstAdmission.room,
+      'a',
+      '再入室',
+      'token',
+      undefined,
+      { id, owner },
+      'generation',
+    ),
   ).toMatchObject({ ok: false });
 });

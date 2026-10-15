@@ -94,6 +94,7 @@ describe('JSON境界', () => {
 describe('複数読みでの採点', () => {
   function play(readings: string[], answer: string) {
     const state = createState(
+      crypto.randomUUID(),
       [{ id: 'q', text: '問題', answer: readings[0], readings, explanation: '解説' }],
       0,
       2,

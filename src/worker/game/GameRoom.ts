@@ -135,13 +135,22 @@ export class GameRoom extends DurableObject<Env> {
   async userRoomGameSession(actor: string, token: string) {
     return roomRpc(() => this.userLobby().gameSession(actor, token));
   }
+  private requireMatchId(matchId: string) {
+    if (
+      !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(matchId) ||
+      !this.env.GAME_ROOM.idFromName(matchRoomName(matchId)).equals(this.ctx.id)
+    )
+      throw new Error('MATCH_ID_MISMATCH');
+  }
   async initializeRoomMatch(
+    matchId: string,
     definition: MatchDefinition,
     scope: InstanceScope,
     actors: (Participant & { role?: 'presenter' })[],
     tokens: Record<string, string>,
     parentRoomId?: string,
   ) {
+    this.requireMatchId(matchId);
     definition = await validateDefinition(definition);
     if (
       definition.kind !== 'room' ||
@@ -181,6 +190,7 @@ export class GameRoom extends DurableObject<Env> {
         return { ok: true as const };
       }
       const state = createState(
+        matchId,
         definition.questions,
         0,
         definition.playersPerMatch,
@@ -237,6 +247,7 @@ export class GameRoom extends DurableObject<Env> {
     return { matchId: room.state.matchId, phase: room.state.phase };
   }
   async reserve(
+    matchId: string,
     actorId: string,
     name: string,
     token: string,
@@ -245,6 +256,7 @@ export class GameRoom extends DurableObject<Env> {
     generation: string,
     guest = false,
   ) {
+    this.requireMatchId(matchId);
     return this.ctx.blockConcurrencyWhile(async () => {
       if (await this.ctx.storage.get('instanceDeleted'))
         return { ok: false as const, code: 'INSTANCE_NOT_FOUND' };
@@ -273,6 +285,7 @@ export class GameRoom extends DurableObject<Env> {
           scope,
           generations: {},
           state: createState(
+            matchId,
             definition.questions,
             0,
             definition.playersPerMatch,
@@ -393,7 +406,7 @@ export class GameRoom extends DurableObject<Env> {
     if (room?.scope.id !== instanceId) return null;
     return {
       phase: room.state.phase,
-      matchId: room.state.matchId ?? null,
+      matchId: room.state.matchId,
       storage: room.state.result?.storage ?? null,
       errorCode: room.resultErrorCode ?? null,
     };
@@ -645,6 +658,7 @@ export class GameRoom extends DurableObject<Env> {
           return { ok: false as const, code: 'INVALID_SETUP' };
         room = {
           state: createState(
+            crypto.randomUUID(),
             definition.questions,
             input.questionIndex,
             input.players,

@@ -80,6 +80,7 @@ export type State = {
 };
 
 export function createState(
+  matchId: string,
   source: Question[],
   questionIndex: number,
   playersRequired: number,
@@ -149,7 +150,7 @@ export function createState(
       : {}),
     response: null,
     reconnect: null,
-    matchId: crypto.randomUUID(),
+    matchId,
     question: structuredClone(question),
     questions: structuredClone([
       ...source.slice(questionIndex),

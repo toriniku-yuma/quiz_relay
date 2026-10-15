@@ -4,7 +4,7 @@ import { makeResultRecord } from '../../src/worker/results/record';
 import { questions } from './questions';
 
 export function resultFixture() {
-  const state = createState(questions, 0, 2);
+  const state = createState(crypto.randomUUID(), questions, 0, 2);
   state.matchKind = 'ranked';
   state.startedAt = 1000;
   state.definition = {

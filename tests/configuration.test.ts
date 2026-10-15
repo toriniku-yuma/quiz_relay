@@ -36,8 +36,8 @@ it('rejects misspelled keys, incomplete rules and invalid durations before apply
   ).toThrow();
 });
 it('changed win target determines adjudication while an older state keeps its own rules', () => {
-  const old = createState(questions, 0, 2);
-  const state = createState(questions, 0, 2);
+  const old = createState(crypto.randomUUID(), questions, 0, 2);
+  const state = createState(crypto.randomUUID(), questions, 0, 2);
   state.rules = { ...local.rules, correctAnswersToWin: 1 };
   state.players = ['a', 'b'].map((id) => ({
     id,

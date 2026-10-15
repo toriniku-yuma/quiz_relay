@@ -46,7 +46,30 @@ vi.mock('../src/worker/organization/database', () => ({
   }),
 }));
 const runtime = env as unknown as Env;
+function matchIdOf(stub: ReturnType<Env['GAME_ROOM']['getByName']>) {
+  const name = stub.id.name;
+  if (!name?.startsWith('match:')) throw new Error('MATCH_FIXTURE_REQUIRED');
+  return name.slice(6);
+}
+
 const owner = 'https://game.test';
+it('試合DOの名前と異なる試合IDで予約すると、状態を作らず拒否する', async () => {
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  await runInDurableObject(stub, async (instance, context) => {
+    await expect(
+      instance.reserve(
+        crypto.randomUUID(),
+        'a',
+        'A',
+        'token',
+        undefined,
+        { id: crypto.randomUUID(), owner },
+        'generation',
+      ),
+    ).rejects.toThrow('MATCH_ID_MISMATCH');
+    expect((await context.storage.list()).size).toBe(0);
+  });
+});
 const rankedScope = { id: crypto.randomUUID(), owner };
 const generationOf = (actor: string) => `generation-${actor}`;
 const emptyQueue = () => ({
@@ -405,13 +428,14 @@ it.each([2, 3, 4])(
   'M01/M03: %i distinct connected actors start once; duplicate tabs and reservations do not start',
   async (count) => {
     definition.playersPerMatch = count;
-    const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
+    const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
     const sockets: WebSocket[] = [];
     try {
       for (let i = 0; i < count; i++)
         expect(
           (
             await stub.reserve(
+              matchIdOf(stub),
               `actor-${i}`,
               `P${i}`,
               `token-${i}`,
@@ -424,6 +448,7 @@ it.each([2, 3, 4])(
       expect(
         (
           await stub.reserve(
+            matchIdOf(stub),
             'extra',
             'extra',
             'extra',
@@ -442,6 +467,7 @@ it.each([2, 3, 4])(
       expect(
         (
           await stub.reserve(
+            matchIdOf(stub),
             'new-actor',
             'N',
             'new',
@@ -460,8 +486,16 @@ it.each([2, 3, 4])(
 );
 
 it('M01: cancellation frees slots and invalidates the old cookie before a replacement joins', async () => {
-  const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'old', definition, rankedScope, generationOf('a'));
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  await stub.reserve(
+    matchIdOf(stub),
+    'a',
+    'A',
+    'old',
+    definition,
+    rankedScope,
+    generationOf('a'),
+  );
   expect(await stub.cancelReservation('a')).toBe(true);
   expect((await stub.lobbyStatus())?.actors).toEqual([]);
   expect(
@@ -476,7 +510,17 @@ it('M01: cancellation frees slots and invalidates the old cookie before a replac
     ).status,
   ).toBe(401);
   expect(
-    (await stub.reserve('b', 'B', 'new', definition, rankedScope, generationOf('b'))).ok,
+    (
+      await stub.reserve(
+        matchIdOf(stub),
+        'b',
+        'B',
+        'new',
+        definition,
+        rankedScope,
+        generationOf('b'),
+      )
+    ).ok,
   ).toBe(true);
 });
 
@@ -484,8 +528,16 @@ it.each(['ranked', 'casual'] as const)(
   '%sの待機は最後の接続切れで世代ごと解除し、他タブ接続中は保持する',
   async (kind) => {
     definition.kind = kind;
-    const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-    await room.reserve('a', 'A', 'token-a', definition, rankedScope, 'generation-a');
+    const room = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+    await room.reserve(
+      matchIdOf(room),
+      'a',
+      'A',
+      'token-a',
+      definition,
+      rankedScope,
+      'generation-a',
+    );
     const firstSocket = await socket(room, 'token-a'),
       secondSocket = await socket(room, 'token-a');
     try {
@@ -505,7 +557,15 @@ it.each(['ranked', 'casual'] as const)(
       expect((await state(room))?.result).toBeNull();
       await evictDurableObject(room);
       expect(
-        await room.reserve('a', 'A', 'token-a', definition, rankedScope, 'generation-a'),
+        await room.reserve(
+          matchIdOf(room),
+          'a',
+          'A',
+          'token-a',
+          definition,
+          rankedScope,
+          'generation-a',
+        ),
       ).toMatchObject({ ok: false });
     } finally {
       firstSocket.close();
@@ -743,9 +803,25 @@ it('待機取消のDO応答消失は閉鎖世代を保持し、再起動後のAl
 
 it('M01/G14: failed DB revalidation cannot start or expose a question', async () => {
   definition.playersPerMatch = 2;
-  const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
-  await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  await stub.reserve(
+    matchIdOf(stub),
+    'a',
+    'A',
+    'a',
+    definition,
+    rankedScope,
+    generationOf('a'),
+  );
+  await stub.reserve(
+    matchIdOf(stub),
+    'b',
+    'B',
+    'b',
+    definition,
+    rankedScope,
+    generationOf('b'),
+  );
   const connection = await socket(stub, 'a');
   try {
     mocks.load.mockRejectedValueOnce(new Error('DB_OFFLINE'));
@@ -777,8 +853,16 @@ it('M01/G14: failed DB revalidation cannot start or expose a question', async ()
 });
 
 it('M01: unconnected reservation and hard waiting lifetime survive eviction and expire via alarm', async () => {
-  const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  await stub.reserve(
+    matchIdOf(stub),
+    'a',
+    'A',
+    'a',
+    definition,
+    rankedScope,
+    generationOf('a'),
+  );
   await runInDurableObject(stub, async (_instance, ctx) => {
     const room = await ctx.storage.get<{
       lobby: { reservations: Record<string, number> };
@@ -919,9 +1003,25 @@ it('M01: lost reservation response resumes the persisted room/token after evicti
 
 it('M01: cancellation racing the final connection has a single outcome', async () => {
   definition.playersPerMatch = 2;
-  const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
-  await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  await stub.reserve(
+    matchIdOf(stub),
+    'a',
+    'A',
+    'a',
+    definition,
+    rankedScope,
+    generationOf('a'),
+  );
+  await stub.reserve(
+    matchIdOf(stub),
+    'b',
+    'B',
+    'b',
+    definition,
+    rankedScope,
+    generationOf('b'),
+  );
   const first = await socket(stub, 'a');
   let last: WebSocket | undefined;
   try {
@@ -1043,9 +1143,25 @@ it.each<[string, number, () => Promise<null>]>([
 
 it('review: heartbeats sent during slow DB revalidation keep the waiting player connected', async () => {
   definition.playersPerMatch = 2;
-  const stub = runtime.GAME_ROOM.getByName(`review-delay:${crypto.randomUUID()}`);
-  await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
-  await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  await stub.reserve(
+    matchIdOf(stub),
+    'a',
+    'A',
+    'a',
+    definition,
+    rankedScope,
+    generationOf('a'),
+  );
+  await stub.reserve(
+    matchIdOf(stub),
+    'b',
+    'B',
+    'b',
+    definition,
+    rankedScope,
+    generationOf('b'),
+  );
   const first = await socket(stub, 'a');
   const heartbeat = setInterval(
     () => first.send(JSON.stringify({ type: 'sync', matchId: null, lastSeq: null })),
@@ -1078,9 +1194,25 @@ it.each(['cancel-requester', 'cancel-peer', 'expire', 'another-start'])(
   'DB revalidation rechecks current room after %s',
   async (scenario) => {
     definition.playersPerMatch = 2;
-    const stub = runtime.GAME_ROOM.getByName(crypto.randomUUID());
-    await stub.reserve('a', 'A', 'a', definition, rankedScope, generationOf('a'));
-    await stub.reserve('b', 'B', 'b', definition, rankedScope, generationOf('b'));
+    const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+    await stub.reserve(
+      matchIdOf(stub),
+      'a',
+      'A',
+      'a',
+      definition,
+      rankedScope,
+      generationOf('a'),
+    );
+    await stub.reserve(
+      matchIdOf(stub),
+      'b',
+      'B',
+      'b',
+      definition,
+      rankedScope,
+      generationOf('b'),
+    );
     const first = await socket(stub, 'a');
     let released = false;
     let failure: Error | undefined;
@@ -1274,27 +1406,46 @@ it('組織内A/Bの同時参加は一つ、他のactorの待機列はインス�
 });
 
 it('取消済みの世代は、部屋が未作成でも遅延した予約を再成立させない', async () => {
-  const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
+  const room = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
   const scope = { id: crypto.randomUUID(), owner };
   expect(await room.cancelReservation('a', false, 'old-generation')).toBe(true);
   await evictDurableObject(room);
   expect(
-    await room.reserve('a', 'A', 'old-token', definition, scope, 'old-generation'),
+    await room.reserve(
+      matchIdOf(room),
+      'a',
+      'A',
+      'old-token',
+      definition,
+      scope,
+      'old-generation',
+    ),
   ).toEqual({ ok: false, code: 'STALE_RESERVATION' });
   expect(
-    (await room.reserve('a', 'A', 'new-token', definition, scope, 'new-generation')).ok,
+    (
+      await room.reserve(
+        matchIdOf(room),
+        'a',
+        'A',
+        'new-token',
+        definition,
+        scope,
+        'new-generation',
+      )
+    ).ok,
   ).toBe(true);
   expect(await room.cancelReservation('a', false, 'old-generation')).toBe(false);
   expect((await room.lobbyStatus())?.actors).toEqual(['a']);
 });
 
 it('部屋トークンは別インスタンスIDのWebSocketに使えない', async () => {
-  const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
+  const room = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
   const scope = { id: crypto.randomUUID(), owner };
-  await room.reserve('a', 'A', 'token', definition, scope, 'generation');
+  await room.reserve(matchIdOf(room), 'a', 'A', 'token', definition, scope, 'generation');
   expect(
     (
       await room.reserve(
+        matchIdOf(room),
         'b',
         'B',
         'other',
@@ -1363,9 +1514,9 @@ it('候補0の検出で待機を解除し、候補復旧後は本人の再参加
 });
 
 it('候補0の待機解除は開始済みの固定問題や終端を変更しない', async () => {
-  const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
+  const room = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
   const scope = { id: crypto.randomUUID(), owner };
-  await room.reserve('a', 'A', 'token', definition, scope, 'generation');
+  await room.reserve(matchIdOf(room), 'a', 'A', 'token', definition, scope, 'generation');
   await runInDurableObject(room, async (_instance, ctx) => {
     const saved = await ctx.storage.get<{ state: State }>('room');
     if (!saved) throw new Error('room');

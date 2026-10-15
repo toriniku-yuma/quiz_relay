@@ -16,7 +16,7 @@ import { questions } from './fixtures/questions';
 import { resultFixture } from './fixtures/result';
 
 function playing() {
-  const state = createState(questions, 0, 2);
+  const state = createState(crypto.randomUUID(), questions, 0, 2);
   state.players = ['a', 'b'].map((id) => ({
     id,
     name: id,

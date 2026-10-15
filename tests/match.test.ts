@@ -22,7 +22,7 @@ import {
 import { questions } from './fixtures/questions';
 
 function playing(count = 3) {
-  const state = createState(questions, 0, count);
+  const state = createState(crypto.randomUUID(), questions, 0, count);
   state.players = Array.from({ length: count }, (_, i) => ({
     id: `actor-${i}`,
     name: `Player ${i}`,
@@ -139,7 +139,7 @@ it('M02/M05: disconnection before the final answer wins the terminal race, WAITI
   expect(state.phase).toBe('INVALID');
   expect(state.players[0].correct).toBe(6);
 
-  const waiting = createState(questions, 0, 2);
+  const waiting = createState(crypto.randomUUID(), questions, 0, 2);
   updateConnections(waiting, new Set(), 100);
   expect(waiting.phase).toBe('WAITING');
 });
