@@ -13,6 +13,7 @@ import {
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { userRoomName } from '../game/room-names.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { actorForSubject, OrganizationError, validId } from '../organization/access.ts';
 import { allowedInstanceActors, organizationIdentity } from '../organization/database.ts';
 import { requireUnrestricted } from '../organization/moderation.ts';
@@ -178,7 +179,7 @@ export const foreignRoomActions: Handler<AuthEnv> = async (context) => {
     );
   const room = validId(input.room),
     lobby = env.GAME_ROOM.getByName(userRoomName(room)),
-    maker = env.MATCHMAKER.getByName(instance.organizationId);
+    maker = matchmaker(env);
   if (action === 'info') {
     const view = roomResult(
       await lobby.userRoomInfo(typeof input.invite === 'string' ? input.invite : ''),

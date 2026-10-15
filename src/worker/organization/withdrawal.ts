@@ -13,6 +13,7 @@ import {
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { planControlEvent } from '../federation/controls.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { OrganizationError, validId } from './access.ts';
 import { organizationIdentity } from './database.ts';
 
@@ -144,7 +145,7 @@ export async function withdrawAccount(
     undefined,
     true,
   );
-  const matchmaker = env.MATCHMAKER.getByName(organization.id);
+  const maker = matchmaker(env);
   if (
     !account.withdrawnAt &&
     (
@@ -161,7 +162,7 @@ export async function withdrawAccount(
   )
     throw new OrganizationError('ROOM_INVENTORY_REQUIRED', 409);
   try {
-    const admission = await matchmaker.beginWithdrawal(account.actorId, operationId);
+    const admission = await maker.beginWithdrawal(account.actorId, operationId);
     if (!admission.ok) throw new OrganizationError(admission.code, 409);
     await recordWithdrawal(db, subject, operationId, env.GAME_CONFIG_PROFILE);
   } catch (error) {
@@ -170,10 +171,10 @@ export async function withdrawAccount(
       .select()
       .from(accountWithdrawals)
       .where(eq(accountWithdrawals.actorId, account.actorId));
-    if (!committed) await matchmaker.cancelWithdrawal(account.actorId, operationId);
+    if (!committed) await maker.cancelWithdrawal(account.actorId, operationId);
     if (committed?.id !== operationId) throw error;
   }
-  await matchmaker.logoutActor(account.actorId).catch(() => undefined);
+  await maker.logoutActor(account.actorId).catch(() => undefined);
   await env.ACCOUNT_ERASURE?.fetch('https://account-erasure.internal/withdrawal', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

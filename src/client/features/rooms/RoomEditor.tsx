@@ -15,6 +15,8 @@ import Button from '../../components/Button';
 import Checkbox from '../../components/Checkbox';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
+import ParticipationConflict from '../matchmaking/ParticipationConflict';
+import { useAdmissionMutation } from '../matchmaking/useAdmissionMutation';
 import { useMutation } from '../moderation/useMutation';
 import { playRequest } from './api';
 import BroughtEditor from './BroughtEditor';
@@ -59,7 +61,7 @@ export default function RoomEditor({
     request,
   );
   const send = (path: string, body: object) => request(path, body, instanceId);
-  const mutation = useMutation(
+  const mutation = useAdmissionMutation(
     room ? API_PATHS.roomMutate : API_PATHS.roomCreate,
     () =>
       onSaved ? onSaved(id) : navigate(`${ROOMS_PATH}?instance=${instanceId}&room=${id}`),
@@ -112,6 +114,14 @@ export default function RoomEditor({
   }, [instanceId, auth.user, editing, roomId, foreign, request]);
   return (
     <Panel title={room ? '部屋の設定を変更' : '部屋を作る'}>
+      {mutation.conflict && (
+        <ParticipationConflict
+          conflict={mutation.conflict}
+          busy={mutation.busy}
+          onClose={mutation.dismissConflict}
+          onLeave={mutation.leaveAndJoin}
+        />
+      )}
       <form
         className="mt-4 grid gap-4"
         onSubmit={(event) => {

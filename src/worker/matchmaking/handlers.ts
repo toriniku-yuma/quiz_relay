@@ -6,6 +6,7 @@ import { matchRoomName } from '../game/room-names.ts';
 import { OrganizationError } from '../organization/access.ts';
 import { organizationDatabase, organizationIdentity } from '../organization/database.ts';
 import { requireUnrestricted } from '../organization/moderation.ts';
+import { matchmaker } from './instance.ts';
 
 const roomId = (value: unknown): value is string =>
   typeof value === 'string' &&
@@ -61,9 +62,7 @@ export const enterMatch: Handler<AuthEnv> = async (context) => {
       await connection.close();
     }
   }
-  const result = await context.env.MATCHMAKER.getByName(
-    context.get('organizationId'),
-  ).enter(
+  const result = await matchmaker(context.env).enter(
     context.get('actorId'),
     resume ? '' : String(name),
     resume,
@@ -77,6 +76,7 @@ export const enterMatch: Handler<AuthEnv> = async (context) => {
         code: result.code,
         ...('instanceId' in result ? { instanceId: result.instanceId } : {}),
         ...('mode' in result ? { mode: result.mode } : {}),
+        ...('room' in result ? { room: result.room } : {}),
       },
       result.code === 'GAME_DATABASE_UNAVAILABLE'
         ? 503
@@ -103,10 +103,14 @@ export const cancelMatch: Handler<AuthEnv> = async (context) => {
     !context.req.path.endsWith('/logout');
   if (
     !operationCancel &&
-    (!body || !roomId(body.room) || Object.keys(body).join(',') !== 'room')
+    (!body ||
+      !roomId(body.room) ||
+      Object.keys(body).some((key) => !['room', 'forfeit'].includes(key)) ||
+      (body.forfeit !== undefined && typeof body.forfeit !== 'boolean') ||
+      (body.forfeit && context.req.path.endsWith('/logout')))
   )
     return context.json({ code: 'INVALID_ROOM' }, 400);
-  const maker = context.env.MATCHMAKER.getByName(context.get('organizationId'));
+  const maker = matchmaker(context.env);
   const result = operationCancel
     ? await maker.cancelAdmission(
         context.get('actorId'),
@@ -118,6 +122,7 @@ export const cancelMatch: Handler<AuthEnv> = async (context) => {
         body.room,
         context.req.path.endsWith('/logout'),
         context.get('instanceId'),
+        body.forfeit === true,
       );
   if (!result.ok)
     return context.json(
@@ -167,10 +172,7 @@ export const logoutActor: Handler<AuthEnv> = async (context) => {
     await close();
   }
   if (identity)
-    await context.env.MATCHMAKER.getByName(identity.organization.id).logoutActor(
-      identity.account.actorId,
-      rooms,
-    );
+    await matchmaker(context.env).logoutActor(identity.account.actorId, rooms);
   for (const room of rooms)
     deleteCookie(context, `qr_match_${room}`, {
       path: '/api/matchmaking',

@@ -1,5 +1,5 @@
 import { applyD1Migrations, env, runInDurableObject } from 'cloudflare:test';
-import { beforeAll, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import erasure from '../src/erasure/index';
 import { changeD1, connectD1, rowsD1 } from '../src/worker/db/d1';
 import {
@@ -15,6 +15,7 @@ import app from '../src/worker/index';
 import { actorForSubject } from '../src/worker/organization/access';
 import { setupOrganization } from '../src/worker/organization/database';
 import { scheduledD1 } from '../src/worker/scheduled';
+import { resetMatchmaker } from './fixtures/matchmaker';
 
 vi.mock('../src/worker/federation/metadata', async (original) => ({
   ...(await original<typeof import('../src/worker/federation/metadata')>()),
@@ -243,3 +244,5 @@ it('未処理が100件あっても1回の定期呼出しでは処理を小分け
   expect(fetch.mock.calls.length).toBeLessThanOrEqual(15);
   expect(responses.every((response) => response.bodyUsed)).toBe(true);
 });
+
+beforeEach(resetMatchmaker);

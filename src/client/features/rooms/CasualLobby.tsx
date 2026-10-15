@@ -6,6 +6,7 @@ import Button from '../../components/Button';
 import Modal from '../../components/Modal';
 import Panel from '../../components/Panel';
 import GameBoard from '../game/GameBoard';
+import ParticipationConflict from '../matchmaking/ParticipationConflict';
 import { useMatchmaking } from '../matchmaking/useMatchmaking';
 import ResultLinks from '../results/ResultLinks';
 import GuestName from './GuestName';
@@ -58,6 +59,14 @@ export default function CasualLobby({
   }, [url.href, matching, game.roomId, playing, match.offerRestore]);
   return (
     <>
+      {match.conflict && (
+        <ParticipationConflict
+          conflict={match.conflict}
+          busy={match.busy}
+          onClose={match.dismissConflict}
+          onLeave={match.leaveAndJoin}
+        />
+      )}
       {game.roomId && match.viewing && game.roomInstanceId === targetInstanceId ? (
         <>
           <GameBoard game={game} />

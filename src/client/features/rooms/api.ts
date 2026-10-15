@@ -39,6 +39,7 @@ export class PlayRequestError extends OrganizationRequestError {
     readonly code: string,
     readonly instanceId?: string,
     readonly mode?: 'ranked' | 'casual' | 'room',
+    readonly room?: string,
   ) {
     super(message, status);
   }
@@ -62,6 +63,7 @@ export async function playRequest<T>(
       : AbortSignal.timeout(20000),
   });
   const result = (await response.json()) as T & {
+    room?: string;
     code?: string;
     instanceId?: string;
     mode?: 'ranked' | 'casual' | 'room';
@@ -74,6 +76,7 @@ export async function playRequest<T>(
       result.code ?? '',
       result.instanceId,
       result.mode,
+      result.room,
     );
   return result;
 }

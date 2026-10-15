@@ -72,6 +72,11 @@
       },
       "ratelimits": [
         {
+          "name": "ADMISSION_LIMITER",
+          "namespace_id": "716329430",
+          "simple": { "limit": 20, "period": 60 }
+        },
+        {
           "name": "API_LIMITER",
           "namespace_id": "716329411",
           "simple": {
@@ -135,6 +140,11 @@
         "crons": ["* * * * *"]
       },
       "ratelimits": [
+        {
+          "name": "ADMISSION_LIMITER",
+          "namespace_id": "716329430",
+          "simple": { "limit": 20, "period": 60 }
+        },
         {
           "name": "API_LIMITER",
           "namespace_id": "716329412",

@@ -624,6 +624,19 @@ export class RoomLobby {
       throw new OrganizationError('MATCH_NOT_FOUND', 404);
     return { room: room.match.id, token: room.match.tokens[actor] };
   }
+  async matchFinished(matchId: string) {
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const room = await this.read();
+      if (!room || room.match?.id !== matchId) return;
+      for (const member of Object.values(room.members)) member.inLobby = true;
+      room.match = undefined;
+      room.playing = false;
+      this.unready(room);
+      await this.save(room);
+      this.broadcast(room);
+    });
+  }
+
   async status(): Promise<{
     phase: Snapshot['phase'];
     closed: boolean;

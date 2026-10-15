@@ -10,6 +10,7 @@ import {
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { matchRoomName, userRoomName } from '../game/room-names.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { actorForSubject, OrganizationError, validId } from '../organization/access.ts';
 import { federationDatabase, requestPeer } from './transport.ts';
 
@@ -164,7 +165,7 @@ export async function releaseHostParticipation(
     return { closed, reservation };
   });
   if (saved.closed?.confirmed) return { ok: true };
-  const maker = env.MATCHMAKER.getByName(organization.id),
+  const maker = matchmaker(env),
     row = saved.reservation;
   if (row?.roomId) {
     const result = await maker.cancel(actorId, row.roomId, true, row.instanceId, true);
@@ -324,7 +325,7 @@ export async function logoutHostParticipation(
   });
   const [organization] = await db.select().from(organizations);
   if (row.roomId && organization) {
-    const result = await env.MATCHMAKER.getByName(organization.id).cancel(
+    const result = await matchmaker(env).cancel(
       row.actorId,
       row.roomId,
       true,

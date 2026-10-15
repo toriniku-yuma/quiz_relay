@@ -19,7 +19,10 @@ import { ratingChange } from '../src/worker/results/rating';
 import { makeResultRecord } from '../src/worker/results/record';
 import { resultFixture } from './fixtures/result';
 
-const mocks = vi.hoisted(() => ({ save: vi.fn() }));
+const mocks = vi.hoisted(() => ({ save: vi.fn(), notify: vi.fn() }));
+vi.mock('../src/worker/matchmaking/instance', () => ({
+  matchmaker: () => ({ matchFinished: mocks.notify }),
+}));
 vi.mock('../src/worker/results/lifecycle', async (original) => ({
   ...(await original<typeof import('../src/worker/results/lifecycle')>()),
   registerMatch: vi.fn(async (_env, _scope, record) => record),
@@ -33,6 +36,7 @@ vi.mock('../src/worker/results/database', async (original) => ({
 }));
 beforeEach(() => {
   mocks.save.mockReset();
+  mocks.notify.mockReset();
   vi.restoreAllMocks();
 });
 // A finished match room whose result is waiting to be saved.
@@ -336,5 +340,43 @@ it('開始保存中は同期を処理し、応答消失後も同じ開始原本�
     const room = await context.storage.get<{ state: State; starting?: unknown }>('room');
     expect(room?.state.phase).toBe('REVEALING');
     expect(room?.starting).toBeUndefined();
+  });
+});
+
+it('D1確定後の終了通知が失敗しても再起動後に再送し、結果を再保存しない', async () => {
+  const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
+  const { state, record } = resultFixture();
+  mocks.save.mockResolvedValue(undefined);
+  mocks.notify.mockRejectedValueOnce(new Error('RPC_DOWN')).mockResolvedValue(undefined);
+  await runInDurableObject(stub, async (_, context) => {
+    await context.storage.put('room', finishedRoom(state, record.owner));
+    await context.storage.setAlarm(Date.now() + 60000);
+  });
+  await runDurableObjectAlarm(stub);
+  expect(mocks.notify).toHaveBeenCalledWith(record.matchId);
+  await evictDurableObject(stub);
+  await runInDurableObject(stub, async (_, context) => {
+    const room = await context.storage.get<{
+      state: State;
+      notificationRetryAt: number;
+      finishNotified?: boolean;
+    }>('room');
+    if (!room) throw new Error('missing room');
+    expect(room.state.result?.storage).toBe('confirmed');
+    expect(room.finishNotified).toBeUndefined();
+    expect(room.notificationRetryAt).toBeGreaterThan(Date.now());
+    room.notificationRetryAt = 1;
+    await context.storage.put('room', room);
+  });
+  await runDurableObjectAlarm(stub);
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  expect(mocks.notify).toHaveBeenCalledTimes(2);
+  await runInDurableObject(stub, async (_, context) => {
+    const room = await context.storage.get<{
+      finishNotified: boolean;
+      notificationRetryAt?: number;
+    }>('room');
+    expect(room?.finishNotified).toBe(true);
+    expect(room?.notificationRetryAt).toBeUndefined();
   });
 });

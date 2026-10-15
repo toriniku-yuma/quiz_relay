@@ -1,5 +1,6 @@
 import type { Context, Handler, MiddlewareHandler } from 'hono';
 import type { AuthEnv } from '../auth/handlers.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { canViewInstance, OrganizationError } from './access.ts';
 import {
   accountPermissions,
@@ -53,8 +54,8 @@ export const mutateOrganization: Handler<AuthEnv> = async (context) => {
         await requestInstanceDeletion(db, context.env, context.get('subject'), value),
       );
     if (context.req.path.endsWith('/operation')) {
-      const result = await changeInstanceOperation(db, context.get('subject'), value);
-      await context.env.MATCHMAKER.getByName(result.organizationId)
+      await changeInstanceOperation(db, context.get('subject'), value);
+      await matchmaker(context.env)
         .refreshInstanceWaiting(String(value.id))
         .catch(() => undefined);
       return context.json({ ok: true });
@@ -80,13 +81,9 @@ export const mutateOrganization: Handler<AuthEnv> = async (context) => {
       await renameInstance(db, context.get('subject'), value);
     else if (context.req.path.endsWith('/grants')) {
       await setInstanceGrants(db, context.get('subject'), value);
-      const { organization } = await resolveInstance(
-        db,
-        context.get('subject'),
-        String(value.id),
-      );
-      // Durable room checks still block admission if notification fails; the queue alarm retries cleanup.
-      await context.env.MATCHMAKER.getByName(organization.id)
+      await resolveInstance(db, context.get('subject'), String(value.id));
+      // Admission checks also enforce the current permissions when notification fails.
+      await matchmaker(context.env)
         .refreshWaiting(String(value.actorId), String(value.id))
         .catch(() => undefined);
     } else if (context.req.path.endsWith('/publish'))

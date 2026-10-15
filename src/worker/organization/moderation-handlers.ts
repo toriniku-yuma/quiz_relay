@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import type { Handler } from 'hono';
 import type { AuthEnv } from '../auth/handlers.ts';
 import { instances, matches } from '../db/schema.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { readInvestigation } from '../results/investigation.ts';
 import { isResultRecord, type ResultRecord } from '../results/record.ts';
 import { OrganizationError, validId } from './access.ts';
@@ -32,10 +33,7 @@ export const manageUsers: Handler<AuthEnv> = async (context) => {
         if (scope)
           await Promise.allSettled(
             result.instanceIds.map((id) =>
-              context.env.MATCHMAKER.getByName(scope.organizationId).refreshWaiting(
-                result.actorId,
-                id,
-              ),
+              matchmaker(context.env).refreshWaiting(result.actorId, id),
             ),
           );
       }

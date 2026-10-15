@@ -8,6 +8,7 @@ import Panel from '../../components/Panel';
 import type { Auth } from '../auth/useAuth';
 import GameBoard from '../game/GameBoard';
 import ResultLinks from '../results/ResultLinks';
+import ParticipationConflict from './ParticipationConflict';
 import { useMatchmaking } from './useMatchmaking';
 
 export default function MatchLobby({
@@ -66,6 +67,14 @@ export default function MatchLobby({
 
   return (
     <>
+      {match.conflict && (
+        <ParticipationConflict
+          conflict={match.conflict}
+          busy={match.busy}
+          onClose={match.dismissConflict}
+          onLeave={match.leaveAndJoin}
+        />
+      )}
       {match.activeInstance && (
         <a
           className="my-3 block underline"

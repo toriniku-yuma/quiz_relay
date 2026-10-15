@@ -37,6 +37,7 @@ export class MatchError extends Error {
     readonly instanceId?: string,
     readonly status = 409,
     readonly mode?: 'ranked' | 'casual' | 'room',
+    readonly room?: string,
   ) {
     super(
       errors[code] ??
@@ -71,6 +72,7 @@ export async function matchRequest(path: string, body: object = {}, instanceId =
       result.instanceId,
       response.status,
       result.mode,
+      result.room,
     );
   return result;
 }

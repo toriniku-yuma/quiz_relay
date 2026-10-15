@@ -14,6 +14,7 @@ import { rules } from '../src/worker/game/rules';
 import type { State } from '../src/worker/game/state';
 import app from '../src/worker/index';
 import { registerMatch } from '../src/worker/results/lifecycle';
+import { resetMatchmaker } from './fixtures/matchmaker';
 import { questionProvenance, questions } from './fixtures/questions';
 
 const mocks = vi.hoisted(() => ({
@@ -87,8 +88,7 @@ const emptyQueue = () => ({
   foreignChecked: {},
   withdrawals: {},
   loggingOut: {},
-  switches: {},
-  rates: {},
+  admitting: {},
 });
 let definition: MatchDefinition;
 beforeEach(async () => {
@@ -144,7 +144,7 @@ async function socket(
 
 it('カジュアルは実力帯なしで自動開始し、存在しない部屋への切替では元の試合を保持する', async () => {
   definition.kind = 'casual';
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const scope = { id: crypto.randomUUID(), owner, mode: 'casual' as const };
   const sockets: WebSocket[] = [];
   const admissions = [];
@@ -191,7 +191,7 @@ it('カジュアルは実力帯なしで自動開始し、存在しない部屋�
         { ...scope, mode: 'room' },
         { operationId: crypto.randomUUID(), password: '', invite: '' },
       ),
-    ).toMatchObject({ ok: false, code: 'ROOM_CLOSED' });
+    ).toMatchObject({ ok: false, code: 'OTHER_INSTANCE_ACTIVE' });
     expect(
       await runInDurableObject(
         runtime.GAME_ROOM.getByName(`room:${roomId}`),
@@ -208,7 +208,7 @@ it('カジュアルは実力帯なしで自動開始し、存在しない部屋�
 it('2人のカジュアルマッチは登録ユーザーとゲストの接続で同じ試合を自動開始する', async () => {
   definition.kind = 'casual';
   definition.playersPerMatch = 2;
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const scope = { id: crypto.randomUUID(), owner, mode: 'casual' as const };
   const first = await queue.enter(
     'registered',
@@ -243,8 +243,8 @@ it('2人のカジュアルマッチは登録ユーザーとゲストの接続で
     secondSocket.close();
   }
 });
-it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試行・古い操作・復帰要求は重複処理しない', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+it('参加中の新規申込みは拒否し、明示的な離脱後だけ新しい参加を受け付ける', async () => {
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const scope = { id: crypto.randomUUID(), owner };
   const operationId = crypto.randomUUID();
   const first = await queue.enter('switch-a', 'A', false, scope, false, operationId);
@@ -271,6 +271,12 @@ it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試�
     });
     expect((await state(room))?.players[0].forfeited).toBeUndefined();
     const replacementId = crypto.randomUUID();
+    expect(
+      await queue.enter('switch-a', 'A', false, other, false, replacementId),
+    ).toMatchObject({ ok: false, code: 'OTHER_INSTANCE_ACTIVE' });
+    expect((await queue.cancel('switch-a', first.room, false, scope.id, true)).ok).toBe(
+      true,
+    );
     const second = await queue.enter('switch-a', 'A', false, other, false, replacementId);
     if (!second.ok) throw new Error(second.code);
     expect(second.room).not.toBe(first.room);
@@ -304,193 +310,6 @@ it('新規参加だけが旧本人を強制離脱させ、同じ操作の再試�
     for (const ws of sockets) ws.close();
   }
 }, 20000);
-
-it('旧離脱が未確認なら2枠を保持し3つ目を拒否し、Alarmで再試行して回収する', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const first = await queue.enter(
-    'a',
-    'A',
-    false,
-    rankedScope,
-    false,
-    crypto.randomUUID(),
-  );
-  if (!first.ok) throw new Error(first.code);
-  let unavailable = true;
-  let restore = () => {};
-  await runInDurableObject(queue, async (instance) => {
-    const target = instance as unknown as {
-      room(id: string): ReturnType<Env['GAME_ROOM']['getByName']>;
-    };
-    const original = target.room.bind(target);
-    const spy = vi.spyOn(target, 'room').mockImplementation((id) => {
-      const actual = original(id);
-      return id !== first.room
-        ? actual
-        : ({
-            lobbyStatus: () => actual.lobbyStatus(),
-            reserve: (...args: Parameters<typeof actual.reserve>) =>
-              actual.reserve(...args),
-            cancelReservation: (...args: Parameters<typeof actual.cancelReservation>) => {
-              if (args[4] && unavailable) throw new Error('RPC lost');
-              return actual.cancelReservation(...args);
-            },
-          } as unknown as typeof actual);
-    });
-    restore = () => spy.mockRestore();
-  });
-  try {
-    const second = await queue.enter(
-      'a',
-      'A',
-      false,
-      rankedScope,
-      false,
-      crypto.randomUUID(),
-    );
-    expect(second.ok).toBe(true);
-    expect(
-      await queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID()),
-    ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
-    unavailable = false;
-    await runDurableObjectAlarm(queue);
-    expect(
-      await runInDurableObject(
-        queue,
-        async (_i, ctx) =>
-          (await ctx.storage.get<{ switches?: object }>('queue'))?.switches,
-      ),
-    ).toEqual({});
-    expect(
-      (await queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID())).ok,
-    ).toBe(true);
-  } finally {
-    restore();
-  }
-});
-
-it('切替結果不明→ログアウト→新待機取消の後も、元の進行中試合へ新トークンで復帰する', async () => {
-  definition.playersPerMatch = 2;
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const first = await queue.enter(
-    'a',
-    'A',
-    false,
-    rankedScope,
-    false,
-    crypto.randomUUID(),
-  );
-  const partner = await queue.enter('b', 'B', false, rankedScope);
-  if (!first.ok || !partner.ok) throw new Error('setup');
-  const oldRoom = runtime.GAME_ROOM.getByName(`match:${first.room}`);
-  const sockets = [
-    await socket(oldRoom, first.token),
-    await socket(oldRoom, partner.token),
-  ];
-  let restore = () => {};
-  let lostRoom = '';
-  await runInDurableObject(queue, async (instance) => {
-    const target = instance as unknown as { room(id: string): typeof oldRoom };
-    const original = target.room.bind(target);
-    const spy = vi.spyOn(target, 'room').mockImplementation((id) => {
-      const actual = original(id);
-      return id === first.room
-        ? actual
-        : ({
-            lobbyStatus: () => actual.lobbyStatus(),
-            cancelReservation: (...args: Parameters<typeof actual.cancelReservation>) =>
-              actual.cancelReservation(...args),
-            reserve: async (...args: Parameters<typeof actual.reserve>) => {
-              await actual.reserve(...args);
-              lostRoom = id;
-              throw new Error('reply lost');
-            },
-          } as unknown as typeof actual);
-    });
-    restore = () => spy.mockRestore();
-  });
-  try {
-    expect(
-      await queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID()),
-    ).toMatchObject({ ok: false, code: 'GAME_DATABASE_UNAVAILABLE' });
-    restore();
-    await queue.logoutActor('a');
-    expect((await state(oldRoom))?.phase).toBe('REVEALING');
-    expect(await queue.cancel('a', lostRoom, false, rankedScope.id)).toMatchObject({
-      ok: true,
-    });
-    const resumed = await queue.enter('a', '', true, rankedScope);
-    if (!resumed.ok) throw new Error(resumed.code);
-    expect(resumed.room).toBe(first.room);
-    expect(resumed.token).not.toBe(first.token);
-    sockets.push(await socket(oldRoom, resumed.token));
-    expect((await state(oldRoom))?.players[0].forfeited).toBeUndefined();
-  } finally {
-    restore();
-    for (const ws of sockets) ws.close();
-  }
-});
-
-it.each([2, 3, 4])(
-  'M01/M03: %i distinct connected actors start once; duplicate tabs and reservations do not start',
-  async (count) => {
-    definition.playersPerMatch = count;
-    const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
-    const sockets: WebSocket[] = [];
-    try {
-      for (let i = 0; i < count; i++)
-        expect(
-          (
-            await stub.reserve(
-              matchIdOf(stub),
-              `actor-${i}`,
-              `P${i}`,
-              `token-${i}`,
-              definition,
-              rankedScope,
-              generationOf(`actor-${i}`),
-            )
-          ).ok,
-        ).toBe(true);
-      expect(
-        (
-          await stub.reserve(
-            matchIdOf(stub),
-            'extra',
-            'extra',
-            'extra',
-            definition,
-            rankedScope,
-            generationOf('extra'),
-          )
-        ).ok,
-      ).toBe(false);
-      sockets.push(await socket(stub, 'token-0'), await socket(stub, 'token-0'));
-      expect((await state(stub))?.phase).toBe('WAITING');
-      for (let i = 1; i < count; i++) sockets.push(await socket(stub, `token-${i}`));
-      expect((await state(stub))?.phase).toBe('REVEALING');
-      expect(mocks.load).toHaveBeenCalledOnce();
-      expect(await stub.cancelReservation('actor-0')).toBe(false);
-      expect(
-        (
-          await stub.reserve(
-            matchIdOf(stub),
-            'new-actor',
-            'N',
-            'new',
-            definition,
-            rankedScope,
-            generationOf('new-actor'),
-          )
-        ).ok,
-      ).toBe(false);
-      await evictDurableObject(stub);
-      expect((await state(stub))?.players).toHaveLength(count);
-    } finally {
-      for (const connection of sockets) connection.close();
-    }
-  },
-);
 
 it('M01: cancellation frees slots and invalidates the old cookie before a replacement joins', async () => {
   const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
@@ -582,7 +401,7 @@ it.each(['ranked', 'casual'] as const)(
 );
 
 it('部屋ID未確定の取消を参加前・DB読込中に保存し、後発の別操作を巻き込まない', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const first = crypto.randomUUID();
   expect(await queue.cancelAdmission('a', first, rankedScope.id)).toMatchObject({
     ok: true,
@@ -614,7 +433,7 @@ it('部屋ID未確定の取消を参加前・DB読込中に保存し、後発の
 
 it('切断済み待機者の古い台帳は、新参加者2人の同じ待機先への割当を妨げない', async () => {
   definition.playersPerMatch = 2;
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const old = await queue.enter('old', 'Old', false, rankedScope);
   if (!old.ok) throw new Error(old.code);
   const room = runtime.GAME_ROOM.getByName(`match:${old.room}`);
@@ -639,54 +458,8 @@ it('切断済み待機者の古い台帳は、新参加者2人の同じ待機先
   }
 });
 
-it('切替中の旧待機も操作IDで閉じ、後発予約拒否で旧待機を復活させない', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  const oldOperation = crypto.randomUUID();
-  const old = await queue.enter('a', 'A', false, rankedScope, false, oldOperation);
-  if (!old.ok) throw new Error(old.code);
-  let release = false,
-    entered = false;
-  let restore = () => {};
-  await runInDurableObject(queue, async (instance) => {
-    const target = instance as unknown as {
-      room(id: string): DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>;
-    };
-    const original = target.room.bind(target);
-    const spy = vi.spyOn(target, 'room').mockImplementation((id) =>
-      id === old.room
-        ? original(id)
-        : ({
-            reserve: async () => {
-              entered = true;
-              while (!release) await new Promise((done) => setTimeout(done, 5));
-              return { ok: false, code: 'ROOM_CLOSED' };
-            },
-          } as unknown as ReturnType<typeof original>),
-    );
-    restore = () => spy.mockRestore();
-  });
-  const pending = queue.enter('a', 'A', false, rankedScope, false, crypto.randomUUID());
-  try {
-    await vi.waitFor(() => expect(entered).toBe(true));
-    expect(await queue.cancelAdmission('a', oldOperation, rankedScope.id)).toMatchObject({
-      ok: true,
-    });
-    expect(
-      (await runtime.GAME_ROOM.getByName(`match:${old.room}`).lobbyStatus())?.actors,
-    ).toEqual([]);
-  } finally {
-    release = true;
-  }
-  await pending;
-  restore();
-  expect(await queue.enter('a', '', true, rankedScope)).toMatchObject({
-    ok: false,
-    code: 'NO_ACTIVE_MATCH',
-  });
-});
-
 it('取消応答が失われても同じ操作は復活せず、開始済みなら取消せず復帰できる', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const operationId = crypto.randomUUID();
   const first = await queue.enter('a', 'A', false, rankedScope, false, operationId);
   if (!first.ok) throw new Error(first.code);
@@ -735,7 +508,7 @@ it('取消応答が失われても同じ操作は復活せず、開始済みな�
 });
 
 it('待機取消のDO応答消失は閉鎖世代を保持し、再起動後のAlarmで同じ取消を完了する', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const operationId = crypto.randomUUID();
   const admitted = await queue.enter('a', 'A', false, rankedScope, false, operationId);
   if (!admitted.ok) throw new Error(admitted.code);
@@ -892,7 +665,7 @@ it('M01: unconnected reservation and hard waiting lifetime survive eviction and 
 });
 
 it('M01/M03: matching is idempotent on resume, rejects duplicate join, and isolates definition versions', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
   expect((await queue.enter('a', 'A', false, rankedScope)).ok).toBe(false);
@@ -960,7 +733,7 @@ it('A04: identity is server verified; unauthenticated and cross-origin requests 
 });
 
 it('M01: concurrent queue admissions never exceed capacity or create duplicate memberships', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const admissions = await Promise.all(
     Array.from({ length: 10 }, (_, i) =>
       queue.enter(`actor-${i}`, `P${i}`, false, rankedScope),
@@ -980,7 +753,7 @@ it('M01: concurrent queue admissions never exceed capacity or create duplicate m
 });
 
 it('M01: lost reservation response resumes the persisted room/token after eviction', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const room = crypto.randomUUID();
   await runInDurableObject(queue, async (_instance, ctx) => {
     await ctx.storage.put('queue', {
@@ -1055,7 +828,7 @@ it('M01: cancellation racing the final connection has a single outcome', async (
 
 it('A04: logout revokes old sockets/cookies and authenticated resume restores the same actor', async () => {
   definition.playersPerMatch = 2;
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const firstAdmission = await queue.enter('a', 'A', false, rankedScope);
   const secondAdmission = await queue.enter('b', 'B', false, rankedScope);
   if (!firstAdmission.ok || !secondAdmission.ok) throw new Error('join');
@@ -1121,7 +894,11 @@ it('A04: public Auth settings need no probe token; join issues HttpOnly session 
     bindings,
   );
   expect(duplicate.status).toBe(409);
-  expect(await duplicate.json()).toEqual({ code: 'ALREADY_JOINED' });
+  expect(await duplicate.json()).toMatchObject({
+    code: 'ALREADY_JOINED',
+    instanceId: rankedScope.id,
+    mode: 'ranked',
+  });
 });
 
 it.each<[string, number, () => Promise<null>]>([
@@ -1274,7 +1051,7 @@ it.each(['cancel-requester', 'cancel-peer', 'expire', 'another-start'])(
 );
 
 it('DB admission wait allows another actor to resume and cancel before the DB responds', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
   let released = false;
@@ -1301,7 +1078,7 @@ it('DB admission wait allows another actor to resume and cancel before the DB re
 });
 
 it('DB admission rechecks a membership created by a later request for the same actor', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   let released = false;
   let started = false;
   mocks.load.mockImplementationOnce(async () => {
@@ -1314,11 +1091,11 @@ it('DB admission rechecks a membership created by a later request for the same a
   try {
     await vi.waitFor(() => expect(started).toBe(true));
     completed = await queue.enter('a', 'Fast', false, rankedScope);
-    expect(completed.ok).toBe(true);
+    expect(completed).toMatchObject({ ok: false, code: 'ALREADY_JOINED' });
   } finally {
     released = true;
   }
-  expect(await pending).toEqual({ ok: false, code: 'ALREADY_JOINED' });
+  completed = await pending;
   if (!completed.ok) throw new Error(completed.code);
   expect(await queue.enter('a', '', true, rankedScope)).toEqual(completed);
   expect(
@@ -1327,7 +1104,7 @@ it('DB admission rechecks a membership created by a later request for the same a
 });
 
 it('failed DB admissions retain rate accounting without blocking later resume', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const first = await queue.enter('a', 'A', false, rankedScope);
   mocks.load.mockRejectedValueOnce(new Error('database offline'));
   expect(await queue.enter('b', 'B', false, rankedScope)).toEqual({
@@ -1335,13 +1112,8 @@ it('failed DB admissions retain rate accounting without blocking later resume', 
     code: 'GAME_DATABASE_UNAVAILABLE',
   });
   expect(await queue.enter('a', '', true, rankedScope)).toEqual(first);
-  await runInDurableObject(queue, async (_instance, ctx) => {
-    const saved = await ctx.storage.get<{ rates: Record<string, { count: number }> }>(
-      'queue',
-    );
-    expect(saved?.rates.b.count).toBe(1);
-    expect(saved?.rates.a.count).toBe(2);
-  });
+  expect(runtime.ADMISSION_LIMITER?.limit).toHaveBeenCalledWith({ key: 'b' });
+  expect((await queue.enter('b', 'B', false, rankedScope)).ok).toBe(true);
 });
 
 it('DB admission failure returns HTTP 503 without issuing a room cookie', async () => {
@@ -1361,7 +1133,7 @@ it('DB admission failure returns HTTP 503 without issuing a room cookie', async 
 });
 
 it('a stale DB response cannot recreate membership after a newer admission is cancelled', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   let released = false;
   let started = false;
   mocks.load.mockImplementationOnce(async () => {
@@ -1372,9 +1144,7 @@ it('a stale DB response cannot recreate membership after a newer admission is ca
   const pending = queue.enter('a', 'Slow', false, rankedScope);
   try {
     await vi.waitFor(() => expect(started).toBe(true));
-    const fast = await queue.enter('a', 'Fast', false, rankedScope);
-    if (!fast.ok) throw new Error(fast.code);
-    expect((await queue.cancel('a', fast.room, false, rankedScope.id)).ok).toBe(true);
+    expect((await queue.cancel('a', '', false, rankedScope.id)).ok).toBe(true);
   } finally {
     released = true;
   }
@@ -1386,7 +1156,7 @@ it('a stale DB response cannot recreate membership after a newer admission is ca
 });
 
 it('組織内A/Bの同時参加は一つ、他のactorの待機列はインスタンス別', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const firstCompetition = { id: crypto.randomUUID(), owner };
   const secondCompetition = { id: crypto.randomUUID(), owner };
   const results = await Promise.all([
@@ -1482,8 +1252,8 @@ it('部屋トークンは別インスタンスIDのWebSocketに使えない', as
   accepted.webSocket?.close();
 });
 
-it('終端後に未保存結果を残したまま組織参加枠を解放する', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+it('D1確定の通知が来るまで終了した試合の参加枠を保持する', async () => {
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const firstCompetition = { id: crypto.randomUUID(), owner };
   const secondCompetition = { id: crypto.randomUUID(), owner };
   const first = await queue.enter('a', 'A', false, firstCompetition);
@@ -1497,17 +1267,25 @@ it('終端後に未保存結果を残したまま組織参加枠を解放する'
     saved.resultRetryAt = Date.now() + 60000;
     await ctx.storage.put('room', saved);
   });
+  expect(await queue.enter('a', 'A', false, secondCompetition)).toMatchObject({
+    ok: false,
+    code: 'OTHER_INSTANCE_ACTIVE',
+  });
+  await queue.matchFinished(first.room);
   expect((await queue.enter('a', 'A', false, secondCompetition)).ok).toBe(true);
   expect((await state(room))?.phase).toBe('FINISHED');
 });
 
 it('候補0の検出で待機を解除し、候補復旧後は本人の再参加だけを受け付ける', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const scope = { id: crypto.randomUUID(), owner };
   const first = await queue.enter('a', 'A', false, scope);
   if (!first.ok) throw new Error(first.code);
   mocks.load.mockRejectedValueOnce(new Error('NO_RANKED_QUESTIONS'));
-  await runDurableObjectAlarm(queue);
+  expect(await queue.enter('new-actor', 'B', false, scope)).toMatchObject({
+    ok: false,
+    code: 'NO_RANKED_QUESTIONS',
+  });
   expect(
     (await runtime.GAME_ROOM.getByName(`match:${first.room}`).lobbyStatus())?.closed,
   ).toBe(true);
@@ -1537,7 +1315,7 @@ it('候補0の待機解除は開始済みの固定問題や終端を変更しな
 });
 
 it('部屋照合が失敗しても別インスタンスへの参加枠を解放しない', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const firstCompetition = { id: crypto.randomUUID(), owner };
   const secondCompetition = { id: crypto.randomUUID(), owner };
   const first = await queue.enter('a', 'A', false, firstCompetition);
@@ -1569,7 +1347,7 @@ it('部屋照合が失敗しても別インスタンスへの参加枠を解放�
 
 it('レビューR01: logout応答消失中の復帰でも進行中の組織参加枠を保持する', async () => {
   definition.playersPerMatch = 2;
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const scope = { id: crypto.randomUUID(), owner };
   const other = { id: crypto.randomUUID(), owner };
   const first = await queue.enter('a', 'A', false, scope);
@@ -1640,7 +1418,7 @@ it('レビューR01: logout応答消失中の復帰でも進行中の組織参�
 it.each(['room', 'organization'])(
   'レビューR02/R04: 終端回収後の%sログアウトも旧tokenを失効させる',
   async (kind) => {
-    const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+    const queue = runtime.MATCHMAKER.getByName('matchmaker');
     const first = await queue.enter('a', 'A', false, rankedScope);
     if (!first.ok) throw new Error(first.code);
     const room = runtime.GAME_ROOM.getByName(`match:${first.room}`);
@@ -1654,6 +1432,7 @@ it.each(['room', 'organization'])(
       saved.resultRetryAt = Date.now() + 60000;
       await ctx.storage.put('room', saved);
     });
+    await queue.matchFinished(first.room);
     expect(await queue.enter('a', '', true, rankedScope)).toMatchObject({
       ok: false,
       code: 'NO_ACTIVE_MATCH',
@@ -1678,61 +1457,39 @@ it.each(['room', 'organization'])(
   },
 );
 
-it('レビューR03: 通常要求で回収期限を延ばさず、終了済み64室を回収して参加できる', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+it('終了通知で満杯の試合枠を解放し、処理中の期限がなければアラームを止める', async () => {
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const scope = { id: crypto.randomUUID(), owner };
-  const before = Date.now() + 30000;
-  let restore = () => {};
-  await runInDurableObject(queue, async (instance, ctx) => {
-    const actors = Object.fromEntries(
-      Array.from({ length: 64 }, (_, i) => [
-        `old-${i}`,
-        {
-          room: crypto.randomUUID(),
-          key: JSON.stringify([scope.id, definition.competition]),
-          token: `token-${i}`,
-          generation: `generation-${i}`,
-          name: 'Old',
-          guest: false,
-          created: 0,
-          scope,
-        },
-      ]),
-    );
-    await ctx.storage.put('queue', { ...emptyQueue(), actors });
-    await ctx.storage.setAlarm(before);
-    const oldRooms = new Set<string>(Object.values(actors).map((entry) => entry.room));
-    const target = instance as unknown as {
-      room(id: string): DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>;
-    };
-    const original = target.room.bind(target);
-    const spy = vi.spyOn(target, 'room').mockImplementation((id) =>
-      oldRooms.has(id)
-        ? ({
-            lobbyStatus: async () => ({
-              phase: 'FINISHED',
-              closed: true,
-              actors: [],
-              capacity: 4,
-            }),
-            cancelReservation: async () => true,
-          } as unknown as ReturnType<typeof original>)
-        : original(id),
-    );
-    restore = () => spy.mockRestore();
+  const rooms = Array.from({ length: 64 }, () => crypto.randomUUID());
+  await runInDurableObject(queue, async (_, context) => {
+    await context.storage.put('queue', {
+      ...emptyQueue(),
+      actors: Object.fromEntries(
+        rooms.map((room, index) => [
+          String(index),
+          {
+            room,
+            key: JSON.stringify([scope.id, definition.competition]),
+            token: String(index),
+            generation: String(index),
+            name: 'A',
+            guest: false,
+            created: 0,
+            scope,
+          },
+        ]),
+      ),
+    });
   });
-  try {
-    expect((await queue.enter('new', 'New', false, scope)).ok).toBe(true);
-    expect(
-      await runInDurableObject(queue, async (_instance, ctx) => ctx.storage.getAlarm()),
-    ).toBe(before);
-  } finally {
-    restore();
-  }
+  for (const room of rooms) await queue.matchFinished(room);
+  expect((await queue.enter('new', 'New', false, scope)).ok).toBe(true);
+  expect(
+    await runInDurableObject(queue, async (_, context) => context.storage.getAlarm()),
+  ).toBeNull();
 });
 
 it('レビューR10: 故障した部屋を保持して、正常な別室への参加は受け付ける', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
   let restore = () => {};
@@ -1766,7 +1523,7 @@ it('レビューR10: 故障した部屋を保持して、正常な別室への�
 });
 
 it('DEV01: an older logout cannot release the admission lock of a pending newer logout', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const releases: Array<() => void> = [];
   let restore = () => {};
   await runInDurableObject(queue, async (instance) => {
@@ -1811,7 +1568,7 @@ it('DEV01: an older logout cannot release the admission lock of a pending newer 
 });
 
 it('DEV01: failed logout remains blocked across eviction and a retry revokes the old token', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const first = await queue.enter('a', 'A', false, rankedScope);
   if (!first.ok) throw new Error(first.code);
   await runInDurableObject(queue, async (instance) => {
@@ -1869,7 +1626,7 @@ it('DEV02: maximum-size question definition persists without embedding it in the
   });
   const bytes = new TextEncoder().encode(JSON.stringify(definition)).length;
   const started = Date.now();
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
   const result = await queue.enter('a', 'A', false, rankedScope);
   expect(result.ok).toBe(true);
   const queueBytes = await runInDurableObject(
@@ -1891,39 +1648,28 @@ it('DEV02: maximum-size question definition persists without embedding it in the
   );
 });
 
-it('DEV02: rate-account capacity rejects overflow and recovers after expiry', async () => {
-  const queue = runtime.MATCHMAKER.getByName(crypto.randomUUID());
-  await runInDurableObject(queue, async (_instance, ctx) => {
-    await ctx.storage.put('queue', {
-      ...emptyQueue(),
-      rates: Object.fromEntries(
-        Array.from({ length: 1024 }, (_, i) => [
-          `actor-${i}`,
-          { at: Date.now(), count: 1 },
-        ]),
-      ),
-    });
-  });
-  expect(await queue.enter('overflow', 'New', false, rankedScope)).toEqual({
+it('参加回数制限はbindingの本人キーを使い、拒否された要求では枠を作らない', async () => {
+  if (!runtime.ADMISSION_LIMITER) throw new Error('missing limiter');
+  vi.mocked(runtime.ADMISSION_LIMITER.limit).mockResolvedValueOnce({ success: false });
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
+  expect(await queue.enter('limited', 'A', false, rankedScope)).toEqual({
     ok: false,
     code: 'RATE_LIMIT',
   });
-  await runInDurableObject(queue, async (_instance, ctx) => {
-    const saved = await ctx.storage.get<{ rates: Record<string, { at: number }> }>(
-      'queue',
-    );
-    if (!saved) throw Error('missing queue');
-    for (const entry of Object.values(saved.rates)) entry.at = 0;
-    console.log(
-      JSON.stringify({
-        check: 'DEV02 rate capacity',
-        accounts: 1024,
-        queueBytes: new TextEncoder().encode(JSON.stringify(saved)).length,
-      }),
-    );
-    await ctx.storage.put('queue', saved);
-  });
-  expect((await queue.enter('overflow', 'New', false, rankedScope)).ok).toBe(true);
+  expect(runtime.ADMISSION_LIMITER.limit).toHaveBeenCalledWith({ key: 'limited' });
+  expect((await queue.enter('limited', 'A', false, rankedScope)).ok).toBe(true);
+});
+
+it('終了通知は対象試合だけを解放し、遅れて再送しても次の参加を消さない', async () => {
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
+  const first = await queue.enter('a', 'A', false, rankedScope);
+  if (!first.ok) throw new Error(first.code);
+  await queue.matchFinished(first.room);
+  const next = await queue.enter('a', 'A', false, rankedScope);
+  if (!next.ok) throw new Error(next.code);
+  expect(next.room).not.toBe(first.room);
+  await queue.matchFinished(first.room);
+  expect(await queue.enter('a', '', true, rankedScope)).toEqual(next);
 });
 
 it('D1への待機登録に失敗したときは試合DOに部屋を作らない', async () => {
@@ -1943,4 +1689,39 @@ it('D1への待機登録に失敗したときは試合DOに部屋を作らない
     ).resolves.toEqual({ ok: false, code: 'DB_UNAVAILABLE' });
     expect((await context.storage.list()).size).toBe(0);
   });
+});
+
+beforeEach(resetMatchmaker);
+
+it('参加bindingは本人ごとに1分20回を許可し、21回目を拒否する', async () => {
+  if (!runtime.ADMISSION_LIMITER) throw new Error('missing limiter');
+  vi.mocked(runtime.ADMISSION_LIMITER.limit).mockRestore();
+  const actor = crypto.randomUUID();
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
+  for (let attempt = 0; attempt < 20; attempt++)
+    expect(await queue.enter(actor, '', true, rankedScope)).toMatchObject({
+      ok: false,
+      code: 'NO_ACTIVE_MATCH',
+    });
+  expect(await queue.enter(actor, '', true, rankedScope)).toEqual({
+    ok: false,
+    code: 'RATE_LIMIT',
+  });
+  expect(await queue.enter(crypto.randomUUID(), '', true, rankedScope)).toMatchObject({
+    code: 'NO_ACTIVE_MATCH',
+  });
+});
+
+it('受付記録はアラームが動かなくても読み取り時に期限切れを除く', async () => {
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
+  const operationId = crypto.randomUUID();
+  await runInDurableObject(queue, async (_, context) => {
+    await context.storage.put('admissions:a', {
+      [operationId]: { closed: true, expires: 1 },
+    });
+    await context.storage.deleteAlarm();
+  });
+  expect((await queue.enter('a', 'A', false, rankedScope, false, operationId)).ok).toBe(
+    true,
+  );
 });

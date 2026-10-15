@@ -7,6 +7,7 @@ import { contentHash } from '../src/worker/catalog/hash';
 import type { Env } from '../src/worker/env';
 import { rules } from '../src/worker/game/rules';
 import { readStored } from '../src/worker/game/storage';
+import { resetMatchmaker } from './fixtures/matchmaker';
 import { questions } from './fixtures/questions';
 
 const mocks = vi.hoisted(() => ({
@@ -35,17 +36,16 @@ vi.mock('../src/worker/federation/slots', () => ({
   logoutForeignEntry: mocks.logout,
 }));
 const runtime = env as unknown as Env;
-let organization: string, scope: { id: string; owner: string }, actor: string;
+let scope: { id: string; owner: string }, actor: string;
 const target = (): ParticipationTarget => ({
   peerOrigin: 'https://host.quiz-relay.workers.dev',
   sourceOrganizationId: scope.id,
   hostInstanceId: crypto.randomUUID(),
   mode: 'ranked',
 });
-const maker = () => runtime.MATCHMAKER.getByName(organization);
+const maker = () => runtime.MATCHMAKER.getByName('matchmaker');
 beforeEach(async () => {
   vi.clearAllMocks();
-  organization = crypto.randomUUID();
   actor = crypto.randomUUID();
   scope = { id: crypto.randomUUID(), owner: `urn:uuid:${crypto.randomUUID()}` };
   mocks.release.mockResolvedValue(undefined);
@@ -93,7 +93,7 @@ it('ローカル待機と外部予約を同じ2枠へ数え、成立後にロー
   ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
   expect(
     await maker().enter(actor, '本人', false, scope, false, crypto.randomUUID()),
-  ).toMatchObject({ ok: false, code: 'MATCH_SWITCH_PENDING' });
+  ).toMatchObject({ ok: false, code: 'ALREADY_JOINED' });
   expect((await queue())?.actors[actor].room).toBe(local.room);
   expect(
     await maker().commitForeign(
@@ -261,3 +261,5 @@ it('期限切れの応答不明予約も離脱確認まで枠を解放せず、�
   await runDurableObjectAlarm(maker());
   expect((await queue())?.foreign?.[actor]).toBeUndefined();
 });
+
+beforeEach(resetMatchmaker);

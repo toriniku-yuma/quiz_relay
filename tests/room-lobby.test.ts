@@ -682,3 +682,35 @@ it('ロビーsession期限と空室10分を消去し、持込・ゲスト名は3
     room.close();
   }
 });
+
+it('終了通知で全員を親ロビーへ戻し、古い試合の通知は次の試合に影響しない', async () => {
+  const room = await lobby();
+  try {
+    await start(room.stub);
+    const first = (await read(room.stub))?.match?.id;
+    if (!first) throw new Error('missing match');
+    await room.stub.userRoomMatchFinished(first);
+    const returned = await read(room.stub);
+    expect(returned?.match).toBeUndefined();
+    expect(returned?.playing).toBe(false);
+    expect(
+      Object.values(returned?.members ?? {}).every(
+        (member) => member.inLobby && !member.ready,
+      ),
+    ).toBe(true);
+    for (let index = 0; index < 2; index++)
+      await room.stub.mutateUserRoom(actor(index), {
+        action: 'ready',
+        ready: true,
+        operationId: crypto.randomUUID(),
+      });
+    await start(room.stub);
+    const second = (await read(room.stub))?.match?.id;
+    expect(second).toBeTruthy();
+    expect(second).not.toBe(first);
+    await room.stub.userRoomMatchFinished(first);
+    expect((await read(room.stub))?.match?.id).toBe(second);
+  } finally {
+    room.close();
+  }
+});

@@ -11,11 +11,7 @@
     "waitingLifetimeMs": 600000,
     "reservationLifetimeMs": 60000,
     "sessionLifetimeMs": 43200000,
-    "cleanupIntervalMs": 60000,
-    "maxRooms": 64,
-    "rateWindowMs": 60000,
-    "requestsPerWindow": 20,
-    "maxRateActors": 1024
+    "maxRooms": 64
   },
   "game": {
     "maxConnectionsPerActor": 3,

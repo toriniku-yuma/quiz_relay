@@ -38,6 +38,11 @@ export function useMatchmaking(
   } | null>(null);
   const [error, setError] = useState('');
   const [activeInstance, setActiveInstance] = useState('');
+  const [conflict, setConflict] = useState<{
+    room: string;
+    instanceId: string;
+    mode: 'ranked' | 'casual' | 'room';
+  } | null>(null);
   const operation = useRef(0);
   const joining = useRef<{
     operationId: string;
@@ -249,6 +254,53 @@ export function useMatchmaking(
       if (isCurrent()) setBusy(false);
     }
   }
+  const join = () =>
+    run(async () => {
+      if (cancellation.current) return;
+      joining.current ??= {
+        operationId: crypto.randomUUID(),
+        instanceId: targetInstanceId,
+      };
+      const pending = joining.current;
+      try {
+        const { instanceId: target, ...body } = pending;
+        const result = await request(
+          mode === 'casual' ? API_PATHS.casualJoin : API_PATHS.matchJoin,
+          body,
+          target,
+        );
+        if (joining.current !== pending || cancellation.current) return;
+        joining.current = null;
+        setConflict(null);
+        setActiveInstance('');
+        setUncertain(false);
+        setRestored(false);
+        setViewing(true);
+        if (result.room) game.attach(result.room, target);
+      } catch (error) {
+        if (joining.current !== pending || cancellation.current) return;
+        if (
+          (error instanceof MatchError || error instanceof PlayRequestError) &&
+          error.status < 500
+        ) {
+          joining.current = null;
+          setUncertain(false);
+        } else setUncertain(true);
+        if (
+          (error instanceof MatchError || error instanceof PlayRequestError) &&
+          ['ALREADY_JOINED', 'OTHER_INSTANCE_ACTIVE'].includes(error.code) &&
+          error.room &&
+          error.instanceId &&
+          error.mode
+        )
+          setConflict({
+            room: error.room,
+            instanceId: error.instanceId,
+            mode: error.mode,
+          });
+        throw error;
+      }
+    });
   const currentConfig = config?.instanceId === targetInstanceId ? config : null;
   return {
     game,
@@ -262,39 +314,33 @@ export function useMatchmaking(
     viewing,
     offerRestore,
     dismissRestored: () => setRestored(false),
-    join: () =>
-      run(async () => {
-        if (cancellation.current) return;
-        joining.current ??= {
-          operationId: crypto.randomUUID(),
-          instanceId: targetInstanceId,
-        };
-        const pending = joining.current;
-        try {
-          const { instanceId: target, ...body } = pending;
-          const result = await request(
-            mode === 'casual' ? API_PATHS.casualJoin : API_PATHS.matchJoin,
-            body,
-            target,
-          );
-          if (joining.current !== pending || cancellation.current) return;
-          joining.current = null;
-          setUncertain(false);
-          setRestored(false);
-          setViewing(true);
-          if (result.room) game.attach(result.room, target);
-        } catch (error) {
-          if (joining.current !== pending || cancellation.current) return;
-          if (
-            (error instanceof MatchError || error instanceof PlayRequestError) &&
-            error.status < 500
-          ) {
-            joining.current = null;
-            setUncertain(false);
-          } else setUncertain(true);
-          throw error;
-        }
-      }),
+    conflict,
+    dismissConflict: () => setConflict(null),
+    join,
+    leaveAndJoin: async () => {
+      if (!conflict) return;
+      let left = false;
+      await run(async () => {
+        const path =
+          conflict.mode === 'ranked'
+            ? API_PATHS.matchCancel
+            : conflict.mode === 'casual'
+              ? API_PATHS.casualCancel
+              : API_PATHS.roomLeave;
+        await playRequest(
+          path,
+          {
+            room: conflict.room,
+            ...(conflict.mode === 'room' ? { force: true } : { forfeit: true }),
+          },
+          conflict.instanceId,
+        );
+        if (currentGame.current.roomId === conflict.room) leave();
+        setConflict(null);
+        left = true;
+      });
+      if (left) await join();
+    },
     resume: () =>
       run(async (isCurrent) => {
         const result = await restore(game.roomInstanceId);

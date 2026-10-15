@@ -12,6 +12,7 @@ import {
   organizations,
 } from '../db/schema.ts';
 import { matchRoomName, userRoomName } from '../game/room-names.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { OrganizationError, validId } from '../organization/access.ts';
 import { roomResult } from '../rooms/rpc.ts';
 import { receivingParticipation } from './admission.ts';
@@ -353,9 +354,13 @@ export const participationCancel: Handler<AuthEnv> = async (context) => {
       reservationId(context),
     ),
     row = identity.reservation;
-  const result = await context.env.MATCHMAKER.getByName(
-    identity.instance.organizationId,
-  ).cancel(row.actorId, row.roomId ?? '', input.forfeit, row.instanceId, input.forfeit);
+  const result = await matchmaker(context.env).cancel(
+    row.actorId,
+    row.roomId ?? '',
+    input.forfeit,
+    row.instanceId,
+    input.forfeit,
+  );
   if (!result.ok)
     throw new OrganizationError(
       result.code,

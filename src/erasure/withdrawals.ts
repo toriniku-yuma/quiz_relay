@@ -22,6 +22,7 @@ import {
   userReports,
 } from '../worker/db/schema.ts';
 import type { Env } from '../worker/env.ts';
+import { matchmaker } from '../worker/matchmaking/instance.ts';
 import { privateSelectionSQL } from '../worker/results/privacy.ts';
 import {
   anonymousAuditDetails,
@@ -136,10 +137,10 @@ export async function anonymizeWithdrawal(
         .where(eq(jobs.id, id)),
     );
   });
-  const matchmaker = env.MATCHMAKER.getByName(job.organizationId);
-  const admission = await matchmaker.beginWithdrawal(job.actorId, job.id);
+  const maker = matchmaker(env);
+  const admission = await maker.beginWithdrawal(job.actorId, job.id);
   if (!admission.ok) throw new Error(admission.code);
-  await matchmaker.logoutActor(job.actorId);
+  await maker.logoutActor(job.actorId);
   if (!job.auditErasedAt) await eraseWithdrawalAudit(db, id);
   const scopes = await db
     .select()
@@ -208,7 +209,7 @@ export async function anonymizeWithdrawal(
       );
   });
   if (rooms.length === erasureBatch.rooms) return false;
-  await matchmaker.anonymizeAccount(job.actorId, [...ids]);
+  await maker.anonymizeAccount(job.actorId, [...ids]);
   return changeD1(db, async (writes) => {
     const [current] = await db.select().from(jobs).where(eq(jobs.id, id));
     const [remaining] = await db

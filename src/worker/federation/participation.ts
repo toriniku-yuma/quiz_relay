@@ -18,6 +18,7 @@ import {
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { matchRoomName, userRoomName } from '../game/room-names.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { actorForSubject, OrganizationError, validId } from '../organization/access.ts';
 import { allowedInstanceActors } from '../organization/database.ts';
 import { ensureCasualCatalog } from '../rooms/database.ts';
@@ -102,13 +103,9 @@ export async function reservationAdmission(
         token: '',
         expires: row.sessionExpiresAt || Date.now() + 43200000,
       };
-    return env.MATCHMAKER.getByName(instance.organizationId).resumeRoom(
-      row.actorId,
-      row.roomId,
-      instance.id,
-    );
+    return matchmaker(env).resumeRoom(row.actorId, row.roomId, instance.id);
   }
-  return env.MATCHMAKER.getByName(instance.organizationId).enter(
+  return matchmaker(env).enter(
     row.actorId,
     '',
     true,
@@ -163,7 +160,7 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
     )
       throw new OrganizationError('PARTICIPATION_RESTRICTED', 403);
   };
-  const maker = env.MATCHMAKER.getByName(identity.organization.id),
+  const maker = matchmaker(env),
     target = { sourceOrganizationId, hostInstanceId, peerOrigin, mode };
   try {
     await check();
@@ -466,7 +463,7 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
     await ensureCasualCatalog(env, instance.id);
   const result =
     continuation?.admission ??
-    (await env.MATCHMAKER.getByName(organization.id).enter(
+    (await matchmaker(env).enter(
       actorId,
       input.displayName,
       row.state === 'exchanged',
@@ -582,7 +579,7 @@ export async function validateHomeParticipation(
   for (const actor of actors) {
     if (!allowed.includes(actor.actorId)) continue;
     if (
-      await env.MATCHMAKER.getByName(organization.id).foreignAuthorization(
+      await matchmaker(env).foreignAuthorization(
         actor.actorId,
         actor.operationId,
         actor.authorizationId,

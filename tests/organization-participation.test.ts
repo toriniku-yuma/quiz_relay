@@ -7,6 +7,7 @@ import type { Env } from '../src/worker/env';
 import { rules } from '../src/worker/game/rules';
 import type { State } from '../src/worker/game/state';
 import app from '../src/worker/index';
+import { resetMatchmaker } from './fixtures/matchmaker';
 import { questions } from './fixtures/questions';
 
 const mocks = vi.hoisted(() => ({
@@ -132,7 +133,7 @@ it('権限取消の通知で待機を解除し、古いcookie・再参加を拒�
   const firstAdmission = await join('a');
   expect((await socket(firstAdmission)).status).toBe(101);
   mocks.blocked.add('a');
-  await runtime.MATCHMAKER.getByName(org).refreshWaiting('a', id);
+  await runtime.MATCHMAKER.getByName('matchmaker').refreshWaiting('a', id);
   expect((await state(firstAdmission.room)).players).toEqual([]);
   expect((await socket(firstAdmission)).status).toBe(401);
   expect((await post('join', {})).status).toBe(409);
@@ -165,18 +166,20 @@ it('開始済み試合は権限取消後も維持し、resumeと再接続を許�
   expect((await state(firstAdmission.room)).phase).not.toBe('WAITING');
   mocks.blocked.add('a');
   actor = 'a';
-  await runtime.MATCHMAKER.getByName(org).refreshWaiting('a', id);
+  await runtime.MATCHMAKER.getByName('matchmaker').refreshWaiting('a', id);
   expect((await state(firstAdmission.room)).players.map((player) => player.id)).toContain(
     'a',
   );
   expect((await post('resume', {})).status).toBe(200);
   expect((await socket(firstAdmission)).status).toBe(101);
 });
-it('通知が届かなくても待機列の定期確認で取消対象を解除する', async () => {
+it('待機列アラームは部屋を巡回せず、権限変更通知で待機を解除する', async () => {
   const firstAdmission = await join('a');
   await socket(firstAdmission);
   mocks.blocked.add('a');
-  await runDurableObjectAlarm(runtime.MATCHMAKER.getByName(org));
+  await runDurableObjectAlarm(runtime.MATCHMAKER.getByName('matchmaker'));
+  expect((await state(firstAdmission.room)).players).toHaveLength(1);
+  await runtime.MATCHMAKER.getByName('matchmaker').refreshWaiting('a', id);
   expect((await state(firstAdmission.room)).players).toEqual([]);
 });
 it('受付後に権限が変わった遅延reserveを拒否する', async () => {
@@ -199,7 +202,7 @@ it('インスタンス全体の再確認で一般待機だけを解除し、許�
   const firstAdmission = await join('a');
   const secondAdmission = await join('b');
   mocks.blocked.add('a');
-  await runtime.MATCHMAKER.getByName(org).refreshInstanceWaiting(id);
+  await runtime.MATCHMAKER.getByName('matchmaker').refreshInstanceWaiting(id);
   expect((await state(firstAdmission.room)).players.map((player) => player.id)).toEqual([
     'b',
   ]);
@@ -215,7 +218,7 @@ it('アーカイブの全体再確認でも開始済み試合・再接続を維�
   await socket(secondAdmission);
   mocks.blocked.add('a');
   mocks.blocked.add('b');
-  await runtime.MATCHMAKER.getByName(org).refreshInstanceWaiting(id);
+  await runtime.MATCHMAKER.getByName('matchmaker').refreshInstanceWaiting(id);
   expect((await state(firstAdmission.room)).players).toHaveLength(2);
   actor = 'a';
   expect((await post('resume', {})).status).toBe(200);
@@ -223,7 +226,7 @@ it('アーカイブの全体再確認でも開始済み試合・再接続を維�
 });
 
 it('退会の受付停止は待機・試合中を拒否し、同じ操作IDだけが解除できる', async () => {
-  const maker = runtime.MATCHMAKER.getByName(org);
+  const maker = runtime.MATCHMAKER.getByName('matchmaker');
   const operationId = crypto.randomUUID();
   const firstAdmission = await join('a');
   expect(await maker.beginWithdrawal('a', operationId)).toEqual({
@@ -306,3 +309,5 @@ it('完全削除は進行中・未保存結果を拒否し、保存済み部屋�
     ),
   ).toMatchObject({ ok: false });
 });
+
+beforeEach(resetMatchmaker);

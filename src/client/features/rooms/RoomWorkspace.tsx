@@ -11,8 +11,9 @@ import Modal from '../../components/Modal';
 import Panel from '../../components/Panel';
 import TextField from '../../components/TextField';
 import LoginForm from '../auth/LoginForm';
+import ParticipationConflict from '../matchmaking/ParticipationConflict';
+import { useAdmissionMutation } from '../matchmaking/useAdmissionMutation';
 import { useActiveSanctions } from '../moderation/useActiveSanctions';
-import { useMutation } from '../moderation/useMutation';
 import { playRequest } from './api';
 import GuestName from './GuestName';
 import PersonalSets from './PersonalSets';
@@ -43,7 +44,7 @@ export default function RoomWorkspace() {
   const [joinAfterName, setJoinAfterName] = useState(false);
   const [restorePrompt, setRestorePrompt] = useState(false);
   const offeredAt = useRef('');
-  const joined = useMutation(
+  const joined = useAdmissionMutation(
     API_PATHS.roomJoin,
     (request) => {
       const joinedRoom = String(request.room),
@@ -163,6 +164,14 @@ export default function RoomWorkspace() {
   ]);
   return (
     <>
+      {joined.conflict && (
+        <ParticipationConflict
+          conflict={joined.conflict}
+          busy={joined.busy}
+          onClose={joined.dismissConflict}
+          onLeave={joined.leaveAndJoin}
+        />
+      )}
       {session.active && (
         <div hidden={!activeHere || view === 'edit'}>
           <RoomLobby session={session} gamePage={view === 'game'} />

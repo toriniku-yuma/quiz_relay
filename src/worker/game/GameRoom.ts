@@ -14,6 +14,7 @@ import {
   sessionLifetime,
   waitingLifetime,
 } from '../matchmaking/config.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import type { InstanceScope } from '../matchmaking/Matchmaker.ts';
 import { allowedInstanceActors } from '../organization/database.ts';
 import { registerInstanceRoom } from '../organization/rooms.ts';
@@ -31,7 +32,7 @@ import { RoomLobby } from '../rooms/RoomLobby.ts';
 import { roomRpc } from '../rooms/rpc.ts';
 import { anonymizeState, expireReview, reviewDeadline } from './privacy.ts';
 import { replayEvents } from './recovery.ts';
-import { matchRoomName } from './room-names.ts';
+import { matchRoomName, userRoomName } from './room-names.ts';
 import {
   adjudicate,
   advance,
@@ -53,6 +54,8 @@ type MatchRoom = {
   starting?: MatchRecord;
   lifecycleRetryAt?: number;
   cancelled?: boolean;
+  finishNotified?: boolean;
+  notificationRetryAt?: number;
   scope: InstanceScope;
   generations: Record<string, string>;
   resultRetryAt?: number;
@@ -129,6 +132,9 @@ export class GameRoom extends DurableObject<Env> {
     );
     if (creation?.actor !== actor) throw new Error('ROOM_HOST_REQUIRED');
     return creation.invite;
+  }
+  async userRoomMatchFinished(matchId: string) {
+    return this.userLobby().matchFinished(matchId);
   }
   async userRoomInfo(invite?: string) {
     return roomRpc(() => this.userLobby().info(invite));
@@ -1007,6 +1013,7 @@ export class GameRoom extends DurableObject<Env> {
   async alarm() {
     if (await this.userLobby().read()) return this.userLobby().alarm();
     await this.finishLifecycle();
+    await this.notifyFinished();
     const pending = await this.ctx.blockConcurrencyWhile(async () => {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (!room) return;
@@ -1063,6 +1070,7 @@ export class GameRoom extends DurableObject<Env> {
       await this.save(room);
       this.broadcast(room);
     });
+    await this.notifyFinished();
     if (status === 'confirmed')
       this.ctx.waitUntil(
         dispatchSavedResult(this.env, pending.record.matchId).catch((error) => {
@@ -1122,6 +1130,44 @@ export class GameRoom extends DurableObject<Env> {
     state.rules = rules;
     state.questions = record.questions;
     state.question = structuredClone(record.questions[0]);
+  }
+
+  private async notifyFinished() {
+    const pending = await this.ctx.blockConcurrencyWhile(async () => {
+      const room = await readStored<Room>(this.ctx.storage, 'room');
+      if (
+        !room ||
+        !isMatchRoom(room) ||
+        room.notificationRetryAt === undefined ||
+        room.notificationRetryAt > Date.now()
+      )
+        return;
+      room.notificationRetryAt = Date.now() + settings.results.retryIntervalMs;
+      await this.save(room);
+      return { matchId: room.state.matchId, parentRoomId: room.state.parentRoomId };
+    });
+    if (!pending) return;
+    try {
+      await matchmaker(this.env).matchFinished(pending.matchId);
+      if (pending.parentRoomId)
+        await this.env.GAME_ROOM.getByName(
+          userRoomName(pending.parentRoomId),
+        ).userRoomMatchFinished(pending.matchId);
+    } catch (error) {
+      console.error(
+        'MATCH_FINISH_NOTIFICATION_RETRY',
+        pending.matchId,
+        failureCode(error),
+      );
+      return;
+    }
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const room = await this.readMatchRoom();
+      if (!room || room.state.matchId !== pending.matchId) return;
+      room.finishNotified = true;
+      delete room.notificationRetryAt;
+      await this.save(room);
+    });
   }
 
   private async finishLifecycle() {
@@ -1230,6 +1276,15 @@ export class GameRoom extends DurableObject<Env> {
     expireReview(room.state, Date.now());
     if (
       isMatchRoom(room) &&
+      !room.finishNotified &&
+      (room.cancelled ||
+        room.state.result?.storage === 'confirmed' ||
+        room.state.result?.storage === 'conflict') &&
+      room.notificationRetryAt === undefined
+    )
+      room.notificationRetryAt = Date.now();
+    if (
+      isMatchRoom(room) &&
       room.state.result?.storage === 'pending' &&
       room.resultRetryAt === undefined
     )
@@ -1250,6 +1305,8 @@ export class GameRoom extends DurableObject<Env> {
       const reviewAt = reviewDeadline(room.state);
       if (reviewAt !== undefined) deadlines.push(reviewAt);
       if (isMatchRoom(room)) {
+        if (room.notificationRetryAt !== undefined)
+          deadlines.push(room.notificationRetryAt);
         if (room.lifecycleRetryAt !== undefined) deadlines.push(room.lifecycleRetryAt);
         if (!room.lobby.closed && !room.starting) {
           deadlines.push(room.lobby.sessionExpires);

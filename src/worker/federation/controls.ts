@@ -21,6 +21,7 @@ import {
   organizationAccounts,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { OrganizationError, validId } from '../organization/access.ts';
 import { signEvent, verifyEvent } from './events.ts';
 import { federationDatabase, requestPeer } from './transport.ts';
@@ -271,7 +272,7 @@ export async function applyControlEvent(env: Env, peerOrigin: string, eventId: s
       ),
     );
   if (actor) {
-    const maker = env.MATCHMAKER.getByName(actor.organizationId);
+    const maker = matchmaker(env);
     await maker.logoutActor(actor.actor.actorId);
     const [unreconciled] = await db
       .select({ id: instances.id })

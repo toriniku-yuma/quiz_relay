@@ -6,6 +6,7 @@ export interface Env {
   GAME_D1?: D1Database;
   ACCOUNT_ERASURE?: Fetcher;
   API_LIMITER?: RateLimit;
+  ADMISSION_LIMITER?: RateLimit;
   FEDERATION_LIMITER?: RateLimit;
   PROBE: DurableObjectNamespace<Probe>;
   MATCHMAKER: DurableObjectNamespace<Matchmaker>;

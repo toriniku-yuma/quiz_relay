@@ -6,6 +6,7 @@ import { validateBroughtSet, validateRoomSettings } from '../../shared/rooms.ts'
 import { type AuthEnv, authenticate } from '../auth/handlers.ts';
 import { loadMatchDefinition } from '../catalog/database.ts';
 import { userRoomName } from '../game/room-names.ts';
+import { matchmaker } from '../matchmaking/instance.ts';
 import { OrganizationError, validId } from '../organization/access.ts';
 import {
   createGuest,
@@ -151,10 +152,15 @@ export const casual: Handler<AuthEnv> = async (httpContext) => {
     });
   }
   const input = await body(httpContext),
-    maker = httpContext.env.MATCHMAKER.getByName(identity.instance.organizationId);
+    maker = matchmaker(httpContext.env);
   if (httpContext.req.path === API_PATHS.casualCancel) {
     const operationCancel = input.operationId !== undefined;
-    if (Object.keys(input).join(',') !== (operationCancel ? 'operationId' : 'room'))
+    if (
+      operationCancel
+        ? Object.keys(input).join(',') !== 'operationId'
+        : Object.keys(input).some((key) => !['room', 'forfeit'].includes(key)) ||
+          (input.forfeit !== undefined && typeof input.forfeit !== 'boolean')
+    )
       throw new OrganizationError('INVALID_SETUP', 400);
     const room = operationCancel ? undefined : validId(input.room),
       result = operationCancel
@@ -169,6 +175,7 @@ export const casual: Handler<AuthEnv> = async (httpContext) => {
             room as string,
             false,
             identity.instance.id,
+            input.forfeit === true,
           );
     if (!result.ok)
       throw new OrganizationError(
@@ -213,9 +220,7 @@ export const settings: Handler<AuthEnv> = async (httpContext) => {
     input,
   );
   const identity = await context(httpContext, 'casual', true);
-  await httpContext.env.MATCHMAKER.getByName(
-    identity.instance.organizationId,
-  ).refreshInstanceWaiting(identity.instance.id);
+  await matchmaker(httpContext.env).refreshInstanceWaiting(identity.instance.id);
   return httpContext.json(result);
 };
 export const sets: Handler<AuthEnv> = async (httpContext) => {
@@ -320,7 +325,7 @@ export const roomActions: Handler<AuthEnv> = async (httpContext) => {
   const existing = !creating;
   const identity = await context(httpContext, 'room', existing, creating);
   const room = httpContext.env.GAME_ROOM.getByName(userRoomName(id)),
-    maker = httpContext.env.MATCHMAKER.getByName(identity.instance.organizationId);
+    maker = matchmaker(httpContext.env);
   if (creating) {
     const result = await maker.enterRoom(
       identity.actor,
@@ -334,18 +339,15 @@ export const roomActions: Handler<AuthEnv> = async (httpContext) => {
       input,
     );
     if (!result.ok)
-      throw new OrganizationError(
-        result.code,
-        'status' in result
-          ? result.status
-          : [
-                'OTHER_INSTANCE_ACTIVE',
-                'RATE_LIMIT',
-                'WITHDRAWAL_PENDING',
-                'LOGOUT_PENDING',
-              ].includes(result.code)
-            ? 409
-            : 503,
+      return httpContext.json(
+        result,
+        result.code === 'RATE_LIMIT'
+          ? 429
+          : result.code === 'GAME_DATABASE_UNAVAILABLE'
+            ? 503
+            : 'status' in result
+              ? result.status
+              : 409,
       );
     matchCookie(httpContext, result, true);
     return httpContext.json({ room: id });
@@ -357,7 +359,16 @@ export const roomActions: Handler<AuthEnv> = async (httpContext) => {
       invite: typeof input.invite === 'string' ? input.invite : '',
     });
     if (!result.ok)
-      throw new OrganizationError(result.code, result.code === 'RATE_LIMIT' ? 429 : 409);
+      return httpContext.json(
+        result,
+        result.code === 'RATE_LIMIT'
+          ? 429
+          : result.code === 'GAME_DATABASE_UNAVAILABLE'
+            ? 503
+            : 'status' in result
+              ? result.status
+              : 409,
+      );
     matchCookie(httpContext, result, true);
     return httpContext.json({
       room: roomResult(await room.userRoomView(identity.actor.id)),

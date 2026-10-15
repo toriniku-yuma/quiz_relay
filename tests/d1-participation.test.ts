@@ -75,6 +75,7 @@ import {
 } from '../src/worker/organization/database';
 import { readResults } from '../src/worker/results/read';
 import { commitFixtureResult } from './fixtures/match';
+import { resetMatchmaker } from './fixtures/matchmaker';
 import { resultFixture } from './fixtures/result';
 
 const runtime = env as unknown as {
@@ -623,13 +624,16 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
       .where(eq(organizationAccounts.subject, 'host-admin')),
     nativeActor = { id: native.actorId, name: '開催元参加者', guest: false },
     scope = { id: hostId, owner: instance.owner, mode: 'room' as const },
-    nativeAdmission = await realHost.MATCHMAKER.getByName(
-      instance.organizationId,
-    ).enterRoom(nativeActor, parent, scope, {
-      operationId: crypto.randomUUID(),
-      password: '',
-      invite: '',
-    });
+    nativeAdmission = await realHost.MATCHMAKER.getByName('matchmaker').enterRoom(
+      nativeActor,
+      parent,
+      scope,
+      {
+        operationId: crypto.randomUUID(),
+        password: '',
+        invite: '',
+      },
+    );
   if (!nativeAdmission.ok) throw new Error(nativeAdmission.code);
   const lobby = realHost.GAME_ROOM.getByName(`room:${parent}`),
     sockets: WebSocket[] = [];
@@ -1497,3 +1501,5 @@ it('外部ログインCookieと別人の参加証明を混ぜても参加Cookie�
   expect(await response.json()).toMatchObject({ code: 'PARTICIPATION_TICKET_BINDING' });
   expect(response.headers.get('Set-Cookie')).toBeNull();
 });
+
+beforeEach(resetMatchmaker);
