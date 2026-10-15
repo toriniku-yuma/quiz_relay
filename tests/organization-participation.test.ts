@@ -26,6 +26,12 @@ vi.mock('../src/worker/catalog/database', () => ({
   loadMatchDefinition: mocks.load,
   loadFixedVersion: mocks.load,
 }));
+vi.mock('../src/worker/results/lifecycle', async (original) => ({
+  ...(await original<typeof import('../src/worker/results/lifecycle')>()),
+  registerMatch: vi.fn(async (_env, _scope, record) => record),
+  startMatch: vi.fn(),
+  cancelMatch: vi.fn(),
+}));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/organization/moderation', () => ({
   requireUnrestricted: vi.fn(),

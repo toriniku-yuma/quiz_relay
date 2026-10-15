@@ -35,12 +35,13 @@ export async function eraseResultNames(db: Database) {
       const now = Date.now(),
         record = result?.payload,
         dates: number[] = [];
-      if (record?.players.some((player) => player.guest))
-        dates.push(record.result.finishedAt + 30 * 86400000);
-      if (record?.completedQuestions)
-        dates.push(
-          record.result.finishedAt + (record.definition.original ? 30 : 365) * 86400000,
-        );
+      const endedAt = record?.result?.finishedAt ?? record?.cancelledAt;
+      if (record && endedAt !== undefined) {
+        if (record.players.some((player) => player.guest))
+          dates.push(endedAt + 30 * 86400000);
+        if (record.completedQuestions || record.questions)
+          dates.push(endedAt + (record.definition.original ? 30 : 365) * 86400000);
+      }
       const next = dates
         .map((time) => Math.ceil(time / 1000) * 1000)
         .filter((time) => time > now)

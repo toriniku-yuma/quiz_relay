@@ -14,11 +14,18 @@ import {
   updateConnections,
 } from '../src/worker/game/state';
 import { ResultConflict } from '../src/worker/results/database';
+import { matchRecord, startMatch } from '../src/worker/results/lifecycle';
 import { ratingChange } from '../src/worker/results/rating';
 import { makeResultRecord } from '../src/worker/results/record';
 import { resultFixture } from './fixtures/result';
 
 const mocks = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock('../src/worker/results/lifecycle', async (original) => ({
+  ...(await original<typeof import('../src/worker/results/lifecycle')>()),
+  registerMatch: vi.fn(async (_env, _scope, record) => record),
+  startMatch: vi.fn(),
+  cancelMatch: vi.fn(),
+}));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/results/database', async (original) => ({
   ...(await original<typeof import('../src/worker/results/database')>()),
@@ -67,7 +74,7 @@ it('承認済みレート：勝敗・引き分け・失格・未復帰・INVALID
     ).toBe(0);
 });
 
-it('終端時の接続・失格・レートを固定し、復帰と切断で変更しない。非公開問題を含めない', () => {
+it('終端時の接続・失格・レートを固定し、復帰と切断で変更しない。公開スナップショットに非公開問題を含めない', () => {
   const { state } = resultFixture();
   state.phase = 'REVEALING';
   state.result = null;
@@ -84,7 +91,8 @@ it('終端時の接続・失格・レートを固定し、復帰と切断で変�
     { actorId: 'a', delta: 20 },
     { actorId: 'b', delta: -20 },
   ]);
-  const serialized = JSON.stringify(state.completed);
+  expect(ended.completed?.questions).toEqual(state.questions);
+  const serialized = JSON.stringify(snapshot(state));
   expect(serialized).not.toContain(state.questions[0].text);
   expect(serialized).not.toContain('"answer"');
   expect(snapshot(state)).not.toHaveProperty('completed');
@@ -210,14 +218,14 @@ it('D01/D02: DB停止・DO復帰・commit後応答消失でも同一原本で再
   await runInDurableObject(stub, async (_instance, ctx) => {
     const room = await ctx.storage.get<{ state: typeof state }>('room');
     expect(room?.state.result?.storage).toBe('confirmed');
-    expect(await ctx.storage.getAlarm()).toBeNull();
+    expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now());
   });
   await evictDurableObject(stub);
   await stub.lobbyStatus();
   expect(mocks.save).toHaveBeenCalledTimes(3);
 });
 
-it('内容競合は確定にせず原本を保持する', async () => {
+it('内容競合は確定にせずDO内の競合原本を破棄する', async () => {
   const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
   const { state, record } = resultFixture();
   mocks.save.mockRejectedValue(new ResultConflict());
@@ -229,7 +237,7 @@ it('内容競合は確定にせず原本を保持する', async () => {
   await runInDurableObject(stub, async (_instance, ctx) => {
     const room = await ctx.storage.get<{ state: typeof state }>('room');
     expect(room?.state.result?.storage).toBe('conflict');
-    expect(room?.state.completed).toEqual(record);
+    expect(room?.state.completed).toBeUndefined();
   });
 });
 
@@ -276,4 +284,57 @@ it('追加インスタンスの結果は部屋に保存したownerで保存し�
   });
   await runDurableObjectAlarm(stub);
   expect(mocks.save.mock.calls[0].slice(1)).toEqual([owner, record]);
+});
+
+it('開始保存中は同期を処理し、応答消失後も同じ開始原本で再送する', async () => {
+  const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
+  const { state, record } = resultFixture();
+  state.phase = 'WAITING';
+  state.result = null;
+  delete state.completed;
+  const starting = matchRecord(state);
+  let released = false;
+  const start = vi.mocked(startMatch);
+  start.mockClear();
+  start.mockImplementationOnce(async () => {
+    while (!released) await new Promise((resolve) => setTimeout(resolve, 5));
+    throw new Error('COMMITTED_RESPONSE_LOST');
+  });
+  await runInDurableObject(stub, async (_instance, context) => {
+    await context.storage.put('room', {
+      ...finishedRoom(state, record.owner),
+      starting,
+      lifecycleRetryAt: 1,
+    });
+    await context.storage.setAlarm(Date.now() + 60000);
+  });
+  const alarm = runDurableObjectAlarm(stub);
+  await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+  try {
+    await runInDurableObject(stub, async (_instance, context) => {
+      const room = await context.storage.get<{ state: State; starting: typeof starting }>(
+        'room',
+      );
+      expect(room?.state.phase).toBe('WAITING');
+      expect(room?.starting).toEqual(starting);
+    });
+  } finally {
+    released = true;
+    await alarm;
+  }
+  await evictDurableObject(stub);
+  await runInDurableObject(stub, async (_instance, context) => {
+    const room = await context.storage.get<{ lifecycleRetryAt: number }>('room');
+    if (!room) throw new Error('ROOM_NOT_FOUND');
+    room.lifecycleRetryAt = 1;
+    await context.storage.put('room', room);
+    await context.storage.setAlarm(Date.now() + 60000);
+  });
+  await runDurableObjectAlarm(stub);
+  expect(start.mock.calls.map((call) => call[1])).toEqual([starting, starting]);
+  await runInDurableObject(stub, async (_instance, context) => {
+    const room = await context.storage.get<{ state: State; starting?: unknown }>('room');
+    expect(room?.state.phase).toBe('REVEALING');
+    expect(room?.starting).toBeUndefined();
+  });
 });

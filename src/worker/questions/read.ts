@@ -288,7 +288,8 @@ async function readQuestionOverview(
       );
     for (const { payload: record } of originals) {
       if (
-        !record?.definition.original ||
+        !record?.result ||
+        !record.definition.original ||
         Date.now() - record.result.finishedAt >= 30 * 86400000
       )
         continue;

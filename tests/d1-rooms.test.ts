@@ -1,12 +1,13 @@
 import { applyD1Migrations, env } from 'cloudflare:test';
 import { and, eq } from 'drizzle-orm';
-import { beforeAll, expect, it } from 'vitest';
+import { beforeAll, expect, it, vi } from 'vitest';
 import { emptyQuestion } from '../src/shared/questions';
 import { loadFixedVersion, loadMatchDefinition } from '../src/worker/catalog/database';
 import { validateDefinition } from '../src/worker/catalog/definition';
 import { changeD1, connectD1, rowsD1 } from '../src/worker/db/d1';
 import {
   instances,
+  matches,
   organizationAccounts,
   personalQuestionSets,
   questionAvailability,
@@ -22,10 +23,14 @@ import {
   organizationIdentity,
   setupOrganization,
 } from '../src/worker/organization/database';
+import { requestInstanceDeletion } from '../src/worker/organization/deletion';
 import { currentProfileNames, saveProfile } from '../src/worker/organization/profile';
 import { registerInstanceRoom } from '../src/worker/organization/rooms';
+import { recordWithdrawal } from '../src/worker/organization/withdrawal';
 import { publishQuestionCatalog } from '../src/worker/questions/catalog';
 import { QuestionPlan } from '../src/worker/questions/plan';
+import { commitD1Result, eraseResult } from '../src/worker/results/database';
+import { cancelMatch, registerMatch, startMatch } from '../src/worker/results/lifecycle';
 import {
   createGuest,
   ensureCasualCatalog,
@@ -38,6 +43,7 @@ import {
   saveCasualSettings,
 } from '../src/worker/rooms/database';
 import { questions } from './fixtures/questions';
+import { resultFixture } from './fixtures/result';
 
 const runtime = env as unknown as {
   GAME_D1: D1Database;
@@ -467,4 +473,162 @@ it('部屋登録の範囲を守り、退会作問者の名前を出題固定時�
         .where(and(eq(organizationAccounts.subject, 'admin')))
     )[0].administrator,
   ).toBe(true);
+});
+
+it('待機・開始・確定を同じ試合行に保存し、終了済みの再登録を拒否する', async () => {
+  const instance = await target();
+  const { record } = resultFixture();
+  record.owner = instance.owner;
+  record.definition.competition.owner = instance.owner;
+  const waiting = { ...record, startedAt: null, result: null, players: [] };
+  const scope = { id: instance.id, owner: instance.owner };
+  await registerMatch(environment, scope, waiting);
+  const [registered] = await db
+    .select()
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
+  expect(registered.status).toBe('waiting');
+  expect(registered.payload.questions).toEqual(record.questions);
+  expect(await registerMatch(environment, scope, waiting)).toEqual(waiting);
+  await expect(commitD1Result(runtime.GAME_D1, record)).rejects.toThrow(
+    'MATCH_NOT_RUNNING',
+  );
+  const starting = { ...record, result: null };
+  await startMatch(environment, starting);
+  await startMatch(environment, starting);
+  await expect(startMatch(environment, { ...starting, players: [] })).rejects.toThrow(
+    'INVALID_MATCH_START',
+  );
+  await expect(
+    startMatch(environment, { ...starting, startedAt: record.startedAt + 1 }),
+  ).rejects.toThrow('MATCH_START_CONFLICT');
+  await commitD1Result(runtime.GAME_D1, record);
+  const [finished] = await db
+    .select()
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
+  expect(finished.status).toBe('confirmed');
+  expect(finished.createdAt).toBe(registered.createdAt);
+  expect(finished.payload).toEqual(record);
+  await expect(registerMatch(environment, scope, waiting)).rejects.toThrow(
+    'MATCH_CLOSED',
+  );
+  await expect(startMatch(environment, starting)).rejects.toThrow('MATCH_CLOSED');
+});
+
+it('待機取消は再送でき、取消済みの試合を復活させない', async () => {
+  const instance = await target();
+  const { record } = resultFixture();
+  record.owner = instance.owner;
+  record.definition.competition.owner = instance.owner;
+  const waiting = { ...record, startedAt: null, result: null, players: [] };
+  const scope = { id: instance.id, owner: instance.owner };
+  await registerMatch(environment, scope, waiting);
+  await cancelMatch(environment, record.matchId);
+  await cancelMatch(environment, record.matchId);
+  const [cancelled] = await db
+    .select()
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
+  expect(cancelled).toMatchObject({
+    status: 'cancelled',
+    startedAt: null,
+    payload: waiting,
+  });
+  expect(cancelled.finishedAt).not.toBeNull();
+  await expect(registerMatch(environment, scope, waiting)).rejects.toThrow(
+    'MATCH_CLOSED',
+  );
+  await expect(commitD1Result(runtime.GAME_D1, record)).rejects.toThrow(
+    'MATCH_NOT_RUNNING',
+  );
+});
+
+it('取消試合の出題も期限で消去し、取消行の任意改変を拒否する', async () => {
+  const instance = await target();
+  const { record } = resultFixture();
+  record.owner = instance.owner;
+  record.definition.competition.owner = instance.owner;
+  const waiting = { ...record, startedAt: null, result: null, players: [] };
+  await registerMatch(environment, { id: instance.id, owner: instance.owner }, waiting);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() - 366 * 86400000);
+  try {
+    await cancelMatch(environment, record.matchId);
+  } finally {
+    clock.mockRestore();
+  }
+  expect(await eraseResult(db, record.matchId)).toBe(true);
+  const [cancelled] = await db
+    .select()
+    .from(matches)
+    .where(eq(matches.matchId, record.matchId));
+  expect(cancelled.payload.questions).toBeUndefined();
+  await expect(
+    db
+      .update(matches)
+      .set({ payload: { ...cancelled.payload, kind: 'casual' } })
+      .where(eq(matches.matchId, record.matchId)),
+  ).rejects.toThrow();
+});
+
+it('D1に進行中の参加がある間は退会を受け付けない', async () => {
+  const instance = await target();
+  const subject = crypto.randomUUID();
+  const { account } = await organizationIdentity(db, subject);
+  const { record } = resultFixture();
+  record.owner = instance.owner;
+  record.definition.competition.owner = instance.owner;
+  record.players[0].id = account.actorId;
+  const waiting = { ...record, startedAt: null, result: null, players: [] };
+  await registerMatch(environment, { id: instance.id, owner: instance.owner }, waiting);
+  await startMatch(environment, { ...record, result: null });
+  await expect(
+    recordWithdrawal(db, subject, crypto.randomUUID(), 'local'),
+  ).rejects.toThrow('RESULT_OR_MATCH_PENDING');
+});
+
+it('待機登録後に退会した参加者の試合は開始せず、取消できる', async () => {
+  const instance = await target();
+  const subject = crypto.randomUUID();
+  const { account } = await organizationIdentity(db, subject);
+  const { record } = resultFixture();
+  record.owner = instance.owner;
+  record.definition.competition.owner = instance.owner;
+  record.players[0].id = account.actorId;
+  const waiting = { ...record, startedAt: null, result: null, players: [] };
+  await registerMatch(environment, { id: instance.id, owner: instance.owner }, waiting);
+  await recordWithdrawal(db, subject, crypto.randomUUID(), 'local');
+  await expect(startMatch(environment, { ...record, result: null })).rejects.toThrow(
+    'MATCH_START_DENIED',
+  );
+  await cancelMatch(environment, record.matchId);
+});
+
+it('試合が進行中のインスタンスはD1の行を確認して完全削除を拒否する', async () => {
+  const instance = await target();
+  const { record } = resultFixture();
+  record.owner = instance.owner;
+  record.definition.competition.owner = instance.owner;
+  const waiting = { ...record, startedAt: null, result: null, players: [] };
+  await registerMatch(environment, { id: instance.id, owner: instance.owner }, waiting);
+  await startMatch(environment, { ...record, result: null });
+  await db
+    .update(instances)
+    .set({ state: 'archived', roomInventoryComplete: true })
+    .where(eq(instances.id, instance.id));
+  const fetch = vi.fn();
+  await expect(
+    requestInstanceDeletion(
+      db,
+      { ...environment, ACCOUNT_ERASURE: { fetch } } as unknown as Env,
+      'admin',
+      {
+        id: instance.id,
+        operationId: crypto.randomUUID(),
+        name: instance.name,
+        revision: instance.operationRevision,
+      },
+    ),
+  ).rejects.toThrow('RESULT_OR_MATCH_PENDING');
+  expect(fetch).not.toHaveBeenCalled();
 });

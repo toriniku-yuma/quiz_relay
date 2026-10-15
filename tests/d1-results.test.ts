@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { beforeAll, expect, it } from 'vitest';
 import { connectD1 } from '../src/worker/db/d1';
 import { matches, resultOutbox, resultPlayers } from '../src/worker/db/schema';
-import { commitD1Result } from '../src/worker/results/database';
+import { commitFixtureResult } from './fixtures/match';
 import { resultFixture } from './fixtures/result';
 
 const runtime = env as unknown as {
@@ -15,8 +15,8 @@ beforeAll(() => applyD1Migrations(runtime.GAME_D1, runtime.D1_MIGRATIONS));
 
 it('D1上で結果・参加者・配送原本をまとめて保存し、再送で二重加算しない', async () => {
   const { record } = resultFixture();
-  const saved = await commitD1Result(runtime.GAME_D1, record);
-  const replay = await commitD1Result(runtime.GAME_D1, {
+  const saved = await commitFixtureResult(runtime.GAME_D1, record);
+  const replay = await commitFixtureResult(runtime.GAME_D1, {
     ...record,
     players: record.players,
   });
@@ -48,10 +48,10 @@ it('D1上で結果・参加者・配送原本をまとめて保存し、再送�
 
 it('同じ試合IDの別内容を拒否し、追加の参加者や配送原本を残さない', async () => {
   const { record } = resultFixture();
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const changed = structuredClone(record);
   changed.players.push({ ...changed.players[0], id: 'unexpected' });
-  await expect(commitD1Result(runtime.GAME_D1, changed)).rejects.toThrow(
+  await expect(commitFixtureResult(runtime.GAME_D1, changed)).rejects.toThrow(
     'RESULT_CONFLICT',
   );
   const players = await db
@@ -67,7 +67,7 @@ it('同じ試合IDの別内容を拒否し、追加の参加者や配送原本�
     .where(eq(matches.matchId, record.matchId));
   expect(stored.status).toBe('conflict');
   expect(stored.payload).toEqual(record);
-  await expect(commitD1Result(runtime.GAME_D1, record)).rejects.toThrow(
+  await expect(commitFixtureResult(runtime.GAME_D1, record)).rejects.toThrow(
     'RESULT_CONFLICT',
   );
 });
@@ -77,8 +77,8 @@ it('同じ試合へ異なる結果を同時送信した場合は一方だけ保�
   const changed = structuredClone(record);
   changed.result.winnerId = 'b';
   const outcomes = await Promise.allSettled([
-    commitD1Result(runtime.GAME_D1, record),
-    commitD1Result(runtime.GAME_D1, changed),
+    commitFixtureResult(runtime.GAME_D1, record),
+    commitFixtureResult(runtime.GAME_D1, changed),
   ]);
   expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
   expect(
@@ -89,10 +89,10 @@ it('同じ試合へ異なる結果を同時送信した場合は一方だけ保�
 it('途中の参加者保存に失敗したら、結果と配送原本も取り消す', async () => {
   const { record } = resultFixture();
   record.players[0].ratingDelta = 999;
-  await expect(commitD1Result(runtime.GAME_D1, record)).rejects.toThrow();
+  await expect(commitFixtureResult(runtime.GAME_D1, record)).rejects.toThrow();
   expect(
     await db.select().from(matches).where(eq(matches.matchId, record.matchId)),
-  ).toHaveLength(0);
+  ).toMatchObject([{ status: 'running', payload: { result: null } }]);
   expect(
     await db.select().from(resultOutbox).where(eq(resultOutbox.matchId, record.matchId)),
   ).toHaveLength(0);
@@ -100,7 +100,7 @@ it('途中の参加者保存に失敗したら、結果と配送原本も取り�
 
 it('結果原本の直接更新・削除と、原本にいない参加者の追加を拒否する', async () => {
   const { record } = resultFixture();
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   await expect(
     runtime.GAME_D1.prepare('UPDATE quiz_game_matches SET owner = ? WHERE match_id = ?')
       .bind('changed', record.matchId)

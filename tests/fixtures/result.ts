@@ -6,7 +6,7 @@ import { questions } from './questions';
 export function resultFixture() {
   const state = createState(crypto.randomUUID(), questions, 0, 2);
   state.matchKind = 'ranked';
-  state.startedAt = 1000;
+  state.startedAt = Date.now() - 1000;
   state.definition = {
     competition: { owner: 'https://game.test', id: 'demo', version: 1 },
     ruleset: { owner: 'https://game.test', id: 'standard', version: 1 },
@@ -27,7 +27,7 @@ export function resultFixture() {
   const result: Result = {
     reason: 'target_reached',
     winnerId: 'a',
-    finishedAt: 2000,
+    finishedAt: Date.now(),
   };
   const record = makeResultRecord(state, result);
   if (!record) throw new Error('NO_RECORD');

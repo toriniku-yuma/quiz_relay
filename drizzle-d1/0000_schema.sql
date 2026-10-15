@@ -517,9 +517,9 @@ CREATE TABLE `quiz_game_matches` (
 	`started_at` text,
 	`finished_at` text,
 	`payload_hash` text,
-	`payload` text,
+	`payload` text NOT NULL,
 	CONSTRAINT "match_status" CHECK("quiz_game_matches"."status" IN ('waiting', 'running', 'confirmed', 'invalid', 'conflict', 'cancelled')),
-	CONSTRAINT "match_result_state" CHECK(("quiz_game_matches"."status" IN ('confirmed', 'invalid', 'conflict') AND "quiz_game_matches"."payload" IS NOT NULL AND "quiz_game_matches"."payload_hash" IS NOT NULL AND "quiz_game_matches"."finished_at" IS NOT NULL) OR ("quiz_game_matches"."status" IN ('waiting', 'running', 'cancelled') AND "quiz_game_matches"."payload" IS NULL AND "quiz_game_matches"."payload_hash" IS NULL)),
+	CONSTRAINT "match_result_state" CHECK(("quiz_game_matches"."status" IN ('confirmed', 'invalid', 'conflict') AND json_type("quiz_game_matches"."payload", '$.result') = 'object' AND "quiz_game_matches"."payload_hash" IS NOT NULL AND "quiz_game_matches"."finished_at" IS NOT NULL) OR ("quiz_game_matches"."status" IN ('waiting', 'running', 'cancelled') AND json_type("quiz_game_matches"."payload", '$.result') = 'null' AND "quiz_game_matches"."payload_hash" IS NULL)),
 	CONSTRAINT "match_results_hash" CHECK((length("quiz_game_matches"."payload_hash") = 64 AND "quiz_game_matches"."payload_hash" NOT GLOB '*[^0-9a-f]*'))
 );
 --> statement-breakpoint

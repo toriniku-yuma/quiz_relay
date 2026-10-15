@@ -23,10 +23,10 @@ import {
 } from '../src/worker/organization/database';
 import { probeDatabase } from '../src/worker/probes/database';
 import { verifiedReportedQuestion } from '../src/worker/questions/reports';
-import { commitD1Result } from '../src/worker/results/database';
 import { readInvestigation } from '../src/worker/results/investigation';
 import { participantContext } from '../src/worker/rooms/database';
 import { report } from '../src/worker/rooms/reports';
+import { commitFixtureResult } from './fixtures/match';
 import { questions } from './fixtures/questions';
 import { resultFixture } from './fixtures/result';
 
@@ -195,7 +195,7 @@ it('参加済みの結果だけを通報でき、操作の再送で通報件数�
       participants: [],
     },
   ];
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const environment = { GAME_D1: runtime.GAME_D1 } as Env,
     identity = await participantContext(
       environment,

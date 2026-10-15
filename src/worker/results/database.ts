@@ -1,5 +1,5 @@
 import canonicalize from 'canonicalize';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { contentHash } from '../catalog/hash.ts';
 import { changeD1, changeD1Batch, connectD1, type Database } from '../db/d1.ts';
 import {
@@ -29,7 +29,8 @@ function playerRows(record: ResultRecord) {
 
 async function originals(db: Database, id: string) {
   const [result] = await db.select().from(matches).where(eq(matches.matchId, id));
-  if (!result?.payload) return;
+  if (!result?.payload.result) return;
+  const payload = result.payload as ResultRecord;
   const [outbox] = await db
     .select()
     .from(resultOutbox)
@@ -50,12 +51,12 @@ async function originals(db: Database, id: string) {
     result.payloadHash !== outbox.payloadHash ||
     canonicalize(
       players.sort((left, right) => left.actorId.localeCompare(right.actorId)),
-    ) !== canonicalize(playerRows(result.payload))
+    ) !== canonicalize(playerRows(payload))
   ) {
     throw new ResultConflict();
   }
   return {
-    result: { ...result, payload: result.payload, payloadHash: result.payloadHash },
+    result: { ...result, payload, payloadHash: result.payloadHash },
     outbox,
   };
 }
@@ -71,7 +72,12 @@ export async function commitD1Result(binding: D1Database, source: ResultRecord) 
         db
           .update(matches)
           .set({ status: 'conflict' })
-          .where(eq(matches.matchId, source.matchId)),
+          .where(
+            and(
+              eq(matches.matchId, source.matchId),
+              inArray(matches.status, ['confirmed', 'invalid', 'conflict']),
+            ),
+          ),
       );
     });
     console.error('RESULT_CONFLICT', source.matchId, JSON.stringify(source));
@@ -112,22 +118,33 @@ async function commitResult(db: Database, source: ResultRecord) {
         throw new ResultConflict();
       return;
     }
+    const [match] = await db
+      .select()
+      .from(matches)
+      .where(eq(matches.matchId, record.matchId));
+    if (match?.status !== 'running') throw new Error('MATCH_NOT_RUNNING');
+    const fixed = await privateResult(db, { ...match.payload, result: record.result });
+    if (
+      match.owner !== record.owner ||
+      match.startedAt !== new Date(record.startedAt).toISOString() ||
+      canonicalize(fixed.definition) !== canonicalize(record.definition) ||
+      canonicalize(fixed.questions) !== canonicalize(record.questions)
+    )
+      throw new Error('MATCH_DEFINITION_CONFLICT');
     writes.push(
-      db.insert(matches).values({
-        matchId: record.matchId,
-        owner: record.owner,
-        parentRoomId: record.parentRoomId,
-        status:
-          record.result.reason === 'connections' ||
-          record.result.reason === 'disqualifications'
-            ? 'invalid'
-            : 'confirmed',
-        createdAt: new Date(record.startedAt).toISOString(),
-        startedAt: new Date(record.startedAt).toISOString(),
-        finishedAt: new Date(record.result.finishedAt).toISOString(),
-        payloadHash: hash,
-        payload: record,
-      }),
+      db
+        .update(matches)
+        .set({
+          status:
+            record.result.reason === 'connections' ||
+            record.result.reason === 'disqualifications'
+              ? 'invalid'
+              : 'confirmed',
+          finishedAt: new Date(record.result.finishedAt).toISOString(),
+          payloadHash: hash,
+          payload: record,
+        })
+        .where(eq(matches.matchId, record.matchId)),
       db.insert(resultPlayers).values(
         record.players.map((player) => ({
           matchId: record.matchId,
@@ -149,6 +166,14 @@ async function commitResult(db: Database, source: ResultRecord) {
 // No caller supplies a replacement. The DB verifies that it is exactly its current privacy projection.
 export async function eraseResult(db: Database, id: string) {
   return changeD1(db, async (writes) => {
+    const [match] = await db.select().from(matches).where(eq(matches.matchId, id));
+    if (!match) return false;
+    if (!match.payload.result) {
+      const payload = await privateResult(db, match.payload);
+      if (canonicalize(payload) === canonicalize(match.payload)) return false;
+      writes.push(db.update(matches).set({ payload }).where(eq(matches.matchId, id)));
+      return true;
+    }
     const existing = await originals(db, id);
     if (!existing) return false;
     const payload = JSON.parse(

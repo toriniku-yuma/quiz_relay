@@ -13,12 +13,19 @@ import { dummyCharacters } from '../src/worker/game/questions';
 import { rules } from '../src/worker/game/rules';
 import type { State } from '../src/worker/game/state';
 import app from '../src/worker/index';
+import { registerMatch } from '../src/worker/results/lifecycle';
 import { questionProvenance, questions } from './fixtures/questions';
 
 const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   identity: vi.fn(),
   instance: { organizationId: '', id: '', owner: 'https://game.test' },
+}));
+vi.mock('../src/worker/results/lifecycle', async (original) => ({
+  ...(await original<typeof import('../src/worker/results/lifecycle')>()),
+  registerMatch: vi.fn(async (_env, _scope, record) => record),
+  startMatch: vi.fn(),
+  cancelMatch: vi.fn(),
 }));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/organization/moderation', () => ({
@@ -1917,4 +1924,23 @@ it('DEV02: rate-account capacity rejects overflow and recovers after expiry', as
     await ctx.storage.put('queue', saved);
   });
   expect((await queue.enter('overflow', 'New', false, rankedScope)).ok).toBe(true);
+});
+
+it('D1への待機登録に失敗したときは試合DOに部屋を作らない', async () => {
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  vi.mocked(registerMatch).mockRejectedValueOnce(new Error('DB_UNAVAILABLE'));
+  await runInDurableObject(stub, async (instance, context) => {
+    await expect(
+      instance.reserve(
+        matchIdOf(stub),
+        'a',
+        'A',
+        'token',
+        definition,
+        rankedScope,
+        'generation',
+      ),
+    ).resolves.toEqual({ ok: false, code: 'DB_UNAVAILABLE' });
+    expect((await context.storage.list()).size).toBe(0);
+  });
 });

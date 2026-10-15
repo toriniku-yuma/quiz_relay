@@ -9,7 +9,7 @@ import {
   questionSubmissions,
   questionVersions,
 } from '../db/schema.ts';
-import type { ResultRecord } from './record.ts';
+import type { MatchRecord } from './record.ts';
 
 function retired(owner: SQL, question: SQL, series: SQL = question) {
   return sql`exists (
@@ -45,9 +45,9 @@ export function decodeSelection(value: string | null) {
 // Database time also keeps the erasure guard and the proposed replacement aligned.
 export function privateResultSQL(source: SQLWrapper): SQL {
   const owner = sql`json_extract(data, '$.owner')`;
-  const expired = sql`json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 -
+  const expired = sql`coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 -
     (case when json_extract(data, '$.definition.original') then 30 else 365 end) * 86400000`;
-  const oldGuest = sql`json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000`;
+  const oldGuest = sql`coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000`;
   const playerName = sql`case
     when exists (select 1 from ${organizationAccounts}
       join ${instances} on ${instances.organizationId} = ${organizationAccounts.organizationId}
@@ -62,12 +62,12 @@ export function privateResultSQL(source: SQLWrapper): SQL {
   const anonymousQuestion = sql`case when json_type(question.value, '$.authorName') is not null
       and ${retired(owner, sql`json_extract(question.value, '$.id')`, sql`coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))`)}
       then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end`;
-  const questions = sql`(select json_group_array(json(case
+  const questions = (path: string) => sql`(select json_group_array(json(case
     when exists(select 1 from ${federationDeletedInstances}
       where ${federationDeletedInstances.peerOrigin}=json_extract(question.value,'$.sharedSource.peerOrigin')
       and ${federationDeletedInstances.instanceId}=json_extract(question.value,'$.sharedSource.instanceId'))
-      then json_set(${anonymousQuestion},'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','')
-    else ${anonymousQuestion} end)) from json_each(data, '$.completedQuestions') question)`;
+      then json_set(${anonymousQuestion},'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','','$.answer','','$.distractors',json('[]'))
+    else ${anonymousQuestion} end)) from json_each(data, ${path}) question)`;
   const authorNames = sql`(select json_group_object(author.key, case
     when ${retired(owner, sql`author.key`)} then '退会ユーザー' else author.value end)
     from json_each(data, '$.definition.selection.authorNames') author)`;
@@ -75,17 +75,20 @@ export function privateResultSQL(source: SQLWrapper): SQL {
   return sql`(with original as materialized (select ${source} as data),
     protected_players as materialized (select json_set(data, '$.players', json(${players})) as data from original),
     protected_questions as materialized (select case
-      when ${expired} then json_remove(data, '$.completedQuestions')
-      when json_type(data, '$.completedQuestions') = 'array' then json_set(data, '$.completedQuestions', json(${questions}))
-      else data end as data from protected_players)
+      when ${expired} then json_remove(data, '$.completedQuestions', '$.questions')
+      when json_type(data, '$.completedQuestions') = 'array' then json_set(data, '$.completedQuestions', json(${questions('$.completedQuestions')}))
+      else data end as data from protected_players),
+    protected_source as materialized (select case
+      when json_type(data, '$.questions') = 'array' then json_set(data, '$.questions', json(${questions('$.questions')}))
+      else data end as data from protected_questions)
     select case when json_type(data, '$.definition.selection.authorNames') = 'object'
       then json_set(data, '$.definition.selection.authorNames', json(${authorNames}))
-      else data end from protected_questions)`;
+      else data end from protected_source)`;
 }
 
-export async function privateResult(db: Database, record: ResultRecord) {
+export async function privateResult<T extends MatchRecord>(db: Database, record: T) {
   const [row] = await db.all<{ payload: string }>(
     sql`select ${privateResultSQL(sql`${JSON.stringify(record)}`)} as payload`,
   );
-  return JSON.parse(row.payload) as ResultRecord;
+  return JSON.parse(row.payload) as T;
 }

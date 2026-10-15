@@ -22,6 +22,12 @@ vi.mock('../src/worker/catalog/database', () => ({
 vi.mock('../src/worker/organization/database', () => ({
   allowedInstanceActors: async (_env: Env, _scope: unknown, actors: string[]) => actors,
 }));
+vi.mock('../src/worker/results/lifecycle', async (original) => ({
+  ...(await original<typeof import('../src/worker/results/lifecycle')>()),
+  registerMatch: vi.fn(async (_env, _scope, record) => record),
+  startMatch: vi.fn(),
+  cancelMatch: vi.fn(),
+}));
 vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/federation/slots', () => ({
   releaseForeignEntry: mocks.release,

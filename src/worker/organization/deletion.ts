@@ -1,6 +1,6 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { changeD1, type Database } from '../db/d1.ts';
-import { instanceDeletions, instances } from '../db/schema.ts';
+import { instanceDeletions, instances, matches } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { OrganizationError, requireAdministrator, validId } from './access.ts';
 import { organizationIdentity } from './database.ts';
@@ -43,6 +43,17 @@ export async function requestInstanceDeletion(
       instance.operationRevision !== input.revision
     )
       throw new OrganizationError('EDIT_CONFLICT', 409);
+    const [active] = await tx
+      .select({ id: matches.matchId })
+      .from(matches)
+      .where(
+        and(
+          eq(matches.owner, instance.owner),
+          inArray(matches.status, ['waiting', 'running']),
+        ),
+      )
+      .limit(1);
+    if (active) throw new OrganizationError('RESULT_OR_MATCH_PENDING', 409);
     if (!instance.roomInventoryComplete)
       throw new OrganizationError('ROOM_INVENTORY_REQUIRED', 409);
     writes.push(

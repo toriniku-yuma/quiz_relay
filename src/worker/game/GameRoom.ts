@@ -19,6 +19,13 @@ import { allowedInstanceActors } from '../organization/database.ts';
 import { registerInstanceRoom } from '../organization/rooms.ts';
 import { rankingRating } from '../questions/ranking.ts';
 import { ResultConflict, saveResult } from '../results/database.ts';
+import {
+  cancelMatch,
+  matchRecord,
+  registerMatch,
+  startMatch,
+} from '../results/lifecycle.ts';
+import type { MatchRecord } from '../results/record.ts';
 import type { Participant } from '../rooms/database.ts';
 import { RoomLobby } from '../rooms/RoomLobby.ts';
 import { roomRpc } from '../rooms/rpc.ts';
@@ -43,6 +50,9 @@ import { parseCommand, parseSync } from './validation.ts';
 
 type MatchRoom = {
   initialization?: string;
+  starting?: MatchRecord;
+  lifecycleRetryAt?: number;
+  cancelled?: boolean;
   scope: InstanceScope;
   generations: Record<string, string>;
   resultRetryAt?: number;
@@ -176,7 +186,26 @@ export class GameRoom extends DurableObject<Env> {
         throw new Error('OPERATION_CONFLICT');
       return { ok: true as const };
     }
-    await registerInstanceRoom(this.env, scope, this.ctx.id.toString(), false);
+
+    const state = createState(
+      matchId,
+      definition.questions,
+      0,
+      definition.playersPerMatch,
+      true,
+      definition,
+    );
+    state.players = actors.map((actor) => ({
+      ...actor,
+      correct: 0,
+      mistakes: 0,
+      locked: false,
+      disqualified: false,
+      connected: false,
+    }));
+    if (parentRoomId) state.parentRoomId = parentRoomId;
+    const registered = await registerMatch(this.env, scope, matchRecord(state));
+    this.restoreDefinition(state, registered);
     return this.ctx.blockConcurrencyWhile(async () => {
       if (await this.ctx.storage.get('instanceDeleted'))
         throw new Error('INSTANCE_NOT_FOUND');
@@ -189,23 +218,6 @@ export class GameRoom extends DurableObject<Env> {
           throw new Error('OPERATION_CONFLICT');
         return { ok: true as const };
       }
-      const state = createState(
-        matchId,
-        definition.questions,
-        0,
-        definition.playersPerMatch,
-        true,
-        definition,
-      );
-      state.players = actors.map((actor) => ({
-        ...actor,
-        correct: 0,
-        mistakes: 0,
-        locked: false,
-        disqualified: false,
-        connected: false,
-      }));
-      if (parentRoomId) state.parentRoomId = parentRoomId;
       const room: MatchRoom = {
         initialization,
         scope,
@@ -273,14 +285,6 @@ export class GameRoom extends DurableObject<Env> {
       const now = Date.now();
       if (!room) {
         if (!definition) return { ok: false as const, code: 'ROOM_CLOSED' };
-        const selection = await registerInstanceRoom(
-          this.env,
-          scope,
-          this.ctx.id.toString(),
-          false,
-          definition.selection,
-        );
-        if (selection) definition = { ...definition, selection };
         room = {
           scope,
           generations: {},
@@ -300,7 +304,18 @@ export class GameRoom extends DurableObject<Env> {
             closed: false,
           },
         };
+        try {
+          const registered = await registerMatch(
+            this.env,
+            scope,
+            matchRecord(room.state),
+          );
+          this.restoreDefinition(room.state, registered);
+        } catch (error) {
+          return { ok: false as const, code: failureCode(error) };
+        }
       }
+      if (room.starting) return { ok: false as const, code: 'MATCH_STARTING' };
       if (
         room.state.phase === 'WAITING' &&
         !(await allowedInstanceActors(this.env, room.scope, [actorId])).includes(actorId)
@@ -437,7 +452,6 @@ export class GameRoom extends DurableObject<Env> {
       if (!room) return;
       if (room.scope.id !== scope.id || room.scope.owner !== scope.owner)
         throw new Error('INSTANCE_MISMATCH');
-      await registerInstanceRoom(this.env, scope, this.ctx.id.toString(), true);
     });
   }
 
@@ -540,6 +554,7 @@ export class GameRoom extends DurableObject<Env> {
         room.generations[actorId] !== generation
       )
         return false;
+      if (room?.starting) return false;
       if (revoke && token) {
         if (!forfeit && (await this.ctx.storage.get(`revoked:${token}`))) return true;
         await this.ctx.storage.put(`revoked:${token}`, true);
@@ -600,7 +615,7 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private async checkWaitingAccess(room: MatchRoom, connectingActor?: string) {
-    if (room.state.phase !== 'WAITING') return;
+    if (room.state.phase !== 'WAITING' || room.starting) return;
     const allowed = new Set(
       await allowedInstanceActors(
         this.env,
@@ -831,16 +846,27 @@ export class GameRoom extends DurableObject<Env> {
             room.state.startingRatings = validation?.ratings;
           }
           room.state.startedAt = now;
-          room.state.phase = 'REVEALING';
-          room.state.deadline = now + room.state.rules.revealIntervalMs;
+          if (isMatchRoom(room)) {
+            if (!room.starting) {
+              room.starting = matchRecord(room.state);
+              room.lifecycleRetryAt = now;
+            }
+          } else room.state.phase = 'REVEALING';
+          if (!isMatchRoom(room))
+            room.state.deadline = now + room.state.rules.revealIntervalMs;
           changed(room.state, now);
         }
         advance(room.state, now);
         await this.save(room);
         this.broadcast(room);
-        return new Response(null, { status: 101, webSocket: pair[0] });
+        const response = new Response(null, { status: 101, webSocket: pair[0] });
+        return isMatchRoom(room) && room.starting ? { response } : response;
       });
       if (result instanceof Response) return result;
+      if (result.response) {
+        await this.finishLifecycle();
+        return result.response;
+      }
       try {
         const [definition, entries] = await Promise.all([
           loadFixedVersion(this.env, result.reference),
@@ -980,6 +1006,7 @@ export class GameRoom extends DurableObject<Env> {
 
   async alarm() {
     if (await this.userLobby().read()) return this.userLobby().alarm();
+    await this.finishLifecycle();
     const pending = await this.ctx.blockConcurrencyWhile(async () => {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (!room) return;
@@ -1029,6 +1056,7 @@ export class GameRoom extends DurableObject<Env> {
       )
         return;
       room.state.result.storage = status;
+      if (status === 'conflict') delete room.state.completed;
       delete room.resultRetryAt;
       delete room.resultErrorCode;
       changed(room.state, Date.now());
@@ -1087,12 +1115,69 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  private restoreDefinition(state: State, record: MatchRecord) {
+    if (!record.questions?.length) throw new Error('MATCH_QUESTIONS_REQUIRED');
+    const { rules, ...definition } = record.definition;
+    state.definition = definition;
+    state.rules = rules;
+    state.questions = record.questions;
+    state.question = structuredClone(record.questions[0]);
+  }
+
+  private async finishLifecycle() {
+    const pending = await this.ctx.blockConcurrencyWhile(async () => {
+      const room = await readStored<Room>(this.ctx.storage, 'room');
+      if (!room || !isMatchRoom(room)) return;
+      await this.sweep(room, Date.now());
+      await this.save(room);
+      if (room.lifecycleRetryAt === undefined || room.lifecycleRetryAt > Date.now())
+        return;
+      room.lifecycleRetryAt = Date.now() + settings.results.retryIntervalMs;
+      await this.save(room);
+      return { matchId: room.state.matchId, starting: room.starting };
+    });
+    if (!pending) return;
+    try {
+      if (pending.starting) await startMatch(this.env, pending.starting);
+      else await cancelMatch(this.env, pending.matchId);
+    } catch (error) {
+      if (failureCode(error) === 'MATCH_START_DENIED') {
+        await this.ctx.blockConcurrencyWhile(async () => {
+          const room = await this.readMatchRoom();
+          if (!room || room.state.matchId !== pending.matchId) return;
+          delete room.starting;
+          room.lobby.closed = true;
+          room.lifecycleRetryAt = Date.now();
+          await this.save(room);
+        });
+      }
+      console.error('MATCH_LIFECYCLE_RETRY', pending.matchId, failureCode(error));
+      return;
+    }
+    await this.ctx.blockConcurrencyWhile(async () => {
+      const room = await this.readMatchRoom();
+      if (!room || room.state.matchId !== pending.matchId) return;
+      if (pending.starting) {
+        if (!room.starting) return;
+        room.state.startedAt = pending.starting.startedAt as number;
+        room.state.phase = 'REVEALING';
+        room.state.deadline = Date.now() + room.state.rules.revealIntervalMs;
+        delete room.starting;
+        changed(room.state, Date.now());
+      } else room.cancelled = true;
+      delete room.lifecycleRetryAt;
+      await this.sweep(room, Date.now());
+      await this.save(room);
+      this.broadcast(room);
+    });
+  }
+
   private async sweep(room: Room, now: number) {
     for (const socket of this.liveSockets()) {
       if (now >= this.attachment(socket).lastSeen + heartbeatTimeout)
         this.closeSocket(socket, 1000, 'HEARTBEAT_TIMEOUT');
     }
-    if (isMatchRoom(room)) {
+    if (isMatchRoom(room) && !room.starting) {
       if (
         now >= room.lobby.sessionExpires ||
         (room.state.phase === 'WAITING' && now >= room.lobby.expires)
@@ -1149,6 +1234,13 @@ export class GameRoom extends DurableObject<Env> {
       room.resultRetryAt === undefined
     )
       room.resultRetryAt = Date.now();
+    if (
+      isMatchRoom(room) &&
+      room.state.phase === 'WAITING' &&
+      (room.starting || (room.lobby.closed && !room.cancelled)) &&
+      room.lifecycleRetryAt === undefined
+    )
+      room.lifecycleRetryAt = Date.now();
     await this.ctx.storage.transaction(async (tx) => {
       await writeStored(tx, 'room', room);
       if (receipt) await tx.put(receipt.key, receipt.value);
@@ -1158,7 +1250,8 @@ export class GameRoom extends DurableObject<Env> {
       const reviewAt = reviewDeadline(room.state);
       if (reviewAt !== undefined) deadlines.push(reviewAt);
       if (isMatchRoom(room)) {
-        if (!room.lobby.closed) {
+        if (room.lifecycleRetryAt !== undefined) deadlines.push(room.lifecycleRetryAt);
+        if (!room.lobby.closed && !room.starting) {
           deadlines.push(room.lobby.sessionExpires);
           if (room.state.phase === 'WAITING') {
             deadlines.push(room.lobby.expires);

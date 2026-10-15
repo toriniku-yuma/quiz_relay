@@ -35,7 +35,11 @@ export async function readInvestigation(
           .from(matches)
           .where(and(eq(matches.owner, owner), eq(matches.matchId, matchId)))
       : [];
-    if (matchId && !anchor?.payload.players.some((player) => player.id === actorId))
+    if (
+      matchId &&
+      (!anchor?.payload.result ||
+        !anchor.payload.players.some((player) => player.id === actorId))
+    )
       throw new Error('RESULT_NOT_FOUND');
     // ponytail: 原本を直接集計。蓄積量で遅くなったらDB内の同一集計へ移す。
     const all = await tx

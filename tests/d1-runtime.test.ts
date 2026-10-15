@@ -10,6 +10,7 @@ import { readStored, writeStored } from '../src/worker/game/storage';
 import app from '../src/worker/index';
 import { organizationIdentity } from '../src/worker/organization/database';
 import { makeResultRecord } from '../src/worker/results/record';
+import { runningMatchFixture } from './fixtures/match';
 import { resultFixture } from './fixtures/result';
 
 // Only the external identity provider is replaced. Routes, DO and D1 stay real.
@@ -85,6 +86,7 @@ it('通常APIで作った組織に、対戦DOがD1へ保存した結果と本人
   state.result = { ...state.result, winnerId: account.actorId, finishedAt: now };
   state.completed = makeResultRecord(state, state.result);
   if (!state.completed) throw new Error('RESULT_REQUIRED');
+  await runningMatchFixture(runtime.GAME_D1, state.completed);
   const room = runtime.GAME_ROOM.getByName(crypto.randomUUID());
   await runInDurableObject(room, async (object, context) => {
     await context.storage.transaction((transaction) =>

@@ -73,8 +73,8 @@ import {
   allowedInstanceActors,
   setupOrganization,
 } from '../src/worker/organization/database';
-import { commitD1Result } from '../src/worker/results/database';
 import { readResults } from '../src/worker/results/read';
+import { commitFixtureResult } from './fixtures/match';
 import { resultFixture } from './fixtures/result';
 
 const runtime = env as unknown as {
@@ -508,7 +508,7 @@ it('禁止以外を許可する開催元は未登録組織の鍵だけを取得�
   record.result.finishedAt = Date.now();
   record.startedAt = Date.now() - 1000;
   record.result.winnerId = session.row.actorId;
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const [job] = await hostDb
     .select()
     .from(federationResultDeliveries)
@@ -834,7 +834,7 @@ async function savedForeignResult(stopHostReceiving = false) {
           .where(eq(federationPeers.origin, sourceOrigin)),
       );
     });
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const [job] = await hostDb
     .select()
     .from(federationResultDeliveries)

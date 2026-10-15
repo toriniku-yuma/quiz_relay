@@ -36,7 +36,10 @@ export function expireReview(state: State, now: number) {
   state.questions = [];
   state.question = { id: state.question.id, text: '', answer: '', explanation: '' };
   delete state.completedQuestions;
-  if (state.completed) delete state.completed.completedQuestions;
+  if (state.completed) {
+    delete state.completed.completedQuestions;
+    delete state.completed.questions;
+  }
   state.panel = null;
   state.response = null;
   state.events = [];
@@ -81,6 +84,7 @@ export function anonymizeState(state: State, actorId: string, questionIds: Set<s
   anonymizeDefinition(state.definition, questionIds);
   if (state.completed) {
     playerName(state.completed.players);
+    for (const question of state.completed.questions ?? []) authorName(question);
     for (const question of state.completed.completedQuestions ?? []) authorName(question);
     anonymizeDefinition(state.completed.definition, questionIds);
   }

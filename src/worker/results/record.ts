@@ -8,6 +8,7 @@ export type ResultRecord = {
   answerStats: State['answerStats'];
   startingRatings?: Record<string, number>;
   completedQuestions?: State['completedQuestions'];
+  questions?: State['questions'];
   version: 1;
   owner: string;
   matchId: string;
@@ -19,6 +20,12 @@ export type ResultRecord = {
   players: (Player & { ratingDelta: number })[];
 };
 
+export type MatchRecord = Omit<ResultRecord, 'startedAt' | 'result'> & {
+  startedAt: number | null;
+  result: Result | null;
+  cancelledAt?: number;
+};
+
 export function makeResultRecord(
   state: {
     parentRoomId?: string;
@@ -28,6 +35,7 @@ export function makeResultRecord(
     matchKind: MatchKind;
     startedAt?: number;
     players: Player[];
+    questions: State['questions'];
     completedQuestions?: State['completedQuestions'];
     startingRatings?: Record<string, number>;
     answerStats: State['answerStats'];
@@ -44,6 +52,7 @@ export function makeResultRecord(
     ...(state.startingRatings ? { startingRatings: state.startingRatings } : {}),
     ...(state.completedQuestions ? { completedQuestions: state.completedQuestions } : {}),
     answerStats: state.answerStats,
+    questions: state.questions,
     version: 1,
     owner: state.definition.competition.owner,
     matchId: state.matchId,
@@ -57,4 +66,8 @@ export function makeResultRecord(
       ratingDelta: ratingChange(kind, result, player),
     })),
   });
+}
+
+export function isResultRecord(record: MatchRecord): record is ResultRecord {
+  return record.result !== null && record.startedAt !== null;
 }

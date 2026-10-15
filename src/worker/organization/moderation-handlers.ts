@@ -3,6 +3,7 @@ import type { Handler } from 'hono';
 import type { AuthEnv } from '../auth/handlers.ts';
 import { instances, matches } from '../db/schema.ts';
 import { readInvestigation } from '../results/investigation.ts';
+import { isResultRecord, type ResultRecord } from '../results/record.ts';
 import { OrganizationError, validId } from './access.ts';
 import { bulkSanctions } from './bulk.ts';
 import { organizationDatabase } from './database.ts';
@@ -41,14 +42,16 @@ export const manageUsers: Handler<AuthEnv> = async (context) => {
       return context.json({ ok: true });
     }
     if (context.req.path.endsWith('/workflow')) {
-      let evidence: typeof matches.$inferSelect.payload | undefined;
+      let evidence: ResultRecord | undefined;
       if (value.action === 'report') {
         const rows = await db
           .select()
           .from(matches)
           .where(eq(matches.matchId, validId(value.matchId)));
-        evidence = rows[0]?.payload;
-        if (!evidence) throw new OrganizationError('RESULT_NOT_FOUND', 404);
+        const payload = rows[0]?.payload;
+        if (!payload || !isResultRecord(payload))
+          throw new OrganizationError('RESULT_NOT_FOUND', 404);
+        evidence = payload;
       }
       return context.json(
         await moderationWorkflow(

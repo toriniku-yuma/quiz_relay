@@ -69,7 +69,7 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
         AND length(NEW.payload_hash) = 64 AND NEW.payload_hash NOT GLOB '*[^0-9a-f]*'
         AND NOT EXISTS (SELECT fullkey,type,atom FROM json_tree((with original as materialized (select "quiz_game_matches"."payload" as data),
     protected_players as materialized (select json_set(data, '$.players', json((select json_group_array(json(case
-    when json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000 and json_extract(player.value, '$.guest') then json_set(case
+    when coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000 and json_extract(player.value, '$.guest') then json_set(case
     when exists (select 1 from "quiz_game_organization_accounts"
       join "quiz_game_instances" on "quiz_game_instances"."organization_id" = "quiz_game_organization_accounts"."organization_id"
       where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
@@ -86,8 +86,8 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
       then json_set(player.value, '$.name', '退会ユーザー')
     else player.value end end)) from json_each(data, '$.players') player))) as data from original),
     protected_questions as materialized (select case
-      when json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 -
-    (case when json_extract(data, '$.definition.original') then 30 else 365 end) * 86400000 then json_remove(data, '$.completedQuestions')
+      when coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 -
+    (case when json_extract(data, '$.definition.original') then 30 else 365 end) * 86400000 then json_remove(data, '$.completedQuestions', '$.questions')
       when json_type(data, '$.completedQuestions') = 'array' then json_set(data, '$.completedQuestions', json((select json_group_array(json(case
     when exists(select 1 from "quiz_federation_deleted_instances"
       where "quiz_federation_deleted_instances"."peer_origin"=json_extract(question.value,'$.sharedSource.peerOrigin')
@@ -108,7 +108,7 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
             and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
             and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
   )
-      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','')
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','','$.answer','','$.distractors',json('[]'))
     else case when json_type(question.value, '$.authorName') is not null
       and exists (
     select 1 from "quiz_game_question_submissions"
@@ -126,7 +126,47 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
             and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
   )
       then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end end)) from json_each(data, '$.completedQuestions') question)))
-      else data end as data from protected_players)
+      else data end as data from protected_players),
+    protected_source as materialized (select case
+      when json_type(data, '$.questions') = 'array' then json_set(data, '$.questions', json((select json_group_array(json(case
+    when exists(select 1 from "quiz_federation_deleted_instances"
+      where "quiz_federation_deleted_instances"."peer_origin"=json_extract(question.value,'$.sharedSource.peerOrigin')
+      and "quiz_federation_deleted_instances"."instance_id"=json_extract(question.value,'$.sharedSource.instanceId'))
+      then json_set(case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','','$.answer','','$.distractors',json('[]'))
+    else case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end end)) from json_each(data, '$.questions') question)))
+      else data end as data from protected_questions)
     select case when json_type(data, '$.definition.selection.authorNames') = 'object'
       then json_set(data, '$.definition.selection.authorNames', json((select json_group_object(author.key, case
     when exists (
@@ -145,10 +185,10 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
             and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
   ) then '退会ユーザー' else author.value end)
     from json_each(data, '$.definition.selection.authorNames') author)))
-      else data end from protected_questions)) EXCEPT SELECT fullkey,type,atom FROM json_tree(NEW.payload))
+      else data end from protected_source)) EXCEPT SELECT fullkey,type,atom FROM json_tree(NEW.payload))
         AND NOT EXISTS (SELECT fullkey,type,atom FROM json_tree(NEW.payload) EXCEPT SELECT fullkey,type,atom FROM json_tree((with original as materialized (select "quiz_game_matches"."payload" as data),
     protected_players as materialized (select json_set(data, '$.players', json((select json_group_array(json(case
-    when json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000 and json_extract(player.value, '$.guest') then json_set(case
+    when coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000 and json_extract(player.value, '$.guest') then json_set(case
     when exists (select 1 from "quiz_game_organization_accounts"
       join "quiz_game_instances" on "quiz_game_instances"."organization_id" = "quiz_game_organization_accounts"."organization_id"
       where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
@@ -165,8 +205,8 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
       then json_set(player.value, '$.name', '退会ユーザー')
     else player.value end end)) from json_each(data, '$.players') player))) as data from original),
     protected_questions as materialized (select case
-      when json_extract(data, '$.result.finishedAt') <= cast(strftime('%s', 'now') as integer) * 1000 -
-    (case when json_extract(data, '$.definition.original') then 30 else 365 end) * 86400000 then json_remove(data, '$.completedQuestions')
+      when coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 -
+    (case when json_extract(data, '$.definition.original') then 30 else 365 end) * 86400000 then json_remove(data, '$.completedQuestions', '$.questions')
       when json_type(data, '$.completedQuestions') = 'array' then json_set(data, '$.completedQuestions', json((select json_group_array(json(case
     when exists(select 1 from "quiz_federation_deleted_instances"
       where "quiz_federation_deleted_instances"."peer_origin"=json_extract(question.value,'$.sharedSource.peerOrigin')
@@ -187,7 +227,7 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
             and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
             and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
   )
-      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','')
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','','$.answer','','$.distractors',json('[]'))
     else case when json_type(question.value, '$.authorName') is not null
       and exists (
     select 1 from "quiz_game_question_submissions"
@@ -205,7 +245,47 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
             and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
   )
       then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end end)) from json_each(data, '$.completedQuestions') question)))
-      else data end as data from protected_players)
+      else data end as data from protected_players),
+    protected_source as materialized (select case
+      when json_type(data, '$.questions') = 'array' then json_set(data, '$.questions', json((select json_group_array(json(case
+    when exists(select 1 from "quiz_federation_deleted_instances"
+      where "quiz_federation_deleted_instances"."peer_origin"=json_extract(question.value,'$.sharedSource.peerOrigin')
+      and "quiz_federation_deleted_instances"."instance_id"=json_extract(question.value,'$.sharedSource.instanceId'))
+      then json_set(case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','','$.answer','','$.distractors',json('[]'))
+    else case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end end)) from json_each(data, '$.questions') question)))
+      else data end as data from protected_questions)
     select case when json_type(data, '$.definition.selection.authorNames') = 'object'
       then json_set(data, '$.definition.selection.authorNames', json((select json_group_object(author.key, case
     when exists (
@@ -224,7 +304,7 @@ CREATE TRIGGER d1_privacy_permit BEFORE INSERT ON quiz_game_result_privacy_chang
             and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
   ) then '退会ユーザー' else author.value end)
     from json_each(data, '$.definition.selection.authorNames') author)))
-      else data end from protected_questions)))
+      else data end from protected_source)))
     ) BEGIN SELECT RAISE(ABORT, 'INVALID_PRIVACY_PROJECTION'); END;
 --> statement-breakpoint
 CREATE TRIGGER d1_privacy_permit_update BEFORE UPDATE ON quiz_game_result_privacy_changes
@@ -314,8 +394,8 @@ BEGIN SELECT RAISE(ABORT,'IMMUTABLE_CATALOG'); END;
 CREATE TRIGGER d1_result_conflict BEFORE INSERT ON quiz_game_matches
 WHEN EXISTS (
   SELECT 1 FROM quiz_game_matches AS stored
-  WHERE (stored.match_id = NEW.match_id OR (stored.owner = NEW.owner AND stored.match_id = NEW.match_id))
-    AND (stored.match_id <> NEW.match_id OR stored.owner <> NEW.owner OR stored.match_id <> NEW.match_id OR stored.payload_hash <> NEW.payload_hash)
+  WHERE stored.match_id = NEW.match_id
+    AND (stored.owner <> NEW.owner OR stored.payload_hash <> NEW.payload_hash)
 )
 BEGIN SELECT RAISE(ABORT, 'RESULT_CONFLICT'); END;
 --> statement-breakpoint
@@ -347,12 +427,150 @@ CREATE TRIGGER d1_result_player_update BEFORE UPDATE ON quiz_game_result_players
     ) BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_RESULT_PLAYER'); END;
 --> statement-breakpoint
 CREATE TRIGGER d1_result_update BEFORE UPDATE ON quiz_game_matches
-    WHEN NOT (
-      NEW.match_id = OLD.match_id AND NEW.owner = OLD.owner AND NEW.parent_room_id IS OLD.parent_room_id AND NEW.created_at = OLD.created_at AND NEW.started_at IS OLD.started_at AND NEW.finished_at IS OLD.finished_at
-      AND ((NEW.status = 'conflict' AND OLD.status IN ('confirmed','invalid','conflict') AND NEW.payload = OLD.payload AND NEW.payload_hash = OLD.payload_hash) OR (NEW.status = OLD.status AND EXISTS (SELECT 1 FROM quiz_game_result_privacy_changes permit
-        WHERE permit.match_id = OLD.match_id AND permit.previous_hash = OLD.payload_hash
-          AND permit.payload_hash = NEW.payload_hash AND permit.payload = NEW.payload)))
-    ) BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_RESULT'); END;
+WHEN NOT (
+ NEW.match_id = OLD.match_id AND NEW.owner = OLD.owner
+ AND NEW.parent_room_id IS OLD.parent_room_id AND NEW.created_at = OLD.created_at
+ AND json_extract(NEW.payload,'$.owner') = NEW.owner
+ AND json_extract(NEW.payload,'$.matchId') = NEW.match_id
+ AND (
+  (OLD.status = 'waiting' AND NEW.status = 'running' AND OLD.started_at IS NULL AND NEW.started_at IS NOT NULL
+   AND NEW.finished_at IS NULL AND NEW.payload_hash IS NULL
+   AND json_extract(NEW.payload,'$.definition') = json_extract(OLD.payload,'$.definition')
+   AND json_extract(NEW.payload,'$.questions') = json_extract(OLD.payload,'$.questions'))
+  OR (OLD.status = 'waiting' AND NEW.status = 'cancelled' AND NEW.started_at IS NULL
+   AND NEW.finished_at IS NOT NULL AND json_remove(NEW.payload,'$.cancelledAt') = OLD.payload
+   AND json_type(NEW.payload,'$.cancelledAt')='integer' AND NEW.payload_hash IS NULL)
+  OR (OLD.status = 'running' AND NEW.status IN ('confirmed','invalid') AND NEW.started_at = OLD.started_at
+   AND NEW.finished_at IS NOT NULL AND NEW.payload_hash IS NOT NULL)
+  OR (NEW.status = OLD.status AND OLD.status IN ('waiting','running','cancelled')
+   AND NEW.started_at IS OLD.started_at AND NEW.finished_at IS OLD.finished_at
+   AND NEW.payload_hash IS NULL AND NEW.payload = (with original as materialized (select OLD.payload as data),
+    protected_players as materialized (select json_set(data, '$.players', json((select json_group_array(json(case
+    when coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 - 30 * 86400000 and json_extract(player.value, '$.guest') then json_set(case
+    when exists (select 1 from "quiz_game_organization_accounts"
+      join "quiz_game_instances" on "quiz_game_instances"."organization_id" = "quiz_game_organization_accounts"."organization_id"
+      where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+        and "quiz_game_organization_accounts"."actor_id" = json_extract(player.value, '$.id')
+        and "quiz_game_organization_accounts"."withdrawn_at" is not null)
+      then json_set(player.value, '$.name', '退会ユーザー')
+    else player.value end, '$.name', 'ゲスト')
+    else case
+    when exists (select 1 from "quiz_game_organization_accounts"
+      join "quiz_game_instances" on "quiz_game_instances"."organization_id" = "quiz_game_organization_accounts"."organization_id"
+      where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+        and "quiz_game_organization_accounts"."actor_id" = json_extract(player.value, '$.id')
+        and "quiz_game_organization_accounts"."withdrawn_at" is not null)
+      then json_set(player.value, '$.name', '退会ユーザー')
+    else player.value end end)) from json_each(data, '$.players') player))) as data from original),
+    protected_questions as materialized (select case
+      when coalesce(json_extract(data, '$.result.finishedAt'), json_extract(data, '$.cancelledAt')) <= cast(strftime('%s', 'now') as integer) * 1000 -
+    (case when json_extract(data, '$.definition.original') then 30 else 365 end) * 86400000 then json_remove(data, '$.completedQuestions', '$.questions')
+      when json_type(data, '$.completedQuestions') = 'array' then json_set(data, '$.completedQuestions', json((select json_group_array(json(case
+    when exists(select 1 from "quiz_federation_deleted_instances"
+      where "quiz_federation_deleted_instances"."peer_origin"=json_extract(question.value,'$.sharedSource.peerOrigin')
+      and "quiz_federation_deleted_instances"."instance_id"=json_extract(question.value,'$.sharedSource.instanceId'))
+      then json_set(case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','','$.answer','','$.distractors',json('[]'))
+    else case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end end)) from json_each(data, '$.completedQuestions') question)))
+      else data end as data from protected_players),
+    protected_source as materialized (select case
+      when json_type(data, '$.questions') = 'array' then json_set(data, '$.questions', json((select json_group_array(json(case
+    when exists(select 1 from "quiz_federation_deleted_instances"
+      where "quiz_federation_deleted_instances"."peer_origin"=json_extract(question.value,'$.sharedSource.peerOrigin')
+      and "quiz_federation_deleted_instances"."instance_id"=json_extract(question.value,'$.sharedSource.instanceId'))
+      then json_set(case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end,'$.text','削除された共有元の問題です。','$.displayAnswer','','$.readings',json('[]'),'$.explanation','','$.source','','$.answer','','$.distractors',json('[]'))
+    else case when json_type(question.value, '$.authorName') is not null
+      and exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = json_extract(question.value, '$.id')
+        or "quiz_game_question_submissions"."series_id" = coalesce(json_extract(question.value, '$.seriesId'), json_extract(question.value, '$.id'))
+        or "quiz_game_question_submissions"."published_id" = json_extract(question.value, '$.id')
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = json_extract(question.value, '$.id')
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  )
+      then json_set(question.value, '$.authorName', '退会ユーザー') else question.value end end)) from json_each(data, '$.questions') question)))
+      else data end as data from protected_questions)
+    select case when json_type(data, '$.definition.selection.authorNames') = 'object'
+      then json_set(data, '$.definition.selection.authorNames', json((select json_group_object(author.key, case
+    when exists (
+    select 1 from "quiz_game_question_submissions"
+    join "quiz_game_instances" on "quiz_game_instances"."id" = "quiz_game_question_submissions"."instance_id"
+    join "quiz_game_organization_accounts" on "quiz_game_organization_accounts"."actor_id" = "quiz_game_question_submissions"."author_id"
+    where "quiz_game_instances"."owner" = json_extract(data, '$.owner')
+      and "quiz_game_organization_accounts"."withdrawn_at" is not null
+      and ("quiz_game_question_submissions"."provenance" is null or exists(select 1 from "quiz_federation_question_links" where "quiz_federation_question_links"."submission_id"="quiz_game_question_submissions"."id"))
+      and ("quiz_game_question_submissions"."id" = author.key
+        or "quiz_game_question_submissions"."series_id" = author.key
+        or "quiz_game_question_submissions"."published_id" = author.key
+        or exists (select 1 from "quiz_game_question_versions"
+          where "quiz_game_question_versions"."owner" = json_extract(data, '$.owner')
+            and "quiz_game_question_versions"."question_id" = author.key
+            and json_extract("quiz_game_question_versions"."payload", '$.seriesId') = "quiz_game_question_submissions"."series_id"))
+  ) then '退会ユーザー' else author.value end)
+    from json_each(data, '$.definition.selection.authorNames') author)))
+      else data end from protected_source))
+  OR (NEW.started_at IS OLD.started_at AND NEW.finished_at IS OLD.finished_at
+   AND ((NEW.status = 'conflict' AND OLD.status IN ('confirmed','invalid','conflict')
+    AND NEW.payload = OLD.payload AND NEW.payload_hash = OLD.payload_hash)
+   OR (NEW.status = OLD.status AND EXISTS (SELECT 1 FROM quiz_game_result_privacy_changes permit
+    WHERE permit.match_id = OLD.match_id AND permit.previous_hash = OLD.payload_hash
+     AND permit.payload_hash = NEW.payload_hash AND permit.payload = NEW.payload))))
+ )
+) BEGIN SELECT RAISE(ABORT, 'IMMUTABLE_RESULT'); END;
 --> statement-breakpoint
 CREATE TRIGGER "d1_ruleset_delete" before DELETE on "quiz_game_ruleset_versions" when not (exists(select 1 from "quiz_game_instance_deletions" job where job.owner = OLD."owner" and job.accepted_at is not null and ((job.deleted_at is not null and not exists(select 1 from "quiz_game_instances" where id = job.instance_id)) or exists(select 1 from "quiz_game_instances" where id=job.instance_id and organization_id=job.organization_id and owner=job.owner and name=job.name and state='archived' and room_inventory_complete)))) BEGIN select raise(abort, 'IMMUTABLE_CATALOG'); END;
 --> statement-breakpoint
@@ -450,12 +668,13 @@ BEGIN
   SELECT RAISE(ABORT, 'STALE_D1_SNAPSHOT');
 END;
 --> statement-breakpoint
-CREATE TRIGGER result_privacy_schedule AFTER INSERT ON quiz_game_matches
-WHEN json_type(NEW.payload,'$.completedQuestions')='array' OR EXISTS(SELECT 1 FROM json_each(NEW.payload,'$.players') WHERE json_extract(value,'$.guest')=1)
+CREATE TRIGGER result_privacy_schedule AFTER UPDATE ON quiz_game_matches
+WHEN ((OLD.status = 'running' AND NEW.status IN ('confirmed','invalid')) OR (OLD.status='waiting' AND NEW.status='cancelled')) AND (json_type(NEW.payload,'$.questions')='array' OR json_type(NEW.payload,'$.completedQuestions')='array' OR EXISTS(SELECT 1 FROM json_each(NEW.payload,'$.players') WHERE json_extract(value,'$.guest')=1))
 BEGIN
  INSERT INTO quiz_game_result_privacy_jobs(match_id,due_at) VALUES(NEW.match_id,
- strftime('%Y-%m-%dT%H:%M:%fZ',json_extract(NEW.payload,'$.result.finishedAt')/1000.0,'unixepoch',
- CASE WHEN json_extract(NEW.payload,'$.definition.original')=1 OR EXISTS(SELECT 1 FROM json_each(NEW.payload,'$.players') WHERE json_extract(value,'$.guest')=1) THEN '+30 days' ELSE '+365 days' END));
+ strftime('%Y-%m-%dT%H:%M:%fZ',coalesce(json_extract(NEW.payload,'$.result.finishedAt'),json_extract(NEW.payload,'$.cancelledAt'))/1000.0,'unixepoch',
+ CASE WHEN json_extract(NEW.payload,'$.definition.original')=1 OR EXISTS(SELECT 1 FROM json_each(NEW.payload,'$.players') WHERE json_extract(value,'$.guest')=1) THEN '+30 days' ELSE '+365 days' END))
+ ON CONFLICT(match_id) DO UPDATE SET due_at=min(due_at,excluded.due_at);
 END;
 --> statement-breakpoint
 CREATE TRIGGER shared_question_identity BEFORE UPDATE ON quiz_federation_question_links

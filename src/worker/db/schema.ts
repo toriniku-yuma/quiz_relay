@@ -33,7 +33,7 @@ import {
 } from '../../shared/rooms.ts';
 import type { FixedQuestion } from '../catalog/definition.ts';
 import type { Rules } from '../game/rules.ts';
-import type { ResultRecord } from '../results/record.ts';
+import type { MatchRecord, ResultRecord } from '../results/record.ts';
 
 export const databaseRevision = sqliteTable(
   'quiz_database_revision',
@@ -295,7 +295,7 @@ export const matches = sqliteTable(
     startedAt: text('started_at'),
     finishedAt: text('finished_at'),
     payloadHash: text('payload_hash'),
-    payload: text({ mode: 'json' }).$type<ResultRecord>(),
+    payload: text({ mode: 'json' }).$type<MatchRecord>().notNull(),
   },
   (table) => [
     index('matches_finished').on(table.owner, table.finishedAt),
@@ -306,7 +306,7 @@ export const matches = sqliteTable(
     ),
     check(
       'match_result_state',
-      sql`(${table.status} IN ('confirmed', 'invalid', 'conflict') AND ${table.payload} IS NOT NULL AND ${table.payloadHash} IS NOT NULL AND ${table.finishedAt} IS NOT NULL) OR (${table.status} IN ('waiting', 'running', 'cancelled') AND ${table.payload} IS NULL AND ${table.payloadHash} IS NULL)`,
+      sql`(${table.status} IN ('confirmed', 'invalid', 'conflict') AND json_type(${table.payload}, '$.result') = 'object' AND ${table.payloadHash} IS NOT NULL AND ${table.finishedAt} IS NOT NULL) OR (${table.status} IN ('waiting', 'running', 'cancelled') AND json_type(${table.payload}, '$.result') = 'null' AND ${table.payloadHash} IS NULL)`,
     ),
     check(
       'match_results_hash',

@@ -24,9 +24,11 @@ import {
   organizationIdentity,
   setupOrganization,
 } from '../src/worker/organization/database';
-import { commitD1Result, eraseResult } from '../src/worker/results/database';
+import { eraseResult } from '../src/worker/results/database';
 import { privateResult } from '../src/worker/results/privacy';
 import { readResults } from '../src/worker/results/read';
+import { isResultRecord } from '../src/worker/results/record';
+import { commitFixtureResult } from './fixtures/match';
 import { questions } from './fixtures/questions';
 import { resultFixture } from './fixtures/result';
 
@@ -75,10 +77,10 @@ it('24問と作問者名を持つ結果を保存・再読取し、出題済み�
       ]),
     ),
   };
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const projected = await privateResult(db, record);
   expect(projected).toEqual(record);
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   expect(
     (await db.select().from(matches).where(eq(matches.matchId, record.matchId)))[0]
       .payload,
@@ -89,7 +91,8 @@ it('24問と作問者名を持つ結果を保存・再読取し、出題済み�
     .select()
     .from(matches)
     .where(eq(matches.matchId, record.matchId));
-  if (!anonymous.payload || !anonymous.payloadHash) throw new Error('RESULT_NOT_SAVED');
+  if (!isResultRecord(anonymous.payload) || !anonymous.payloadHash)
+    throw new Error('RESULT_NOT_SAVED');
   expect(anonymous.payload.players[0].name).toBe('退会ユーザー');
   expect(anonymous.payload.completedQuestions).toHaveLength(24);
   const invalid = structuredClone(anonymous.payload);
@@ -226,7 +229,7 @@ it('共有作問者を匿名化し、完全削除された共有元の振り返�
       }),
     );
   });
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   await withdraw(account.actorId);
   expect((await privateResult(db, record)).completedQuestions?.[0].authorName).toBe(
     '退会ユーザー',
@@ -248,7 +251,7 @@ it('共有作問者を匿名化し、完全削除された共有元の振り返�
 
 it('退会した参加者と作問者の名前を隠し、3つの原本を一緒に匿名化する', async () => {
   const { record, account, id } = await authoredResult();
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   await withdraw(account.actorId);
   const projected = await privateResult(db, record);
   const overview = await readResults(db, instance.owner, account.actorId);
@@ -284,7 +287,7 @@ it('退会した参加者と作問者の名前を隠し、3つの原本を一緒
   );
   expect(await db.select().from(resultPrivacyChanges)).toEqual([]);
   expect(await eraseResult(db, record.matchId)).toBe(false);
-  expect((await commitD1Result(runtime.GAME_D1, record)).rowsWritten).toBe(0);
+  expect((await commitFixtureResult(runtime.GAME_D1, record)).rowsWritten).toBe(0);
   expect(
     (await db.select().from(matches).where(eq(matches.matchId, record.matchId)))[0]
       .payload,
@@ -295,16 +298,15 @@ it('D1の順位は同点を同順位とし、除外後も本人のレートを�
   const { record } = resultFixture();
   record.owner = 'https://ranking-only.test';
   record.result.finishedAt = Date.now();
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const second = structuredClone(record);
-  second.matchId = crypto.randomUUID();
   second.matchId = crypto.randomUUID();
   second.players[0].id = 'c';
   second.players[0].name = 'C';
   second.players[1].id = 'd';
   second.players[1].name = 'D';
   second.result.winnerId = 'c';
-  await commitD1Result(runtime.GAME_D1, second);
+  await commitFixtureResult(runtime.GAME_D1, second);
   const overview = await readResults(db, record.owner, 'a');
   expect(overview.ranking.map((row) => [row.actorId, row.rank, row.rating])).toEqual([
     ['a', 1, 1020],
@@ -336,9 +338,8 @@ it('同時刻の履歴もカーソルで重複・欠落なく読み、一覧に�
   const ids = [];
   for (let index = 0; index < 23; index++) {
     record.matchId = crypto.randomUUID();
-    record.matchId = crypto.randomUUID();
     ids.push(record.matchId);
-    await commitD1Result(runtime.GAME_D1, record);
+    await commitFixtureResult(runtime.GAME_D1, record);
   }
   const first = await readResults(db, record.owner, 'a', [], { section: 'history' });
   expect(first.history).toHaveLength(20);
@@ -405,12 +406,15 @@ it('30日でゲスト名と持込み問題、365日で通常の問題本文を�
   const personal = await privateResult(db, record);
   expect(personal.players[0].name).toBe('ゲスト');
   expect(personal.completedQuestions).toBeUndefined();
+  expect(personal.questions).toBeUndefined();
   delete record.definition.original;
   const regular = await privateResult(db, record);
   expect(regular.completedQuestions).toEqual(record.completedQuestions);
+  expect(regular.questions).toEqual(record.questions);
   record.result.finishedAt = Date.now() - 366 * 86400000;
   expect((await privateResult(db, record)).completedQuestions).toBeUndefined();
-  await commitD1Result(runtime.GAME_D1, record);
+  expect((await privateResult(db, record)).questions).toBeUndefined();
+  await commitFixtureResult(runtime.GAME_D1, record);
   expect(
     (await db.select().from(matches).where(eq(matches.matchId, record.matchId)))[0]
       .payload?.completedQuestions,
@@ -419,7 +423,7 @@ it('30日でゲスト名と持込み問題、365日で通常の問題本文を�
 
 it('匿名化を装った得点・回答・名前の改変をDBの許可証検査で拒否する', async () => {
   const { record } = await authoredResult();
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const [stored] = await db
     .select()
     .from(matches)
@@ -466,7 +470,7 @@ it('匿名化を装った得点・回答・名前の改変をDBの許可証検�
 
 it('匿名化途中で失敗しても原本・参加者名・許可証を残さない', async () => {
   const { record, account } = await authoredResult();
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   await withdraw(account.actorId);
   const [stored] = await db
     .select()

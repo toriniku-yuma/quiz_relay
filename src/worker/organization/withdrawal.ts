@@ -7,6 +7,7 @@ import {
   federationFavorites,
   instanceGrants,
   instances,
+  matches,
   personalQuestionSets,
   questionSubmissions,
 } from '../db/schema.ts';
@@ -55,6 +56,17 @@ export async function recordWithdrawal(
       if (administrators.length < 2)
         throw new OrganizationError('LAST_ADMINISTRATOR', 409);
     }
+    const [active] = await tx
+      .select({ id: matches.matchId })
+      .from(matches)
+      .where(
+        and(
+          eq(matches.status, 'running'),
+          sql`exists(select 1 from json_each(${matches.payload}, '$.players') player where json_extract(player.value, '$.id')=${account.actorId})`,
+        ),
+      )
+      .limit(1);
+    if (active) throw new OrganizationError('RESULT_OR_MATCH_PENDING', 409);
     const now = new Date().toISOString();
     const job: typeof accountWithdrawals.$inferSelect = {
       id: operationId,

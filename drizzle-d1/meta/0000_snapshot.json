@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8aa3683f-1dc1-43d9-ae6b-a9850dbfdb45",
+  "id": "352c4689-15fb-4c81-91ce-abe2f2d95c00",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "quiz_game_account_instance_selections": {
@@ -3666,7 +3666,7 @@
           "name": "payload",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         }
       },
@@ -3698,7 +3698,7 @@
         },
         "match_result_state": {
           "name": "match_result_state",
-          "value": "(\"quiz_game_matches\".\"status\" IN ('confirmed', 'invalid', 'conflict') AND \"quiz_game_matches\".\"payload\" IS NOT NULL AND \"quiz_game_matches\".\"payload_hash\" IS NOT NULL AND \"quiz_game_matches\".\"finished_at\" IS NOT NULL) OR (\"quiz_game_matches\".\"status\" IN ('waiting', 'running', 'cancelled') AND \"quiz_game_matches\".\"payload\" IS NULL AND \"quiz_game_matches\".\"payload_hash\" IS NULL)"
+          "value": "(\"quiz_game_matches\".\"status\" IN ('confirmed', 'invalid', 'conflict') AND json_type(\"quiz_game_matches\".\"payload\", '$.result') = 'object' AND \"quiz_game_matches\".\"payload_hash\" IS NOT NULL AND \"quiz_game_matches\".\"finished_at\" IS NOT NULL) OR (\"quiz_game_matches\".\"status\" IN ('waiting', 'running', 'cancelled') AND json_type(\"quiz_game_matches\".\"payload\", '$.result') = 'null' AND \"quiz_game_matches\".\"payload_hash\" IS NULL)"
         },
         "match_results_hash": {
           "name": "match_results_hash",
@@ -4821,7 +4821,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'自己申告'"
+          "default": "'\u81ea\u5df1\u7533\u544a'"
         }
       },
       "indexes": {},
@@ -5601,7 +5601,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'作問者'"
+          "default": "'\u4f5c\u554f\u8005'"
         },
         "provenance": {
           "name": "provenance",

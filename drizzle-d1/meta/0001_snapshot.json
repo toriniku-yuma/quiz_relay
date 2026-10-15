@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6fccf143-931a-4a72-b12e-b8b9a37b0f4b",
-  "prevId": "8aa3683f-1dc1-43d9-ae6b-a9850dbfdb45",
+  "id": "c4f11ea0-1da6-41a2-ae0a-fee0c8aacb79",
+  "prevId": "352c4689-15fb-4c81-91ce-abe2f2d95c00",
   "tables": {
     "quiz_game_account_instance_selections": {
       "name": "quiz_game_account_instance_selections",
@@ -3666,7 +3666,7 @@
           "name": "payload",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         }
       },
@@ -3698,7 +3698,7 @@
         },
         "match_result_state": {
           "name": "match_result_state",
-          "value": "(\"quiz_game_matches\".\"status\" IN ('confirmed', 'invalid', 'conflict') AND \"quiz_game_matches\".\"payload\" IS NOT NULL AND \"quiz_game_matches\".\"payload_hash\" IS NOT NULL AND \"quiz_game_matches\".\"finished_at\" IS NOT NULL) OR (\"quiz_game_matches\".\"status\" IN ('waiting', 'running', 'cancelled') AND \"quiz_game_matches\".\"payload\" IS NULL AND \"quiz_game_matches\".\"payload_hash\" IS NULL)"
+          "value": "(\"quiz_game_matches\".\"status\" IN ('confirmed', 'invalid', 'conflict') AND json_type(\"quiz_game_matches\".\"payload\", '$.result') = 'object' AND \"quiz_game_matches\".\"payload_hash\" IS NOT NULL AND \"quiz_game_matches\".\"finished_at\" IS NOT NULL) OR (\"quiz_game_matches\".\"status\" IN ('waiting', 'running', 'cancelled') AND json_type(\"quiz_game_matches\".\"payload\", '$.result') = 'null' AND \"quiz_game_matches\".\"payload_hash\" IS NULL)"
         },
         "match_results_hash": {
           "name": "match_results_hash",

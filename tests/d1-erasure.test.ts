@@ -32,7 +32,7 @@ import {
 } from '../src/worker/organization/database';
 import { saveProfile } from '../src/worker/organization/profile';
 import { recordWithdrawal } from '../src/worker/organization/withdrawal';
-import { commitD1Result } from '../src/worker/results/database';
+import { commitFixtureResult } from './fixtures/match';
 import { questions } from './fixtures/questions';
 import { resultFixture } from './fixtures/result';
 
@@ -192,7 +192,7 @@ it('結果原本・outbox・参加者を匿名化してから退会を完了し�
   record.owner = instance.owner;
   record.result.finishedAt = Date.now();
   record.players[0].id = account.actorId;
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const eventId = crypto.randomUUID();
   await changeD1(db, async (writes) => {
     writes.push(
@@ -270,7 +270,7 @@ it('削除は対象の原本だけを消し、他インスタンスと削除済�
   for (const instance of [first.instance, second.instance]) {
     const { record } = resultFixture();
     record.owner = instance.owner;
-    await commitD1Result(runtime.GAME_D1, record);
+    await commitFixtureResult(runtime.GAME_D1, record);
   }
   const id = await deletion(first.instance),
     { environment } = services();

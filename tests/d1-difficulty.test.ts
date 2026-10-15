@@ -25,8 +25,8 @@ import {
   readDifficultyStatistics,
 } from '../src/worker/questions/difficulty-statistics';
 import { questionMutation } from '../src/worker/questions/write';
-import { commitD1Result } from '../src/worker/results/database';
 import type { ResultRecord } from '../src/worker/results/record';
+import { commitFixtureResult } from './fixtures/match';
 import { resultFixture } from './fixtures/result';
 
 const runtime = env as unknown as {
@@ -170,8 +170,8 @@ async function saveRecords(records: ResultRecord[]) {
 it('完了試合を出題ごとに集計し、同じ試合の再送を二重に数えない', async () => {
   const t = await target(),
     [record] = t.records(1, true);
-  await commitD1Result(runtime.GAME_D1, record);
-  await commitD1Result(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
+  await commitFixtureResult(runtime.GAME_D1, record);
   const groups = await readDifficultyStatistics(db, t.instance.owner, [
     t.level.generation,
   ]);
