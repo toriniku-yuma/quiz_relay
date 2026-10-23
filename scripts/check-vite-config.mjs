@@ -1,12 +1,5 @@
 import assert from 'node:assert/strict';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { localOperationsConfig } from './local-operations-config.ts';
 
@@ -28,8 +21,34 @@ assert.equal(erasureWorker.workers_dev, false);
 assert.equal(erasureWorker.preview_urls, false);
 assert.deepEqual(erasureWorker.routes, []);
 assert.equal(erasureWorker.triggers, undefined);
-assert.deepEqual(appWorker.triggers.crons, ['* * * * *']);
+assert.deepEqual(appWorker.triggers.crons, ['0 * * * *', '0 19 * * *']);
 assert.deepEqual(erasureWorker.d1_databases, appWorker.d1_databases);
+const qaErasureWorker = JSON.parse(
+  readFileSync('config/federation/wrangler.erasure.jsonc', 'utf8'),
+);
+for (const worker of [appWorker, ...['a', 'b'].map((side) => qaWorker.env[side])]) {
+  assert.equal(worker.observability.enabled, true);
+  assert.equal(worker.observability.redact_query_string, true);
+  assert.deepEqual(worker.observability.logs, {
+    enabled: true,
+    persist: true,
+    head_sampling_rate: 1,
+    invocation_logs: false,
+  });
+}
+for (const [main, erasure] of [
+  [appWorker, erasureWorker],
+  ...['a', 'b'].map((node) => [qaWorker.env[node], qaErasureWorker.env[node]]),
+]) {
+  assert.deepEqual(
+    erasure.ratelimits,
+    main.ratelimits.filter((binding) => binding.name === 'FEDERATION_LIMITER'),
+  );
+  assert.deepEqual(erasure.services, [
+    { binding: 'ACCOUNT_ERASURE', service: erasure.name },
+  ]);
+}
+
 assert.ok(appWorker.d1_databases.some((binding) => binding.binding === 'GAME_D1'));
 for (const binding of erasureWorker.durable_objects.bindings)
   assert.equal(binding.script_name, appWorker.name);
@@ -94,7 +113,7 @@ assert.throws(() => config({ command: 'serve' }), /ENOENT/);
 assert.deepEqual(pluginOptions.config.services, []);
 assert.deepEqual(pluginOptions.auxiliaryWorkers, []);
 
-// Exercise the real secret/DB/inventory boundary without reading the developer's env files.
+// Exercise the real secret/DB boundary without reading the developer's env files.
 const originalDirectory = process.cwd();
 mkdirSync('.wrangler', { recursive: true });
 const fixture = mkdtempSync(resolve('.wrangler/local-config-check-'));
@@ -110,17 +129,6 @@ try {
     '.env.erasure-local',
     'CLERK_PUBLISHABLE_KEY=public-fixture\nCLERK_SECRET_KEY=secret-fixture\n',
   );
-  assert.throws(() => localOperationsConfig(runtime), /ENOENT/);
-  const rooms = '.wrangler/state/v3/do/quiz-relay-probe-GameRoom';
-  mkdirSync(rooms, { recursive: true });
-  writeFileSync(`${rooms}/${'b'.repeat(64)}.sqlite`, '');
-  writeFileSync(`${rooms}/${'a'.repeat(64)}.sqlite`, '');
-  writeFileSync(`${rooms}/${'a'.repeat(64)}.sqlite-wal`, '');
-  writeFileSync(`${rooms}/metadata.sqlite`, '');
-  assert.deepEqual(JSON.parse(localOperationsConfig(runtime).LOCAL_ROOM_INVENTORY), [
-    'a'.repeat(64),
-    'b'.repeat(64),
-  ]);
   assert.equal(localOperationsConfig(runtime).GAME_CONFIG_PROFILE, 'local');
   for (const patch of [
     { CLERK_PUBLISHABLE_KEY: undefined },
@@ -135,11 +143,6 @@ try {
     () => localOperationsConfig({ ...runtime, FEDERATION_ORIGIN: 'https://game.test' }),
     /FEDERATION_NOT_CONFIGURED/,
   );
-  writeFileSync(`${rooms}/unknown.sqlite`, '');
-  assert.throws(() => localOperationsConfig(runtime), /UNKNOWN_LOCAL_ROOM_FILE/);
-  unlinkSync(`${rooms}/unknown.sqlite`);
-  writeFileSync(`${rooms}/${'c'.repeat(64)}.sqlite-wal`, '');
-  assert.throws(() => localOperationsConfig(runtime), /ORPHANED_LOCAL_ROOM_STATE/);
 } finally {
   process.chdir(originalDirectory);
   // This exact temporary directory was created above inside the workspace.
@@ -148,5 +151,5 @@ try {
 }
 
 console.log(
-  'PASS: private erasure binding/Cron source settings; build excludes dev secrets; local erasure checks Clerk/D1 configuration and complete room inventory',
+  'PASS: private erasure binding/Cron source settings; build excludes dev secrets; local erasure checks Clerk/D1 configuration',
 );

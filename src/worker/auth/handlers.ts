@@ -14,6 +14,7 @@ export type AuthEnv = {
     instanceOwner: string;
     instanceId: string;
     organizationId: string;
+    organizationName: string;
   };
 };
 

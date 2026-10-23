@@ -6,6 +6,7 @@ import { ROOMS_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import DataTable from '../../components/DataTable';
 import Panel from '../../components/Panel';
+import PlayerName from '../../components/PlayerName';
 import GameBoard from '../game/GameBoard';
 import { useMutation } from '../moderation/useMutation';
 import ResultLinks from '../results/ResultLinks';
@@ -82,7 +83,16 @@ export default function RoomLobby({
     auth.user,
     foreign?.href,
   ]);
-  if (!room) return <p role="status">ロビーを確認しています。{session.error}</p>;
+  const reconnect = session.connection === 'stopped' && (
+    <Button onClick={session.reconnect}>ロビーに再接続</Button>
+  );
+  if (!room)
+    return (
+      <div className="grid gap-3">
+        <p role="status">ロビーを確認しています。{session.error}</p>
+        {reconnect}
+      </div>
+    );
   const member = room.members.find((candidateMember) => candidateMember.id === actor),
     host = room.hostId === actor;
   const finished = session.game.snapshot?.result;
@@ -97,7 +107,7 @@ export default function RoomLobby({
             <p role="status">
               {room.closed ? '部屋は閉じています。' : room.playing ? '対戦中' : 'ロビー'}{' '}
               {!room.closed &&
-                `／ ${session.connection === 'open' ? '接続済み' : '接続を確認中'}`}
+                `／ ${session.connection === 'open' ? '接続済み' : session.connection === 'stopped' ? '自動再接続を停止しました' : '接続を確認中'}`}
             </p>
             {room.waiting && (
               <p>途中入室のため、現在の試合が終わるまでロビーでお待ちください。</p>
@@ -106,7 +116,7 @@ export default function RoomLobby({
               {room.members.map((roomMember) => (
                 <tr key={roomMember.id}>
                   <td>
-                    {roomMember.name}
+                    <PlayerName player={roomMember} />
                     {roomMember.guest ? '（ゲスト）' : ''}
                     {roomMember.id === room.hostId ? '（部屋主）' : ''}
                   </td>
@@ -123,6 +133,7 @@ export default function RoomLobby({
           </>
         )}
         <div className="mt-4 flex flex-wrap items-center gap-3">
+          {!room.closed && reconnect}
           {!gamePage && !room.playing && !room.closed && (
             <>
               <Button

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { foreignReturnUrl } from '../src/client/features/federation/redirect';
 import { useForeignLogin } from '../src/client/features/federation/useForeignLogin';
-import type { useForeignParticipation } from '../src/client/features/federation/useForeignParticipation';
+import { useForeignParticipation } from '../src/client/features/federation/useForeignParticipation';
 import { useParticipationAuthorization } from '../src/client/features/federation/useParticipationAuthorization';
 import { API_PATHS } from '../src/shared/api-paths';
 
@@ -14,7 +14,9 @@ vi.mock('react', async (original) => ({
   ...(await original<typeof import('react')>()),
   useState: (value: unknown) => {
     const index = hooks.cursor++;
-    if (index >= hooks.slots.length) hooks.slots[index] = value;
+    if (index >= hooks.slots.length)
+      hooks.slots[index] =
+        typeof value === 'function' ? (value as () => unknown)() : value;
     return [
       hooks.slots[index],
       (next: unknown) => {
@@ -171,7 +173,7 @@ it('期限切れの参加要求には開催先へ戻る理由を示し、同じ�
     automatic = { flow: 'participation' as const, ready: false, actor: 'verified' },
     request = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(Response.json({ code: 'STALE_REQUEST' }, { status: 409 }));
+      .mockResolvedValue(Response.json({ code: 'STALE_RESERVATION' }, { status: 409 }));
   vi.stubGlobal('fetch', request);
   function render() {
     hooks.cursor = 0;
@@ -183,7 +185,7 @@ it('期限切れの参加要求には開催先へ戻る理由を示し、同じ�
   const model = render();
   expect(model.expired).toBe(true);
   expect(model.error).toBe(
-    'この参加要求は終了しました。開催先へ戻って、改めて参加してください。',
+    'この参加予約は終了しました。開催先へ戻って、改めて参加してください。',
   );
   await model.authorize();
   expect(request).toHaveBeenCalledOnce();
@@ -191,4 +193,53 @@ it('期限切れの参加要求には開催先へ戻る理由を示し、同じ�
     ...target,
     operationId,
   });
+});
+
+it('外部参加は画面遷移せず、連打をまとめ、応答不明の再試行に同じ操作IDを使う', async () => {
+  const target = {
+    peerOrigin: 'https://home.quiz-relay.workers.dev',
+    sourceOrganizationId: crypto.randomUUID(),
+    hostInstanceId: crypto.randomUUID(),
+    mode: 'ranked' as const,
+  };
+  const storage = new Map<string, string>();
+  vi.stubGlobal('localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+  });
+  const replace = vi.fn();
+  vi.stubGlobal('location', { origin: 'https://host.quiz-relay.workers.dev', replace });
+  let fail: (error: Error) => void = () => {};
+  const request = vi.fn<typeof fetch>().mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  vi.stubGlobal('fetch', request);
+  const model = useForeignParticipation(false);
+  const first = model.join(target),
+    duplicate = model.join(target);
+  expect(first).toBe(duplicate);
+  expect(request).toHaveBeenCalledOnce();
+  fail(new Error('network'));
+  await first;
+  const operation = JSON.parse(String(request.mock.calls[0][1]?.body)).operationId;
+  request.mockResolvedValueOnce(
+    Response.json({
+      reservationId: crypto.randomUUID(),
+      operationId: operation,
+      homeOrigin: target.peerOrigin,
+      sourceOrganizationId: target.sourceOrganizationId,
+      instanceId: target.hostInstanceId,
+      mode: target.mode,
+    }),
+  );
+  expect(await model.join(target)).toMatchObject({ operationId: operation });
+  expect(JSON.parse(String(request.mock.calls[1][1]?.body)).operationId).toBe(operation);
+  expect(new URL(String(request.mock.calls[0][0])).pathname).toBe(
+    '/api/v1/participation/login/join',
+  );
+  expect(replace).not.toHaveBeenCalled();
 });

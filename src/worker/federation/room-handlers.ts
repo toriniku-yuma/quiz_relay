@@ -20,11 +20,11 @@ import { requireUnrestricted } from '../organization/moderation.ts';
 import {
   mutatePersonalSet,
   personalSets,
-  roomIds,
   roomOptions,
   roomSharedSources,
 } from '../rooms/database.ts';
 import { roomResult } from '../rooms/rpc.ts';
+import { roomViews } from '../rooms/store.ts';
 import { requireParticipationReceiving } from './admission.ts';
 import { foreignLoginSession } from './login.ts';
 import {
@@ -38,19 +38,7 @@ import { releaseHostParticipation } from './slots.ts';
 import { federationDatabase } from './transport.ts';
 
 async function publicRoomList(env: Env, instanceId: string) {
-  const rooms = await roomIds(env, instanceId),
-    views = await Promise.allSettled(
-      rooms.map((room) => env.GAME_ROOM.getByName(userRoomName(room.id)).userRoomInfo()),
-    );
-  return {
-    rooms: views.flatMap((view) =>
-      view.status === 'fulfilled' &&
-      'settings' in view.value &&
-      view.value.settings.public
-        ? [view.value]
-        : [],
-    ),
-  };
+  return { rooms: await roomViews(env, instanceId) };
 }
 export const foreignLoginRoomActions: Handler<AuthEnv> = async (context) => {
   const account = await foreignLoginSession(
@@ -151,7 +139,12 @@ export const foreignRoomActions: Handler<AuthEnv> = async (context) => {
   const env = context.env,
     db = federationDatabase(env),
     scope = participationScope(instance, 'room'),
-    actor = { id: row.actorId, name: row.displayName, guest: false },
+    actor = {
+      id: row.actorId,
+      name: row.displayName,
+      serverName: row.serverName,
+      guest: false,
+    },
     subject = `federation:${row.peerOrigin}:${row.sourceActorId}`;
   if (action === 'list') {
     await refreshParticipationAccess(

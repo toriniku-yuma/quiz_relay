@@ -38,6 +38,7 @@ export type ForeignLoginOverview = {
   }[];
 };
 export type ForeignLoginTicket = {
+  grant: string;
   protocolVersion: 1;
   iss: string;
   aud: string;

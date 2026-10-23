@@ -6,13 +6,13 @@ import {
   accountWithdrawals,
   federationFavorites,
   instanceGrants,
-  instances,
   matches,
   personalQuestionSets,
   questionSubmissions,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { planControlEvent } from '../federation/controls.ts';
+import { actorRooms } from '../matchmaking/actor-rooms.ts';
 import { matchmaker } from '../matchmaking/instance.ts';
 import { OrganizationError, validId } from './access.ts';
 import { organizationIdentity } from './database.ts';
@@ -79,7 +79,6 @@ export async function recordWithdrawal(
       auditErasedAt: null,
       retryAt: now,
       attempts: 0,
-      roomCursor: null,
       lastAttemptAt: '1970-01-01T00:00:00.000Z',
     };
     writes.push(tx.insert(accountWithdrawals).values(job));
@@ -139,46 +138,16 @@ export async function withdrawAccount(
   if (input.subject !== subject)
     throw new OrganizationError('WITHDRAWAL_ACCOUNT_CHANGED', 409);
   if (!env.ACCOUNT_ERASURE) throw new OrganizationError('ERASURE_UNAVAILABLE', 503);
-  const { organization, account } = await organizationIdentity(
-    db,
-    subject,
-    undefined,
-    true,
+  const job = await recordWithdrawal(db, subject, operationId, env.GAME_CONFIG_PROFILE);
+  await matchmaker(env).logoutActor(job.actorId, await actorRooms(env, job.actorId));
+  const response = await env.ACCOUNT_ERASURE.fetch(
+    'https://account-erasure.internal/withdrawal',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operationId }),
+    },
   );
-  const maker = matchmaker(env);
-  if (
-    !account.withdrawnAt &&
-    (
-      await db
-        .select()
-        .from(instances)
-        .where(
-          and(
-            eq(instances.organizationId, organization.id),
-            eq(instances.roomInventoryComplete, false),
-          ),
-        )
-    ).length
-  )
-    throw new OrganizationError('ROOM_INVENTORY_REQUIRED', 409);
-  try {
-    const admission = await maker.beginWithdrawal(account.actorId, operationId);
-    if (!admission.ok) throw new OrganizationError(admission.code, 409);
-    await recordWithdrawal(db, subject, operationId, env.GAME_CONFIG_PROFILE);
-  } catch (error) {
-    // A lost COMMIT response must not reopen admission. A failed status read also keeps it closed.
-    const [committed] = await db
-      .select()
-      .from(accountWithdrawals)
-      .where(eq(accountWithdrawals.actorId, account.actorId));
-    if (!committed) await maker.cancelWithdrawal(account.actorId, operationId);
-    if (committed?.id !== operationId) throw error;
-  }
-  await maker.logoutActor(account.actorId).catch(() => undefined);
-  await env.ACCOUNT_ERASURE?.fetch('https://account-erasure.internal/withdrawal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ operationId }),
-  }).catch(() => undefined);
+  if (!response.ok) throw new OrganizationError('WITHDRAWAL_PENDING', 503);
   return { ok: true };
 }

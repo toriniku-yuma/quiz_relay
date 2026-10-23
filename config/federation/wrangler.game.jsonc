@@ -22,11 +22,32 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["Probe", "GameRoom", "Matchmaker"]
+    },
+    {
+      "tag": "redesign-remove-v2",
+      "deleted_classes": ["Probe", "GameRoom", "Matchmaker"]
+    },
+    {
+      "tag": "redesign-create-v3",
+      "new_sqlite_classes": ["Probe", "GameRoom", "Matchmaker"]
     }
   ],
   "env": {
     "a": {
       "name": "quiz-relay-federation-a-test",
+      "observability": {
+        "enabled": true,
+        "redact_query_string": true,
+        "logs": {
+          "enabled": true,
+          "persist": true,
+          "head_sampling_rate": 1,
+          "invocation_logs": false
+        },
+        "traces": {
+          "enabled": false
+        }
+      },
       "vars": {
         "TEST_NODE": "A",
         "PROBES_ENABLED": "true",
@@ -68,13 +89,16 @@
         }
       ],
       "triggers": {
-        "crons": ["* * * * *"]
+        "crons": ["0 * * * *", "0 19 * * *"]
       },
       "ratelimits": [
         {
           "name": "ADMISSION_LIMITER",
           "namespace_id": "716329430",
-          "simple": { "limit": 20, "period": 60 }
+          "simple": {
+            "limit": 20,
+            "period": 60
+          }
         },
         {
           "name": "API_LIMITER",
@@ -87,7 +111,10 @@
         {
           "name": "FEDERATION_LIMITER",
           "namespace_id": "716329421",
-          "simple": { "limit": 60, "period": 60 }
+          "simple": {
+            "limit": 600,
+            "period": 60
+          }
         }
       ],
       "define": {
@@ -96,6 +123,19 @@
     },
     "b": {
       "name": "quiz-relay-federation-b-test",
+      "observability": {
+        "enabled": true,
+        "redact_query_string": true,
+        "logs": {
+          "enabled": true,
+          "persist": true,
+          "head_sampling_rate": 1,
+          "invocation_logs": false
+        },
+        "traces": {
+          "enabled": false
+        }
+      },
       "vars": {
         "TEST_NODE": "B",
         "PROBES_ENABLED": "true",
@@ -137,13 +177,16 @@
         }
       ],
       "triggers": {
-        "crons": ["* * * * *"]
+        "crons": ["0 * * * *", "0 19 * * *"]
       },
       "ratelimits": [
         {
           "name": "ADMISSION_LIMITER",
           "namespace_id": "716329430",
-          "simple": { "limit": 20, "period": 60 }
+          "simple": {
+            "limit": 20,
+            "period": 60
+          }
         },
         {
           "name": "API_LIMITER",
@@ -156,7 +199,10 @@
         {
           "name": "FEDERATION_LIMITER",
           "namespace_id": "716329422",
-          "simple": { "limit": 60, "period": 60 }
+          "simple": {
+            "limit": 600,
+            "period": 60
+          }
         }
       ],
       "define": {

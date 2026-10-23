@@ -2,10 +2,10 @@ import { API_PATHS } from '../../../shared/api-paths';
 import {
   type ForeignAccount,
   type ForeignSession,
+  type ParticipationTarget,
   participationId,
 } from '../../../shared/participation';
 import { PlayRequestError } from '../rooms/api';
-import { beginForeignAuthorization } from './redirect';
 import { foreignRequest } from './useForeignParticipation';
 
 const storageKey = 'quiz-relay-foreign-room-entry';
@@ -39,16 +39,13 @@ export function beginForeignRoomEntry(
   const encoded = JSON.stringify(value);
   if (encoded.length > 2 * 1024 * 1024) throw new Error('部屋の設定が大きすぎます。');
   sessionStorage.setItem(storageKey, encoded);
-  beginForeignAuthorization(
-    {
-      peerOrigin: account.homeOrigin,
-      sourceOrganizationId: account.organizationId,
-      hostInstanceId: instanceId,
-      mode: 'room',
-    },
-    'participation',
-    operationId,
-  );
+  const target: ParticipationTarget = {
+    peerOrigin: account.homeOrigin,
+    sourceOrganizationId: account.organizationId,
+    hostInstanceId: instanceId,
+    mode: 'room',
+  };
+  return { target, operationId };
 }
 export function readForeignRoomEntry(session: ForeignSession) {
   try {
@@ -102,5 +99,5 @@ export async function restartForeignRoomEntry(
       throw error;
   }
   clearForeignRoomEntry();
-  beginForeignRoomEntry(account, instanceId, action, body);
+  return beginForeignRoomEntry(account, instanceId, action, body);
 }

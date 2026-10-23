@@ -11,7 +11,7 @@ class FakeSocket {
   onerror: (() => void) | null = null;
   send = vi.fn();
 
-  constructor(_url: URL) {
+  constructor(readonly url: URL) {
     FakeSocket.instances.push(this);
   }
 
@@ -26,15 +26,74 @@ class FakeSocket {
   }
 }
 
+const logged = vi.fn<(value: string) => void>();
 beforeEach(() => {
+  logged.mockReset();
+  vi.spyOn(console, 'info').mockImplementation(logged);
   vi.useFakeTimers();
   FakeSocket.instances = [];
   vi.stubGlobal('WebSocket', FakeSocket);
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it('接続ごとのIDで復旧を追跡し、URLの秘密値や受信本文をログに残さない', () => {
+  const url = new URL(
+    'wss://local.test/api/game/socket?room=private-room&reservation=secret',
+  );
+  const stop = connectGameSocket(url, {
+    sync: () => 'secret-command',
+    opened: () => {},
+    message: () => true,
+    status: () => {},
+    error: () => {},
+  });
+  const first = FakeSocket.instances[0];
+  first.open();
+  first.onmessage?.({ data: 'secret-state' });
+  first.close();
+  vi.advanceTimersByTime(1500);
+  const second = FakeSocket.instances[1];
+  second.open();
+  second.onmessage?.({ data: 'secret-state' });
+  const logs = logged.mock.calls.map(([value]) => JSON.parse(value));
+  expect(first.url.searchParams.get('connection')).toBe(logs[0].connectionId);
+  expect(second.url.searchParams.get('connection')).not.toBe(logs[0].connectionId);
+  expect(url.searchParams.has('connection')).toBe(false);
+  expect(logs.at(-1)).toMatchObject({ event: 'client_socket_ready', recoveryMs: 1500 });
+  expect(logs.find((log) => log.event === 'client_socket_disconnected')).toMatchObject({
+    trigger: 'close',
+    closeCode: 1006,
+    lastStateAgeMs: 0,
+  });
+  expect(JSON.stringify(logs)).not.toMatch(/secret|private-room|reservation/);
+  const reports = second.send.mock.calls
+    .map(([value]) => value)
+    .filter((value) => value.startsWith('{'))
+    .map((value) => JSON.parse(value));
+  expect(reports).toEqual([
+    {
+      type: 'connection_report',
+      connectMs: 0,
+      recovery: expect.objectContaining({
+        connectionId: first.url.searchParams.get('connection'),
+        trigger: 'close',
+        closeCode: 1006,
+        attempts: 1,
+        elapsedMs: 1500,
+      }),
+    },
+  ]);
+  second.onmessage?.({ data: 'secret-state' });
+  expect(
+    second.send.mock.calls.filter(([value]) => value.includes('connection_report')),
+  ).toHaveLength(1);
+  expect(JSON.stringify(reports)).not.toMatch(/secret|private-room|reservation/);
+  stop();
 });
 
 function start() {
@@ -48,6 +107,22 @@ function start() {
   const stop = connectGameSocket(new URL('wss://local.test/api/game/socket'), callbacks);
   return { ...callbacks, stop };
 }
+
+it('診断の送信失敗が状態受信と次の操作を妨げない', () => {
+  const connection = start();
+  const socket = FakeSocket.instances[0];
+  socket.open();
+  socket.send.mockImplementationOnce(() => {
+    throw new Error('SEND_FAILED');
+  });
+  expect(() => socket.onmessage?.({ data: 'state' })).not.toThrow();
+  expect(connection.status).toHaveBeenLastCalledWith('open');
+  expect(connection.error).not.toHaveBeenCalled();
+  socket.onmessage?.({ data: 'state' });
+  vi.advanceTimersByTime(5000);
+  expect(socket.send).toHaveBeenLastCalledWith('sync');
+  connection.stop();
+});
 
 it('keeps a confirmed result after the finished session closes without retrying', () => {
   const callbacks = {
@@ -108,6 +183,14 @@ it('recovers after more than five failures and resets the window for the next di
   current.onmessage?.({ data: 'state' });
   expect(connection.status).toHaveBeenLastCalledWith('open');
   expect(connection.error).not.toHaveBeenCalled();
+  expect(JSON.parse(current.send.mock.calls.at(-1)?.[0] as string)).toMatchObject({
+    type: 'connection_report',
+    recovery: {
+      connectionId: FakeSocket.instances[0].url.searchParams.get('connection'),
+      attempts: 12,
+      elapsedMs: 18000,
+    },
+  });
 
   current.close();
   vi.advanceTimersByTime(1500);

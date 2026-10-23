@@ -48,8 +48,7 @@ export function useParticipationAuthorization(
       if (active.current !== requestKey) return;
       inFlight.current = null;
       setExpired(
-        error instanceof OrganizationRequestError &&
-          ['STALE_REQUEST', 'STALE_RESERVATION'].includes(error.code),
+        error instanceof OrganizationRequestError && error.code === 'STALE_RESERVATION',
       );
       setError(error instanceof Error ? error.message : '参加を確認できませんでした。');
     } finally {

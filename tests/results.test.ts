@@ -14,7 +14,7 @@ import {
   updateConnections,
 } from '../src/worker/game/state';
 import { ResultConflict } from '../src/worker/results/database';
-import { matchRecord, startMatch } from '../src/worker/results/lifecycle';
+import { cancelMatch, matchRecord, startMatch } from '../src/worker/results/lifecycle';
 import { ratingChange } from '../src/worker/results/rating';
 import { makeResultRecord } from '../src/worker/results/record';
 import { resultFixture } from './fixtures/result';
@@ -29,7 +29,6 @@ vi.mock('../src/worker/results/lifecycle', async (original) => ({
   startMatch: vi.fn(),
   cancelMatch: vi.fn(),
 }));
-vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/results/database', async (original) => ({
   ...(await original<typeof import('../src/worker/results/database')>()),
   saveResult: mocks.save,
@@ -221,8 +220,9 @@ it('D01/D02: DB停止・DO復帰・commit後応答消失でも同一原本で再
   }
   await runInDurableObject(stub, async (_instance, ctx) => {
     const room = await ctx.storage.get<{ state: typeof state }>('room');
-    expect(room?.state.result?.storage).toBe('confirmed');
-    expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now());
+    expect(room).toBeUndefined();
+    expect((await ctx.storage.list()).size).toBe(0);
+    expect(await ctx.storage.getAlarm()).toBeNull();
   });
   await evictDurableObject(stub);
   await stub.lobbyStatus();
@@ -240,8 +240,9 @@ it('内容競合は確定にせずDO内の競合原本を破棄する', async ()
   await runDurableObjectAlarm(stub);
   await runInDurableObject(stub, async (_instance, ctx) => {
     const room = await ctx.storage.get<{ state: typeof state }>('room');
-    expect(room?.state.result?.storage).toBe('conflict');
-    expect(room?.state.completed).toBeUndefined();
+    expect(room).toBeUndefined();
+    expect((await ctx.storage.list()).size).toBe(0);
+    expect(await ctx.storage.getAlarm()).toBeNull();
   });
 });
 
@@ -343,6 +344,36 @@ it('開始保存中は同期を処理し、応答消失後も同じ開始原本�
   });
 });
 
+it('進行中のアラームは開始・取消処理による重複保存を行わない', async () => {
+  const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
+  const { state, record } = resultFixture();
+  state.phase = 'REVEALING';
+  state.result = null;
+  delete state.completed;
+  state.deadline = Date.now() + 60000;
+  await runInDurableObject(stub, async (instance, context) => {
+    await context.storage.put('room', {
+      ...finishedRoom(state, record.owner),
+      lobby: {
+        expires: Date.now() + 60000,
+        sessionExpires: Date.now() + 60000,
+        reservations: {},
+        closed: false,
+      },
+    });
+    const transaction = vi.spyOn(context.storage, 'transaction');
+    try {
+      await instance.alarm();
+      expect(transaction).toHaveBeenCalledTimes(1);
+      const saved = await context.storage.get<{ state: State }>('room');
+      expect(saved?.state.phase).toBe('REVEALING');
+      expect(saved?.state.reconnect).not.toBeNull();
+    } finally {
+      transaction.mockRestore();
+    }
+  });
+});
+
 it('D1確定後の終了通知が失敗しても再起動後に再送し、結果を再保存しない', async () => {
   const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
   const { state, record } = resultFixture();
@@ -359,11 +390,9 @@ it('D1確定後の終了通知が失敗しても再起動後に再送し、結�
     const room = await context.storage.get<{
       state: State;
       notificationRetryAt: number;
-      finishNotified?: boolean;
     }>('room');
     if (!room) throw new Error('missing room');
     expect(room.state.result?.storage).toBe('confirmed');
-    expect(room.finishNotified).toBeUndefined();
     expect(room.notificationRetryAt).toBeGreaterThan(Date.now());
     room.notificationRetryAt = 1;
     await context.storage.put('room', room);
@@ -372,11 +401,116 @@ it('D1確定後の終了通知が失敗しても再起動後に再送し、結�
   expect(mocks.save).toHaveBeenCalledTimes(1);
   expect(mocks.notify).toHaveBeenCalledTimes(2);
   await runInDurableObject(stub, async (_, context) => {
-    const room = await context.storage.get<{
-      finishNotified: boolean;
-      notificationRetryAt?: number;
-    }>('room');
-    expect(room?.finishNotified).toBe(true);
-    expect(room?.notificationRetryAt).toBeUndefined();
+    expect((await context.storage.list()).size).toBe(0);
+    expect(await context.storage.getAlarm()).toBeNull();
   });
 });
+
+it('空の試合への失効要求は失効印だけを保存し、試合やalarmを作らない', async () => {
+  const stub = (env as unknown as Env).GAME_ROOM.getByName(
+    `match:${crypto.randomUUID()}`,
+  );
+  expect(
+    await stub.cancelReservation('match', 'actor', true, crypto.randomUUID(), 'token'),
+  ).toBe(true);
+  await runInDurableObject(stub, async (_, context) => {
+    expect(await context.storage.list()).toEqual(new Map([['revoked:token', true]]));
+    expect(await context.storage.getAlarm()).toBeNull();
+  });
+});
+
+it('結果保存の失敗は再試行状態と安全な追跡ログを残す', async () => {
+  const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
+  const { state, record } = resultFixture();
+  const failure = new Error('unclassified storage failure');
+  failure.stack = 'Error: unclassified storage failure\n    at commit (index.js:123:4)';
+  mocks.save.mockRejectedValueOnce(failure);
+  await runInDurableObject(stub, async (_instance, ctx) => {
+    await ctx.storage.put('room', finishedRoom(state, record.owner));
+    await ctx.storage.setAlarm(Date.now() + 60000);
+  });
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await runDurableObjectAlarm(stub);
+    await runInDurableObject(stub, async (_instance, ctx) => {
+      const room = await ctx.storage.get<{ state: State; resultErrorCode: string }>(
+        'room',
+      );
+      expect(room?.state.result?.storage).toBe('pending');
+      expect(room?.resultErrorCode).toBe('INTERNAL');
+    });
+    const diagnostic = logged.mock.calls
+      .map(([value]) => JSON.parse(String(value)))
+      .find((entry) => entry.event === 'result_save_failed');
+    expect(diagnostic).toMatchObject({
+      matchId: record.matchId,
+      objectId: stub.id.toString(),
+      code: 'INTERNAL',
+      errorType: 'Error',
+      locations: ['index.js:123:4'],
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain('unclassified storage failure');
+  } finally {
+    logged.mockRestore();
+  }
+});
+
+it.each(['start', 'cancel', 'notify'])(
+  '開始・取消・終了通知の失敗を安全なJSONで記録し、再試行を維持する %s',
+  async (operation) => {
+    const stub = (env as unknown as Env).GAME_ROOM.getByName(crypto.randomUUID());
+    const { state, record } = resultFixture();
+    const failure = new Error('private-value');
+    failure.stack = 'Error: private-value\n    at retry (index.js:123:4)';
+    if (operation === 'notify') {
+      mocks.save.mockResolvedValue(undefined);
+      mocks.notify.mockRejectedValueOnce(failure);
+    } else {
+      state.phase = 'WAITING';
+      state.result = null;
+      delete state.completed;
+      vi.mocked(operation === 'start' ? startMatch : cancelMatch).mockRejectedValueOnce(
+        failure,
+      );
+    }
+    await runInDurableObject(stub, async (_, context) => {
+      await context.storage.put('room', {
+        ...finishedRoom(state, record.owner),
+        ...(operation === 'start' ? { starting: matchRecord(state) } : {}),
+        ...(operation !== 'notify' ? { lifecycleRetryAt: 1 } : {}),
+      });
+      await context.storage.setAlarm(Date.now() + 60000);
+    });
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runDurableObjectAlarm(stub);
+      const event =
+        operation === 'notify'
+          ? 'match_finish_notification_failed'
+          : 'match_lifecycle_failed';
+      const diagnostic = logged.mock.calls
+        .map(([value]) => JSON.parse(String(value)))
+        .find((entry) => entry.event === event);
+      expect(diagnostic).toMatchObject({
+        matchId: record.matchId,
+        objectId: stub.id.toString(),
+        code: 'INTERNAL',
+        errorType: 'Error',
+        locations: ['index.js:123:4'],
+      });
+      expect(JSON.stringify(diagnostic)).not.toContain('private-value');
+      await runInDurableObject(stub, async (_, context) => {
+        const room = await context.storage.get<{
+          lifecycleRetryAt?: number;
+          notificationRetryAt?: number;
+        }>('room');
+        expect(
+          operation === 'notify' ? room?.notificationRetryAt : room?.lifecycleRetryAt,
+        ).toBeGreaterThan(Date.now());
+        expect(await context.storage.getAlarm()).not.toBeNull();
+      });
+    } finally {
+      logged.mockRestore();
+    }
+  },
+);

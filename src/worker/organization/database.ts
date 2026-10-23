@@ -289,7 +289,6 @@ export async function setupOrganization(
         organizationId: id,
         owner: `urn:uuid:${instanceId}`,
         name: instanceName,
-        roomInventoryComplete: true,
       }),
       audit(db, actorId, 'setup', instanceId, { name, instanceName }),
     );
@@ -321,7 +320,6 @@ export async function addInstance(
         organizationId: organization.id,
         owner: `urn:uuid:${id}`,
         name,
-        roomInventoryComplete: true,
       }),
       audit(db, account.actorId, 'add', id, { name }),
     );

@@ -89,11 +89,15 @@ it('保存した部屋操作は本人・所属元・instance・参加操作IDが
     },
     instanceId = crypto.randomUUID(),
     room = crypto.randomUUID();
-  beginForeignRoomEntry(account, instanceId, 'join', { room, password: '', invite: '' });
-  const pending = readForeignAuthorization(sessionStorage);
+  const pending = beginForeignRoomEntry(account, instanceId, 'join', {
+    room,
+    password: '',
+    invite: '',
+  });
+  expect(location.replace).not.toHaveBeenCalled();
   const session: ForeignSession = {
     reservationId: crypto.randomUUID(),
-    operationId: pending?.operationId ?? '',
+    operationId: pending.operationId,
     sourceOrganizationId: account.organizationId,
     sourceActorId: account.sourceActorId,
     actorId: 'b'.repeat(64),
@@ -129,17 +133,22 @@ it('保存した部屋操作は本人・所属元・instance・参加操作IDが
     restartForeignRoomEntry(session, account, instanceId, 'join', corrected),
   ).rejects.toThrow();
   expect(readForeignRoomEntry(session)?.body).toEqual(saved.body);
-  expect(readForeignAuthorization(sessionStorage)?.operationId).toBe(session.operationId);
+  expect(readForeignRoomEntry(session)?.operationId).toBe(session.operationId);
   for (const response of [
     Response.json({ ok: true }),
     Response.json({ code: 'SESSION_REQUIRED' }, { status: 401 }),
   ]) {
     fetch.mockResolvedValue(response);
-    await restartForeignRoomEntry(session, account, instanceId, 'join', corrected);
-    const renewed = readForeignAuthorization(sessionStorage);
-    expect(renewed?.operationId).not.toBe(session.operationId);
+    const renewed = await restartForeignRoomEntry(
+      session,
+      account,
+      instanceId,
+      'join',
+      corrected,
+    );
+    expect(renewed.operationId).not.toBe(session.operationId);
     expect(
-      readForeignRoomEntry({ ...session, operationId: renewed?.operationId ?? '' })?.body,
+      readForeignRoomEntry({ ...session, operationId: renewed.operationId })?.body,
     ).toEqual(corrected);
   }
   expect(fetch).toHaveBeenCalledWith(

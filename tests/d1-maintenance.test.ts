@@ -1,32 +1,87 @@
-import { applyD1Migrations, env, runInDurableObject } from 'cloudflare:test';
+import { applyD1Migrations, env } from 'cloudflare:test';
 import { beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import erasure from '../src/erasure/index';
+import { eraseResultNames } from '../src/erasure/results';
 import { changeD1, connectD1, rowsD1 } from '../src/worker/db/d1';
 import {
   accountWithdrawals,
+  difficultySamples,
   federationMetadataJobs,
   federationPeers,
+  federationPolicies,
+  federationQuestionImports,
+  federationQuestionSources,
+  instances,
   organizationAccounts,
   organizations,
+  questionDifficulty,
 } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
-import { refreshScheduledFederationMetadata } from '../src/worker/federation/metadata';
 import app from '../src/worker/index';
 import { actorForSubject } from '../src/worker/organization/access';
 import { setupOrganization } from '../src/worker/organization/database';
 import { scheduledD1 } from '../src/worker/scheduled';
 import { resetMatchmaker } from './fixtures/matchmaker';
 
-vi.mock('../src/worker/federation/metadata', async (original) => ({
-  ...(await original<typeof import('../src/worker/federation/metadata')>()),
-  refreshScheduledFederationMetadata: vi.fn(async () => ({ ok: true, nextCursor: null })),
+vi.mock('../src/erasure/results', async (original) => ({
+  ...(await original<typeof import('../src/erasure/results')>()),
+  eraseResultNames: vi.fn(async () => 1),
 }));
-
+it('自己依頼は32バッチで止まり、次の要求で残りを再開する', async () => {
+  let calls = 0;
+  const environment = { GAME_D1: runtime.GAME_D1 } as Parameters<typeof erasure.fetch>[1];
+  environment.ACCOUNT_ERASURE = {
+    fetch: async (url: string, init: RequestInit) => {
+      calls++;
+      return erasure.fetch(new Request(url, init), environment);
+    },
+  } as unknown as Fetcher;
+  const request = () =>
+    new Request('https://private/maintenance', {
+      method: 'POST',
+      body: JSON.stringify({ task: 'results' }),
+    });
+  vi.mocked(eraseResultNames).mockClear();
+  const response = await erasure.fetch(request(), environment);
+  expect(response.status).toBe(503);
+  expect(calls).toBe(31);
+  expect(eraseResultNames).toHaveBeenCalledTimes(32);
+  vi.mocked(eraseResultNames).mockResolvedValueOnce(0);
+  expect((await erasure.fetch(request(), environment)).status).toBe(200);
+});
 const runtime = env as unknown as {
     GAME_D1: D1Database;
     D1_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
   },
   db = connectD1(runtime.GAME_D1);
+it('保守失敗は対象とコード位置を記録し、例外本文を公開しない', async () => {
+  const error = new Error('D1_BUSY');
+  error.stack = 'Error: private-value\n    at commit (index.js:133:9)';
+  vi.mocked(eraseResultNames).mockRejectedValueOnce(error);
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const instanceId = crypto.randomUUID();
+    const response = await erasure.fetch(
+      new Request('https://private/maintenance', {
+        method: 'POST',
+        body: JSON.stringify({ task: 'results', instanceId }),
+      }),
+      { GAME_D1: runtime.GAME_D1 } as Parameters<typeof erasure.fetch>[1],
+    );
+    expect(response.status).toBe(503);
+    expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+      event: 'maintenance_failed',
+      task: 'results',
+      instanceId,
+      code: 'D1_BUSY',
+      locations: ['index.js:133:9'],
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain('private-value');
+    expect(await response.json()).toEqual({ code: 'MAINTENANCE_FAILED' });
+  } finally {
+    log.mockRestore();
+  }
+});
 beforeAll(async () => {
   await applyD1Migrations(runtime.GAME_D1, runtime.D1_MIGRATIONS);
   await setupOrganization(db, { INITIAL_ADMIN_SUBJECT: 'admin' } as Env, 'admin', {
@@ -34,88 +89,27 @@ beforeAll(async () => {
     instanceName: '対象',
   });
 });
-it('Cron本体は保守完了まで待機し、背景処理へ渡して先に終了しない', async () => {
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const runMaintenance = vi.fn(() => pending);
-  const getByName = vi.fn(() => ({ runMaintenance }));
-  const waitUntil = vi.fn();
-  let completed = false;
-  const execution = app
-    .scheduled(
-      {} as ScheduledController,
-      { MATCHMAKER: { getByName } } as unknown as Env,
-      { waitUntil } as unknown as ExecutionContext,
-    )
-    .then(() => {
-      completed = true;
-    });
-  await Promise.resolve();
-  expect(completed).toBe(false);
-  release();
-  await execution;
-  expect(completed).toBe(true);
-  expect(getByName).toHaveBeenCalledExactlyOnceWith('maintenance');
-  expect(waitUntil).not.toHaveBeenCalled();
-});
-it('再試行可能な保守DOの中断は新しいstubで一度だけ再試行する', async () => {
-  const interrupted = Object.assign(new Error('platform interruption'), {
-    retryable: true,
-  });
-  const first = { runMaintenance: vi.fn().mockRejectedValue(interrupted) };
-  const second = { runMaintenance: vi.fn().mockResolvedValue(undefined) };
-  const getByName = vi.fn().mockReturnValueOnce(first).mockReturnValue(second);
+it('CronはD1から直接処理し、保守DOを生成しない', async () => {
+  const getByName = vi.fn();
+  const fetch = vi.fn(async () => Response.json({ ready: true }));
   await app.scheduled(
-    {} as ScheduledController,
-    { MATCHMAKER: { getByName } } as unknown as Env,
+    { cron: '0 19 * * *', scheduledTime: Date.now() } as ScheduledController,
+    {
+      GAME_D1: runtime.GAME_D1,
+      ACCOUNT_ERASURE: { fetch },
+      MATCHMAKER: { getByName },
+    } as unknown as Env,
     {} as ExecutionContext,
   );
-  expect(getByName).toHaveBeenCalledTimes(2);
-  expect(first.runMaintenance).toHaveBeenCalledTimes(1);
-  expect(second.runMaintenance).toHaveBeenCalledTimes(1);
-});
-it('過負荷と通常の業務エラーは再試行せず、再試行後の失敗も呼出元へ返す', async () => {
-  for (const [error, expected] of [
-    [new Error('MAINTENANCE_INCOMPLETE'), 1],
-    [Object.assign(new Error('overload'), { retryable: true, overloaded: true }), 1],
-    [Object.assign(new Error('interrupted again'), { retryable: true }), 2],
-  ] as const) {
-    const getByName = vi.fn(() => ({ runMaintenance: vi.fn().mockRejectedValue(error) }));
-    await expect(
-      app.scheduled(
-        {} as ScheduledController,
-        { MATCHMAKER: { getByName } } as unknown as Env,
-        {} as ExecutionContext,
-      ),
-    ).rejects.toBe(error);
-    expect(getByName).toHaveBeenCalledTimes(expected);
-  }
-});
-it('定期処理専用DOの重なった呼出しで同じ保守処理を二重実行しない', async () => {
-  const tasks = await runInDurableObject(
-    (env as unknown as Env).MATCHMAKER.getByName('maintenance'),
-    async (instance) => {
-      const objectEnv = (instance as unknown as { env: Env }).env;
-      const previous = objectEnv.ACCOUNT_ERASURE;
-      const received: string[] = [];
-      objectEnv.ACCOUNT_ERASURE = {
-        fetch: async (_url: string, init: RequestInit) => {
-          received.push(JSON.parse(String(init.body)).task);
-          return Response.json({ ready: true });
-        },
-      } as unknown as Fetcher;
-      try {
-        await Promise.all([instance.runMaintenance(), instance.runMaintenance()]);
-        return received;
-      } finally {
-        objectEnv.ACCOUNT_ERASURE = previous;
-      }
-    },
-  );
-  expect(tasks.filter((task) => task === 'reviews')).toHaveLength(1);
-  expect(tasks.filter((task) => task === 'retention')).toHaveLength(1);
+  expect(getByName).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalled();
+  await expect(
+    app.scheduled(
+      { cron: '* * * * *' } as ScheduledController,
+      {} as Env,
+      {} as ExecutionContext,
+    ),
+  ).rejects.toThrow('UNKNOWN_SCHEDULE');
 });
 it('消去Workerは非公開の状態確認と既知の処理だけを受け付ける', async () => {
   const privateEnv = { GAME_D1: runtime.GAME_D1 } as Parameters<typeof erasure.fetch>[1];
@@ -154,21 +148,54 @@ it('消去Workerは非公開の状態確認と既知の処理だけを受け付�
     ).status,
   ).toBe(400);
 });
-it('メタデータ同期は保守DOで実行し、HTTP消去Workerへ送らない', async () => {
+it('問題共有は日次だけで全対象を処理し、メタデータは毎時更新する', async () => {
   const [organization] = await db.select().from(organizations);
-  const peerOrigin = 'https://maintenance-peer.test';
+  const [instance] = await db.select().from(instances);
+  const peers = Array.from({ length: 5 }, (_, index) => `https://peer-${index}.test`);
+  const sources = peers.map((peerOrigin) => ({
+    instanceId: instance.id,
+    peerOrigin,
+    sourceInstanceId: crypto.randomUUID(),
+  }));
   await changeD1(db, async (writes) => {
     writes.push(
-      db.insert(federationPeers).values({
-        origin: peerOrigin,
-        name: 'peer',
-        kid: 'fixture',
-        publicKey: 'fixture',
-        approved: true,
-      }),
-      db
-        .insert(federationMetadataJobs)
-        .values({ instanceId: organization.id, peerOrigin }),
+      db.insert(federationPeers).values(
+        peers.map((origin) => ({
+          origin,
+          name: 'peer',
+          kid: 'fixture',
+          publicKey: 'fixture',
+          approved: true,
+        })),
+      ),
+      db.insert(federationMetadataJobs).values(
+        peers.map((peerOrigin) => ({
+          instanceId: organization.id,
+          peerOrigin,
+        })),
+      ),
+      db.insert(federationPolicies).values(
+        sources.map((source) => ({
+          id: crypto.randomUUID(),
+          instanceId: source.instanceId,
+          peerOrigin: source.peerOrigin,
+          peerInstanceId: source.sourceInstanceId,
+          receiveQuestions: true,
+        })),
+      ),
+      db.insert(federationQuestionSources).values(sources),
+      db.insert(federationQuestionImports).values(
+        sources.map((source) => ({
+          ...source,
+          id: crypto.randomUUID(),
+          config: {
+            categories: [],
+            targetCategoryId: crypto.randomUUID(),
+            difficulty: { 0: 0, 1: 1, 2: 2 },
+            fallback: 0,
+          },
+        })),
+      ),
     );
   });
   const received: Record<string, unknown>[] = [];
@@ -179,18 +206,31 @@ it('メタデータ同期は保守DOで実行し、HTTP消去Workerへ送らな�
     SIGNING_PRIVATE_KEY: 'fixture',
     ACCOUNT_ERASURE: {
       fetch: async (_url: string, init: RequestInit) => {
-        received.push(JSON.parse(String(init.body)));
+        const task = JSON.parse(String(init.body));
+        received.push(task);
+        if (task.task === 'federationQuestionSource' && task.peerOrigin === peers[0])
+          return Response.json({ code: 'QUESTION_SYNC_UNAVAILABLE' }, { status: 503 });
         return Response.json({ ready: true });
       },
     },
   } as unknown as Env;
   await scheduledD1(environment);
-  const calls = vi.mocked(refreshScheduledFederationMetadata).mock.calls;
-  expect(calls.map(([, instanceId, peer]) => ({ instanceId, peer }))).toEqual([
-    { instanceId: organization.id, peer: peerOrigin },
-  ]);
-  expect(calls[0][0] === environment).toBe(true);
-  expect(received.some((task) => task.task === 'federationMetadata')).toBe(false);
+  expect(received.filter((entry) => entry.task === 'federationMetadata')).toHaveLength(5);
+  expect(received.some((entry) => entry.task === 'federationQuestions')).toBe(false);
+  expect(received.some((entry) => entry.task === 'federationQuestionSource')).toBe(false);
+  received.length = 0;
+  await expect(scheduledD1(environment, Date.now(), 'daily')).rejects.toThrow(
+    'MAINTENANCE_INCOMPLETE',
+  );
+  for (const task of ['federationQuestionSource', 'federationQuestions'])
+    expect(received.filter((entry) => entry.task === task)).toHaveLength(5);
+  expect(received.some((entry) => entry.task === 'federationMetadata')).toBe(false);
+  received.length = 0;
+  await expect(scheduledD1(environment, Date.now() + 3600000, 'hourly')).rejects.toThrow(
+    'MAINTENANCE_INCOMPLETE',
+  );
+  for (const task of ['federationQuestionSource', 'federationQuestions'])
+    expect(received.filter((entry) => entry.task === task)).toHaveLength(5);
 });
 it('未処理が100件あっても1回の定期呼出しでは処理を小分けにし、エラーが他の処理を止めない', async () => {
   const [organization] = await db.select().from(organizations),
@@ -228,7 +268,7 @@ it('未処理が100件あっても1回の定期呼出しでは処理を小分け
     received.push(input);
     if (input.task === 'authentication')
       return Response.json({ ready: false }, { status: 503 });
-    if (input.task === 'reviews') throw new Error('isolated unavailable');
+    if (input.task === 'anonymization') throw new Error('isolated unavailable');
     const response = Response.json({ ready: true });
     responses.push(response);
     return response;
@@ -240,9 +280,151 @@ it('未処理が100件あっても1回の定期呼出しでは処理を小分け
   await expect(scheduledD1(environment)).rejects.toThrow('MAINTENANCE_INCOMPLETE');
   expect(received.filter((task) => task.task === 'authentication')).toHaveLength(2);
   expect(received.filter((task) => task.task === 'anonymization')).toHaveLength(2);
-  expect(received.filter((task) => task.task === 'retention')).toHaveLength(1);
+  expect(received.filter((task) => task.task === 'retention')).toHaveLength(0);
   expect(fetch.mock.calls.length).toBeLessThanOrEqual(15);
   expect(responses.every((response) => response.bodyUsed)).toBe(true);
 });
 
 beforeEach(resetMatchmaker);
+
+it('同じ日次実行の成功・残件あり・失敗を処理ごとに区別して記録する', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ ready: true }))
+    .mockResolvedValueOnce(Response.json({ ready: false }, { status: 503 }))
+    .mockRejectedValueOnce(new Error('failure'))
+    .mockImplementation(async () => Response.json({ ready: true }));
+  try {
+    await expect(
+      scheduledD1(
+        {
+          GAME_D1: runtime.GAME_D1,
+          FEDERATION_ORIGIN: 'https://maintenance.test',
+          SIGNING_KID: 'fixture',
+          SIGNING_PRIVATE_KEY: 'fixture',
+          ACCOUNT_ERASURE: { fetch },
+        } as unknown as Env,
+        Date.now(),
+        'daily',
+      ),
+    ).rejects.toThrow('MAINTENANCE_INCOMPLETE');
+    const events = log.mock.calls.map(([value]) => JSON.parse(value));
+    const ended = events.filter((event) => event.phase === 'end');
+    expect(ended.slice(0, 3).map((event) => event.outcome)).toEqual([
+      'ok',
+      'pending',
+      'failed',
+    ]);
+    expect(ended.length).toBeGreaterThan(3);
+    expect(new Set(events.map((event) => event.runId)).size).toBe(1);
+    expect(events.every((event) => event.frequency === 'daily')).toBe(true);
+    for (const end of ended)
+      expect(
+        events
+          .filter((event) => event.taskIndex === end.taskIndex)
+          .map((event) => event.phase),
+      ).toEqual(['start', 'end']);
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it.each([
+  'upstream unavailable',
+  '{}',
+  '{"ready":true}',
+  '{"ready":false,"code":"D1_BUSY"}',
+])('保守サービスの不正な503を未完了として処理する %s', async (body) => {
+  const fetch = vi.fn(async () => new Response(body, { status: 503 }));
+  const environment = {
+    GAME_D1: runtime.GAME_D1,
+    ACCOUNT_ERASURE: { fetch },
+  } as unknown as Env;
+  const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await expect(scheduledD1(environment, Date.now(), 'daily')).rejects.toThrow(
+      'MAINTENANCE_INCOMPLETE',
+    );
+    expect(fetch.mock.calls.length).toBeGreaterThan(1);
+    expect(logged).toHaveBeenCalled();
+  } finally {
+    logged.mockRestore();
+  }
+});
+
+it('保守サービスが明示した残件ありの503だけは次回へ継続する', async () => {
+  const fetch = vi.fn(async () => Response.json({ ready: false }, { status: 503 }));
+  const environment = {
+    GAME_D1: runtime.GAME_D1,
+    ACCOUNT_ERASURE: { fetch },
+  } as unknown as Env;
+  await expect(scheduledD1(environment, Date.now(), 'daily')).resolves.toBeUndefined();
+  expect(fetch.mock.calls.length).toBeGreaterThan(1);
+});
+
+it('日次難易度更新は3件目以降も処理し、失敗した対象が後続を止めない', async () => {
+  const [organization] = await db.select().from(organizations);
+  const scopes = Array.from({ length: 5 }, (_, index) => ({
+    id: `difficulty-${index}`,
+    organizationId: organization.id,
+    owner: `difficulty-owner-${index}`,
+    name: `難易度${index}`,
+  }));
+  await changeD1(db, async (writes) => {
+    writes.push(
+      db.insert(instances).values(scopes),
+      db.insert(questionDifficulty).values(
+        scopes.map((scope) => ({
+          instanceId: scope.id,
+          seriesId: 'series',
+          generation: 'generation',
+          current: 1,
+        })),
+      ),
+      db.insert(difficultySamples).values(
+        scopes.map((scope) => ({
+          owner: scope.owner,
+          generation: 'generation',
+          band: 1,
+          players: 4,
+          rulesHash: 'rules',
+          bandRevision: 1,
+          trials: 1,
+        })),
+      ),
+    );
+  });
+  const received: string[] = [];
+  const environment = {
+    GAME_D1: runtime.GAME_D1,
+    QUESTION_DIFFICULTY_ENABLED: 'true',
+    ACCOUNT_ERASURE: {
+      fetch: async (_url: string, init: RequestInit) => {
+        const task = JSON.parse(String(init.body));
+        if (task.task === 'difficulty') {
+          received.push(task.instanceId);
+          if (task.instanceId === scopes[0].id) throw new Error('isolated failure');
+        }
+        return Response.json({ ready: true });
+      },
+    },
+  } as unknown as Env;
+  await scheduledD1(environment, Date.now(), 'hourly');
+  expect(received).toEqual([]);
+  await expect(scheduledD1(environment, Date.now(), 'daily')).rejects.toThrow(
+    'MAINTENANCE_INCOMPLETE',
+  );
+  expect(received).toEqual(scopes.map((scope) => scope.id));
+});
+
+import { nextQuestionSyncAt } from '../src/shared/federation-questions';
+
+it('問題同期の次回時刻は日本時間4時で、実行直後は翌日へ進む', () => {
+  expect(
+    new Date(nextQuestionSyncAt(Date.parse('2026-10-16T18:59:59Z'))).toISOString(),
+  ).toBe('2026-10-16T19:00:00.000Z');
+  expect(
+    new Date(nextQuestionSyncAt(Date.parse('2026-10-16T19:00:00Z'))).toISOString(),
+  ).toBe('2026-10-17T19:00:00.000Z');
+});

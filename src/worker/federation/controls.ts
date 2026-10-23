@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lte, sql } from 'drizzle-orm';
+import { and, eq, isNull, lte, sql } from 'drizzle-orm';
 import { API_PATHS } from '../../shared/api-paths.ts';
 import type { FederationControl } from '../../shared/federation-controls.ts';
 import { contentHash } from '../catalog/hash.ts';
@@ -17,11 +17,10 @@ import {
   federationRetiredIdentities,
   federationSessions,
   instanceRooms,
-  instances,
   organizationAccounts,
+  roomMembers,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
-import { matchmaker } from '../matchmaking/instance.ts';
 import { OrganizationError, validId } from '../organization/access.ts';
 import { signEvent, verifyEvent } from './events.ts';
 import { federationDatabase, requestPeer } from './transport.ts';
@@ -109,6 +108,7 @@ export async function receiveControlEvent(
     eq(federationControlInbox.peerOrigin, peerOrigin),
     eq(federationControlInbox.eventId, payload.eventId),
   );
+  let forwardedEventId: string | undefined;
   const receipt = await changeD1(db, async (writes) => {
     const [previous] = await db.select().from(federationControlInbox).where(key);
     if (previous) {
@@ -207,6 +207,11 @@ export async function receiveControlEvent(
       if (actor) {
         const retiredAt = new Date(payload.createdAt).toISOString();
         writes.push(
+          db.delete(roomMembers).where(eq(roomMembers.actorId, actor.actorId)),
+          db
+            .update(instanceRooms)
+            .set({ original: [] })
+            .where(eq(instanceRooms.sourceOwner, actor.actorId)),
           db
             .update(organizationAccounts)
             .set({ displayName: null, withdrawnAt: retiredAt, administrator: false })
@@ -222,10 +227,11 @@ export async function receiveControlEvent(
             ),
           sql`insert into quiz_game_result_privacy_jobs (match_id,due_at) select match_id,${retiredAt} from quiz_game_result_players where actor_id=${actor.actorId} on conflict(match_id) do update set due_at=min(due_at,excluded.due_at)`,
         );
+        forwardedEventId = crypto.randomUUID();
         await planControlEvent(
           db,
           writes,
-          { ...payload, eventId: crypto.randomUUID(), subjectId: actor.actorId },
+          { ...payload, eventId: forwardedEventId, subjectId: actor.actorId },
           peerOrigin,
         );
       }
@@ -245,6 +251,23 @@ export async function receiveControlEvent(
   });
   if ('conflict' in receipt)
     throw new OrganizationError('FEDERATION_EVENT_CONFLICT', 409);
+  if (forwardedEventId) {
+    if (!env.ACCOUNT_ERASURE) throw new OrganizationError('ERASURE_UNAVAILABLE', 503);
+    const response = await env.ACCOUNT_ERASURE.fetch(
+      'https://account-erasure.internal/maintenance',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: 'federationControls', eventId: forwardedEventId }),
+      },
+    );
+    await response.arrayBuffer();
+    // The durable outbox retains failures for the hourly retry.
+    if (!response.ok)
+      console.error(
+        JSON.stringify({ event: 'control_forward_pending', status: response.status }),
+      );
+  }
   return { eventId: payload.eventId, ...receipt };
 }
 export async function applyControlEvent(env: Env, peerOrigin: string, eventId: string) {
@@ -255,78 +278,11 @@ export async function applyControlEvent(env: Env, peerOrigin: string, eventId: s
     );
   const [job] = await db.select().from(federationControlInbox).where(key);
   if (!job || job.appliedAt !== null) return;
-  const [actor] = await db
-    .select({
-      actor: federationActors,
-      organizationId: organizationAccounts.organizationId,
-    })
-    .from(federationActors)
-    .innerJoin(
-      organizationAccounts,
-      eq(organizationAccounts.actorId, federationActors.actorId),
-    )
-    .where(
-      and(
-        eq(federationActors.peerOrigin, peerOrigin),
-        eq(federationActors.sourceActorId, job.payload.subjectId),
-      ),
+  await changeD1(db, async (writes) => {
+    writes.push(
+      db.update(federationControlInbox).set({ appliedAt: Date.now() }).where(key),
     );
-  if (actor) {
-    const maker = matchmaker(env);
-    await maker.logoutActor(actor.actor.actorId);
-    const [unreconciled] = await db
-      .select({ id: instances.id })
-      .from(instances)
-      .where(
-        and(
-          eq(instances.organizationId, actor.organizationId),
-          eq(instances.roomInventoryComplete, false),
-        ),
-      )
-      .limit(1);
-    if (unreconciled) return;
-    const rooms = await db
-      .select({ id: instanceRooms.roomId })
-      .from(instanceRooms)
-      .innerJoin(instances, eq(instances.id, instanceRooms.instanceId))
-      .where(
-        and(
-          eq(instances.organizationId, actor.organizationId),
-          job.roomCursor ? gt(instanceRooms.roomId, job.roomCursor) : undefined,
-        ),
-      )
-      .orderBy(instanceRooms.roomId)
-      .limit(5);
-    for (const room of rooms)
-      await env.GAME_ROOM.get(env.GAME_ROOM.idFromString(room.id)).anonymizeAccount(
-        actor.actor.actorId,
-        [],
-      );
-    await maker.anonymizeAccount(actor.actor.actorId, []);
-    await changeD1(db, async (writes) => {
-      writes.push(
-        db
-          .update(federationControlInbox)
-          .set({
-            roomCursor: rooms.length ? rooms[rooms.length - 1].id : job.roomCursor,
-            appliedAt: rooms.length < 5 ? Date.now() : null,
-          })
-          .where(
-            and(
-              key,
-              job.roomCursor
-                ? eq(federationControlInbox.roomCursor, job.roomCursor)
-                : isNull(federationControlInbox.roomCursor),
-            ),
-          ),
-      );
-    });
-  } else
-    await changeD1(db, async (writes) => {
-      writes.push(
-        db.update(federationControlInbox).set({ appliedAt: Date.now() }).where(key),
-      );
-    });
+  });
 }
 export async function deliverControlEvent(env: Env, peerOrigin: string, eventId: string) {
   const db = federationDatabase(env),

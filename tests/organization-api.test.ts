@@ -65,7 +65,7 @@ beforeEach(() => {
   mocks.excluded.mockResolvedValue([]);
   mocks.identity.mockResolvedValue({ subject: 'verified', displayName: '作問者' });
   mocks.resolve.mockResolvedValue({
-    organization: { id: 'org' },
+    organization: { id: 'org', name: '所属元' },
     account: { actorId: 'old-actor', administrator: false, displayName: '登録名' },
     instance: { id: instanceId, owner: 'urn:uuid:host', state: 'published' },
     permissions: [],
@@ -164,7 +164,7 @@ it.each([
   '準備中の対象運営者は通常の設定・参加・履歴を利用できる: %j',
   async ({ administrator, permissions }) => {
     mocks.resolve.mockResolvedValue({
-      organization: { id: 'org' },
+      organization: { id: 'org', name: '所属元' },
       account: { actorId: 'operator', administrator, displayName: '運営者' },
       instance: { id: instanceId, owner: 'private', state: 'preparing' },
       permissions,
@@ -193,6 +193,7 @@ it.each([
       },
       false,
       undefined,
+      '所属元',
     );
     expect((await request(`/api/matchmaking/config?instance=${instanceId}`)).status).toBe(
       200,
@@ -205,7 +206,7 @@ it.each([
 );
 it('対象権限のない一般ユーザーは準備中のAPIを利用できない', async () => {
   mocks.resolve.mockResolvedValue({
-    organization: { id: 'org' },
+    organization: { id: 'org', name: '所属元' },
     account: { actorId: 'member', administrator: false },
     instance: { id: instanceId, owner: 'private', state: 'preparing' },
     permissions: [],
@@ -256,6 +257,7 @@ it('参加名は登録名だけを使い、未登録でも既存試合への復�
     },
     false,
     undefined,
+    '所属元',
   );
   mocks.restriction.mockRejectedValue(
     new OrganizationError('PARTICIPATION_RESTRICTED', 409),
@@ -285,6 +287,7 @@ it('参加名は登録名だけを使い、未登録でも既存試合への復�
     },
     false,
     undefined,
+    '所属元',
   );
 });
 

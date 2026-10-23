@@ -1,6 +1,6 @@
-// A one-minute refresh plus bounded scheduler/transport jitter. Failed reads
+// Hourly refresh plus bounded scheduler/transport jitter. Failed reads
 // invalidate immediately; this is only the maximum lifetime of a successful read.
-export const FEDERATION_FRESH_MS = 90000;
+export const FEDERATION_FRESH_MS = 3600000 + 120000;
 export type FederationPeer = {
   origin: string;
   name: string;

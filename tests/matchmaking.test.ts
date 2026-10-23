@@ -28,7 +28,6 @@ vi.mock('../src/worker/results/lifecycle', async (original) => ({
   startMatch: vi.fn(),
   cancelMatch: vi.fn(),
 }));
-vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/organization/moderation', () => ({
   requireUnrestricted: vi.fn(),
 }));
@@ -42,7 +41,7 @@ vi.mock('../src/worker/organization/database', () => ({
     actors,
   organizationDatabase: () => ({ db: {}, close: async () => {} }),
   resolveInstance: async () => ({
-    organization: { id: mocks.instance.organizationId },
+    organization: { id: mocks.instance.organizationId, name: '所属元' },
     account: { actorId: 'user-1-actor', administrator: false, displayName: '参加者' },
     instance: {
       id: mocks.instance.id,
@@ -82,11 +81,6 @@ const rankedScope = { id: crypto.randomUUID(), owner };
 const generationOf = (actor: string) => `generation-${actor}`;
 const emptyQueue = () => ({
   actors: {},
-  foreign: {},
-  foreignIntent: {},
-  foreignDepartures: {},
-  foreignChecked: {},
-  withdrawals: {},
   loggingOut: {},
   admitting: {},
 });
@@ -300,7 +294,14 @@ it('参加中の新規申込みは拒否し、明示的な離脱後だけ新し�
       code: 'STALE_ROOM',
     });
     expect(
-      await room.cancelReservation('switch-a', true, undefined, first.token, true),
+      await room.cancelReservation(
+        'match',
+        'switch-a',
+        true,
+        undefined,
+        first.token,
+        true,
+      ),
     ).toBe(true);
     expect(
       (await state(room))?.players.filter((player) => player.forfeited),
@@ -322,7 +323,7 @@ it('M01: cancellation frees slots and invalidates the old cookie before a replac
     rankedScope,
     generationOf('a'),
   );
-  expect(await stub.cancelReservation('a')).toBe(true);
+  expect(await stub.cancelReservation('match', 'a')).toBe(true);
   expect((await stub.lobbyStatus())?.actors).toEqual([]);
   expect(
     (
@@ -368,7 +369,7 @@ it.each(['ranked', 'casual'] as const)(
       secondSocket = await socket(room, 'token-a');
     try {
       await runInDurableObject(room, async (instance, ctx) =>
-        instance.webSocketClose(ctx.getWebSockets()[0]),
+        instance.webSocketClose(ctx.getWebSockets()[0], 1000, 'test', true),
       );
       expect((await room.lobbyStatus())?.actors).toEqual(['a']);
       expect((await state(room))?.players[0].connected).toBe(true);
@@ -377,7 +378,7 @@ it.each(['ranked', 'casual'] as const)(
           .getWebSockets()
           .find((ws) => (ws.deserializeAttachment() as { live: boolean }).live);
         if (!live) throw new Error('live socket');
-        await instance.webSocketClose(live);
+        await instance.webSocketClose(live, 1000, 'test', true);
       });
       expect((await room.lobbyStatus())?.actors).toEqual([]);
       expect((await state(room))?.result).toBeNull();
@@ -439,7 +440,7 @@ it('切断済み待機者の古い台帳は、新参加者2人の同じ待機先
   const room = runtime.GAME_ROOM.getByName(`match:${old.room}`);
   const oldSocket = await socket(room, old.token);
   await runInDurableObject(room, async (instance, ctx) =>
-    instance.webSocketClose(ctx.getWebSockets()[0]),
+    instance.webSocketClose(ctx.getWebSockets()[0], 1000, 'test', true),
   );
   const firstAdmission = await queue.enter('a', 'A', false, rankedScope),
     secondAdmission = await queue.enter('b', 'B', false, rankedScope);
@@ -497,7 +498,7 @@ it('取消応答が失われても同じ操作は復活せず、開始済みな�
           (ws) => (ws.deserializeAttachment() as { actorId: string }).actorId === 'a',
         );
       if (!ws) throw new Error('socket');
-      await instance.webSocketClose(ws);
+      await instance.webSocketClose(ws, 1000, 'test', true);
     });
     expect((await state(room))?.reconnect?.deadline).toBeGreaterThan(Date.now());
     expect((await state(room))?.result).toBeNull();
@@ -661,7 +662,7 @@ it('M01: unconnected reservation and hard waiting lifetime survive eviction and 
     await ctx.storage.put('room', room);
   });
   await runDurableObjectAlarm(stub);
-  expect((await stub.lobbyStatus())?.closed).toBe(true);
+  expect(await stub.lobbyStatus()).toBeNull();
 });
 
 it('M01/M03: matching is idempotent on resume, rejects duplicate join, and isolates definition versions', async () => {
@@ -767,11 +768,14 @@ it('M01: lost reservation response resumes the persisted room/token after evicti
           name: 'A',
           guest: false,
           key: JSON.stringify([rankedScope.id, 'ranked', definition.competition]),
-          pending: definition,
+          pending: true,
           scope: rankedScope,
         },
       },
     });
+  });
+  await runInDurableObject(queue, async (_instance, ctx) => {
+    await ctx.storage.put('definition:pending-generation', definition);
   });
   await evictDurableObject(queue);
   const result = await queue.enter('a', '', true, rankedScope);
@@ -813,7 +817,7 @@ it('M01: cancellation racing the final connection has a single outcome', async (
           'X-Game-Instance': rankedScope.id,
         },
       }),
-      stub.cancelReservation('a'),
+      stub.cancelReservation('match', 'a'),
     ]);
     last = response.webSocket ?? undefined;
     last?.accept();
@@ -1018,7 +1022,10 @@ it.each(['cancel-requester', 'cancel-peer', 'expire', 'another-start'])(
       await vi.waitFor(() => expect(mocks.load).toHaveBeenCalledOnce());
       if (scenario.startsWith('cancel'))
         expect(
-          await stub.cancelReservation(scenario === 'cancel-requester' ? 'b' : 'a'),
+          await stub.cancelReservation(
+            'match',
+            scenario === 'cancel-requester' ? 'b' : 'a',
+          ),
         ).toBe(true);
       if (scenario === 'expire')
         await runInDurableObject(stub, async (_instance, ctx) => {
@@ -1182,39 +1189,6 @@ it('組織内A/Bの同時参加は一つ、他のactorの待機列はインス�
   expect(await queue.enter('first', '', true, firstCompetition)).toEqual(first);
 });
 
-it('取消済みの世代は、部屋が未作成でも遅延した予約を再成立させない', async () => {
-  const room = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
-  const scope = { id: crypto.randomUUID(), owner };
-  expect(await room.cancelReservation('a', false, 'old-generation')).toBe(true);
-  await evictDurableObject(room);
-  expect(
-    await room.reserve(
-      matchIdOf(room),
-      'a',
-      'A',
-      'old-token',
-      definition,
-      scope,
-      'old-generation',
-    ),
-  ).toEqual({ ok: false, code: 'STALE_RESERVATION' });
-  expect(
-    (
-      await room.reserve(
-        matchIdOf(room),
-        'a',
-        'A',
-        'new-token',
-        definition,
-        scope,
-        'new-generation',
-      )
-    ).ok,
-  ).toBe(true);
-  expect(await room.cancelReservation('a', false, 'old-generation')).toBe(false);
-  expect((await room.lobbyStatus())?.actors).toEqual(['a']);
-});
-
 it('部屋トークンは別インスタンスIDのWebSocketに使えない', async () => {
   const room = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
   const scope = { id: crypto.randomUUID(), owner };
@@ -1345,6 +1319,59 @@ it('部屋照合が失敗しても別インスタンスへの参加枠を解放�
   expect(await queue.enter('a', '', true, firstCompetition)).toEqual(first);
 });
 
+it('完了済みの旧token失効を再送しても復帰後の新tokenを失効させない', async () => {
+  definition.playersPerMatch = 2;
+  const id = crypto.randomUUID();
+  const room = runtime.GAME_ROOM.getByName(`match:${id}`);
+  const connections: WebSocket[] = [];
+  try {
+    for (const actor of ['a', 'b']) {
+      expect(
+        await room.reserve(
+          id,
+          actor,
+          actor,
+          `old-${actor}`,
+          definition,
+          rankedScope,
+          generationOf(actor),
+        ),
+      ).toMatchObject({ ok: true });
+      connections.push(await socket(room, `old-${actor}`));
+    }
+    expect((await state(room))?.phase).toBe('REVEALING');
+    expect(
+      await room.cancelReservation('match', 'a', true, generationOf('a'), 'old-a'),
+    ).toBe(true);
+    expect(
+      await room.reserve(
+        id,
+        'a',
+        'A',
+        'new-a',
+        definition,
+        rankedScope,
+        generationOf('a'),
+      ),
+    ).toMatchObject({ ok: true });
+    await evictDurableObject(room);
+    expect(
+      await room.cancelReservation('match', 'a', true, generationOf('a'), 'old-a'),
+    ).toBe(true);
+    connections.push(await socket(room, 'new-a'));
+    const response = await room.fetch('https://game.test', {
+      headers: {
+        Upgrade: 'websocket',
+        'X-Game-Session': 'old-a',
+        'X-Game-Instance': rankedScope.id,
+      },
+    });
+    expect(response.status).toBe(401);
+  } finally {
+    for (const connection of connections) connection.close();
+  }
+});
+
 it('レビューR01: logout応答消失中の復帰でも進行中の組織参加枠を保持する', async () => {
   definition.playersPerMatch = 2;
   const queue = runtime.MATCHMAKER.getByName('matchmaker');
@@ -1385,7 +1412,7 @@ it('レビューR01: logout応答消失中の復帰でも進行中の組織参�
           ...args: Parameters<typeof actual.cancelReservation>
         ) => {
           const result = await actual.cancelReservation(...args);
-          if (args[1] && !reached) {
+          if (args[2] && !reached) {
             reached = true;
             await barrier;
           }
@@ -1441,7 +1468,7 @@ it.each(['room', 'organization'])(
     expect(
       kind === 'room'
         ? await queue.cancel('a', first.room, true, rankedScope.id)
-        : await queue.logoutActor('a'),
+        : await queue.logoutActor('a', [first.room]),
     ).toEqual({ ok: true });
     expect(
       (
@@ -1610,6 +1637,75 @@ it('DEV01: failed logout remains blocked across eviction and a retry revokes the
   expect((await queue.enter('a', 'A', false, rankedScope)).ok).toBe(true);
 });
 
+it.each(['match', 'room'])(
+  'Cookieに残った%sの失効拒否ではログアウトを完了せず再試行する',
+  async (kind) => {
+    const queue = runtime.MATCHMAKER.getByName('matchmaker');
+    const id = crypto.randomUUID();
+    const cookieRoom = kind === 'room' ? `room:${id}` : id;
+    await runInDurableObject(queue, async (instance) => {
+      const target = instance as unknown as {
+        room(
+          id: string,
+        ): DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>;
+      };
+      const original = target.room.bind(target);
+      const cancelReservation = vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValue(true);
+      const spy = vi
+        .spyOn(target, 'room')
+        .mockImplementation((roomId) =>
+          roomId === id
+            ? ({ cancelReservation } as unknown as ReturnType<typeof original>)
+            : original(roomId),
+        );
+      try {
+        await expect(instance.logoutActor('a', [cookieRoom])).rejects.toThrow(
+          'REVOCATION_FAILED',
+        );
+        expect(await instance.enter('a', 'A', false, rankedScope)).toMatchObject({
+          ok: false,
+          code: 'LOGOUT_PENDING',
+        });
+        expect(await instance.logoutActor('a', [cookieRoom])).toEqual({ ok: true });
+        expect(cancelReservation).toHaveBeenCalledTimes(2);
+        expect(cancelReservation).toHaveBeenLastCalledWith(kind, 'a', true);
+        expect((await instance.enter('a', 'A', false, rankedScope)).ok).toBe(true);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  },
+);
+
+it('予約記録がない試合の失効拒否も成功扱いにしない', async () => {
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
+  await runInDurableObject(queue, async (instance) => {
+    const target = instance as unknown as {
+      room(id: string): DurableObjectStub<import('../src/worker/game/GameRoom').GameRoom>;
+    };
+    const cancelReservation = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    const spy = vi
+      .spyOn(target, 'room')
+      .mockReturnValue({ cancelReservation } as unknown as ReturnType<
+        typeof target.room
+      >);
+    try {
+      await expect(instance.cancel('a', 'orphan-match', true)).rejects.toThrow(
+        'REVOCATION_FAILED',
+      );
+      expect(await instance.cancel('a', 'orphan-match', true)).toEqual({ ok: true });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 it('DEV02: maximum-size question definition persists without embedding it in the queue', async () => {
   const large = Array.from({ length: 100 }, (_, i) => ({
     ...definition.questions[0],
@@ -1686,12 +1782,115 @@ it('D1への待機登録に失敗したときは試合DOに部屋を作らない
         rankedScope,
         'generation',
       ),
-    ).resolves.toEqual({ ok: false, code: 'DB_UNAVAILABLE' });
+    ).resolves.toEqual({ ok: false, code: 'GAME_DATABASE_UNAVAILABLE' });
     expect((await context.storage.list()).size).toBe(0);
   });
 });
 
 beforeEach(resetMatchmaker);
+
+it('待機登録の応答不明でも定義と操作IDを保持し、再起動後に同じ試合を予約する', async () => {
+  const queue = runtime.MATCHMAKER.getByName('matchmaker');
+  const operationId = crypto.randomUUID();
+  vi.mocked(registerMatch).mockRejectedValueOnce(new Error('D1_BUSY'));
+  expect(
+    await queue.enter('retry', '再試行', false, rankedScope, false, operationId),
+  ).toEqual({ ok: false, code: 'GAME_DATABASE_UNAVAILABLE' });
+  const pending = await runInDurableObject(queue, async (_, context) => {
+    const saved = await context.storage.get<{
+      actors: Record<string, { room: string; generation: string; pending?: boolean }>;
+    }>('queue');
+    const entry = saved?.actors.retry;
+    if (!entry) throw new Error('ENTRY_REQUIRED');
+    expect(entry.pending).toBe(true);
+    expect(await context.storage.get(`definition:${entry.generation}`)).toEqual(
+      definition,
+    );
+    return entry;
+  });
+  await evictDurableObject(queue);
+  expect(
+    await queue.enter('retry', '再試行', false, rankedScope, false, operationId),
+  ).toMatchObject({ ok: true, room: pending.room });
+  await runInDurableObject(queue, async (_, context) => {
+    expect(await context.storage.get(`definition:${pending.generation}`)).toBeUndefined();
+  });
+});
+
+it.each([false, true])(
+  '予約より先の取消・失効を再起動後も拒否する revoke=%s',
+  async (revoke) => {
+    const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+    expect(
+      await stub.cancelReservation(
+        'match',
+        'late',
+        revoke,
+        'late-generation',
+        'late-token',
+      ),
+    ).toBe(true);
+    await evictDurableObject(stub);
+    expect(
+      await stub.reserve(
+        matchIdOf(stub),
+        'late',
+        'Late',
+        'late-token',
+        definition,
+        rankedScope,
+        'late-generation',
+      ),
+    ).toEqual({ ok: false, code: 'STALE_RESERVATION' });
+  },
+);
+
+it('不正な診断用接続IDは400で拒否し、既存プレイヤーの接続を維持する', async () => {
+  definition.playersPerMatch = 2;
+  const stub = runtime.GAME_ROOM.getByName(`match:${crypto.randomUUID()}`);
+  await stub.reserve(
+    matchIdOf(stub),
+    'a',
+    'A',
+    'token-a',
+    definition,
+    rankedScope,
+    'generation-a',
+  );
+  await stub.reserve(
+    matchIdOf(stub),
+    'b',
+    'B',
+    'token-b',
+    definition,
+    rankedScope,
+    'generation-b',
+  );
+  const first = await socket(stub, 'token-a');
+  const second = await socket(stub, 'token-b');
+  try {
+    const response = await stub.fetch('https://game.test?connection=invalid', {
+      headers: {
+        Upgrade: 'websocket',
+        'X-Game-Session': 'token-b',
+        'X-Game-Instance': rankedScope.id,
+      },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ code: 'INVALID_CONNECTION_ID' });
+    const synced = new Promise((resolve, reject) => {
+      first.addEventListener('message', resolve, { once: true });
+      first.addEventListener('close', () => reject(new Error('DISCONNECTED')), {
+        once: true,
+      });
+    });
+    first.send('sync');
+    await synced;
+  } finally {
+    first.close();
+    second.close();
+  }
+});
 
 it('参加bindingは本人ごとに1分20回を許可し、21回目を拒否する', async () => {
   if (!runtime.ADMISSION_LIMITER) throw new Error('missing limiter');

@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { changeD1, type Database } from '../worker/db/d1.ts';
 import {
   competitions,
@@ -41,14 +41,21 @@ import {
   questionVersions,
   resultOutbox,
   resultPlayers,
-  roomDirectory,
+  roomMembers,
   rulesetVersions,
   sanctionAppeals,
   userReports,
 } from '../worker/db/schema.ts';
-import type { Env } from '../worker/env.ts';
 import { planControlEvent } from '../worker/federation/controls.ts';
-import { erasureBatch } from './limits.ts';
+
+async function requireNoRunningMatches(db: Database, owner: string) {
+  const [active] = await db
+    .select({ id: matches.matchId })
+    .from(matches)
+    .where(and(eq(matches.owner, owner), eq(matches.status, 'running')))
+    .limit(1);
+  if (active) throw new Error('RESULT_OR_MATCH_PENDING');
+}
 
 async function eraseStoredInstance(db: Database, operationId: string) {
   return changeD1(db, async (writes) => {
@@ -64,10 +71,10 @@ async function eraseStoredInstance(db: Database, operationId: string) {
         (instance.organizationId !== job.organizationId ||
           instance.owner !== job.owner ||
           instance.name !== job.name ||
-          instance.state !== 'archived' ||
-          !instance.roomInventoryComplete))
+          instance.state !== 'archived'))
     )
       throw new Error('INSTANCE_DELETION_CONFLICT');
+    await requireNoRunningMatches(db, job.owner);
     writes.push(
       db
         .delete(sanctionAppeals)
@@ -98,7 +105,6 @@ async function eraseStoredInstance(db: Database, operationId: string) {
       questionCategories,
       questionTags,
       questionSettings,
-      roomDirectory,
       federationPolicies,
       federationMetadata,
     ])
@@ -123,13 +129,17 @@ async function eraseStoredInstance(db: Database, operationId: string) {
       writes.push(db.delete(table).where(eq(table.owner, job.owner)));
     writes.push(
       db.delete(instanceGrants).where(eq(instanceGrants.instanceId, job.instanceId)),
+      db
+        .delete(roomMembers)
+        .where(
+          sql`${roomMembers.roomId} in (select ${instanceRooms.roomId} from ${instanceRooms} where ${instanceRooms.instanceId}=${job.instanceId})`,
+        ),
       db.delete(instanceRooms).where(eq(instanceRooms.instanceId, job.instanceId)),
       db.delete(instances).where(eq(instances.id, job.instanceId)),
       db
         .update(jobs)
         .set({
           deletedAt: job.deletedAt ?? new Date().toISOString(),
-          inventoryPending: false,
           lastAttemptAt: new Date().toISOString(),
         })
         .where(eq(jobs.id, operationId)),
@@ -138,110 +148,38 @@ async function eraseStoredInstance(db: Database, operationId: string) {
   });
 }
 
-export async function eraseInstance(
-  db: Database,
-  rooms: Env['GAME_ROOM'],
-  operationId: string,
-) {
+export async function eraseInstance(db: Database, operationId: string) {
   const [job] = await db.select().from(jobs).where(eq(jobs.id, operationId));
   if (!job) return false;
-  if (job.deletedAt && !job.inventoryPending) return true;
-  await changeD1(db, async (writes) => {
-    writes.push(
-      db
-        .update(jobs)
-        .set({ lastAttemptAt: new Date().toISOString() })
-        .where(eq(jobs.id, operationId)),
-    );
-  });
-  if (!job.acceptedAt && !job.deletedAt) {
-    const checking = await db
+  if (job.deletedAt) {
+    const [remaining] = await db
       .select()
-      .from(instanceRooms)
-      .where(
-        and(
-          eq(instanceRooms.instanceId, job.instanceId),
-          job.checkCursor ? gt(instanceRooms.roomId, job.checkCursor) : undefined,
-        ),
-      )
-      .orderBy(instanceRooms.roomId)
-      .limit(erasureBatch.rooms);
-    for (const row of checking) {
-      const status = await rooms
-        .get(rooms.idFromString(row.roomId))
-        .deletionStatus(job.instanceId);
-      if (!status.safe) {
-        await changeD1(db, async (writes) => {
-          writes.push(
-            db.delete(jobs).where(and(eq(jobs.id, job.id), isNull(jobs.acceptedAt))),
-          );
-        });
-        throw new Error('RESULT_OR_MATCH_PENDING');
-      }
-    }
+      .from(instances)
+      .where(eq(instances.id, job.instanceId));
+    if (!remaining) return true;
+  }
+  if (!job.acceptedAt) {
     await changeD1(db, async (writes) => {
-      const [current] = await db.select().from(jobs).where(eq(jobs.id, operationId));
-      if (!current || current.checkCursor !== job.checkCursor) return;
-      if (!current.acceptedAt && checking.length < erasureBatch.rooms)
-        await planControlEvent(db, writes, {
-          version: 1,
-          eventId: operationId,
-          type: 'instance-deleted',
-          subjectId: job.instanceId,
-          createdAt: Date.now(),
-        });
+      await requireNoRunningMatches(db, job.owner);
+      await planControlEvent(db, writes, {
+        version: 1,
+        eventId: operationId,
+        type: 'instance-deleted',
+        subjectId: job.instanceId,
+        createdAt: Date.now(),
+      });
       writes.push(
         db
           .update(jobs)
           .set({
-            ...(checking.length
-              ? { checkCursor: checking[checking.length - 1].roomId }
-              : {}),
-            ...(checking.length < erasureBatch.rooms
-              ? { acceptedAt: new Date().toISOString() }
-              : {}),
+            acceptedAt: new Date().toISOString(),
+            lastAttemptAt: new Date().toISOString(),
           })
-          .where(eq(jobs.id, job.id)),
+          .where(eq(jobs.id, operationId)),
       );
     });
     return false;
   }
-  const registered = await db
-    .select()
-    .from(instanceRooms)
-    .where(
-      and(
-        eq(instanceRooms.instanceId, job.instanceId),
-        job.roomCursor ? gt(instanceRooms.roomId, job.roomCursor) : undefined,
-      ),
-    )
-    .orderBy(instanceRooms.roomId)
-    .limit(erasureBatch.rooms);
-  for (const row of registered) {
-    const room = rooms.get(rooms.idFromString(row.roomId));
-    if (job.deletedAt)
-      await room.eraseRestoredInstance({
-        id: job.instanceId,
-        owner: job.owner,
-        deletedAt: job.deletedAt,
-      });
-    else {
-      const result = await room.eraseInstance(job.instanceId);
-      if (!result.ok) throw new Error(result.code);
-    }
-  }
-  if (registered.length)
-    await changeD1(db, async (writes) => {
-      const [current] = await db.select().from(jobs).where(eq(jobs.id, operationId));
-      if (current && current.roomCursor === job.roomCursor && registered.length)
-        writes.push(
-          db
-            .update(jobs)
-            .set({ roomCursor: registered[registered.length - 1].roomId })
-            .where(eq(jobs.id, operationId)),
-        );
-    });
-  if (registered.length === erasureBatch.rooms) return false;
   const [auxiliary] = await db.all<{ pending: number }>(sql`select
     exists(select 1 from ${federationReservations} where ${federationReservations.instanceId}=${job.instanceId})
     or exists(select 1 from ${federationMetadataJobs} where ${federationMetadataJobs.instanceId}=${job.instanceId})
@@ -257,12 +195,12 @@ export async function eraseInstance(
       if (
         !current?.acceptedAt ||
         instance?.state !== 'archived' ||
-        !instance.roomInventoryComplete ||
         instance.organizationId !== job.organizationId ||
         instance.owner !== job.owner ||
         instance.name !== job.name
       )
         throw new Error('INSTANCE_DELETION_CONFLICT');
+      await requireNoRunningMatches(db, job.owner);
       writes.push(
         db
           .delete(federationQuestionSources)

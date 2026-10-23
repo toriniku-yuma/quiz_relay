@@ -10,10 +10,24 @@
   "env": {
     "a": {
       "name": "quiz-relay-federation-a-erasure-test",
+      "observability": {
+        "enabled": true,
+        "redact_query_string": true,
+        "logs": {
+          "enabled": true,
+          "persist": true,
+          "head_sampling_rate": 1,
+          "invocation_logs": false
+        },
+        "traces": {
+          "enabled": false
+        }
+      },
       "vars": {
         "GAME_CONFIG_PROFILE": "default",
         "FEDERATION_ORIGIN": "https://quiz-relay-federation-a-test.quiz-relay.workers.dev",
-        "SIGNING_KID": "federation-test-a-v1"
+        "SIGNING_KID": "federation-test-a-v1",
+        "ROOM_LIFECYCLE_LOGS": "true"
       },
       "d1_databases": [
         {
@@ -36,14 +50,44 @@
             "script_name": "quiz-relay-federation-a-test"
           }
         ]
-      }
+      },
+      "services": [
+        {
+          "binding": "ACCOUNT_ERASURE",
+          "service": "quiz-relay-federation-a-erasure-test"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "FEDERATION_LIMITER",
+          "namespace_id": "716329421",
+          "simple": {
+            "limit": 600,
+            "period": 60
+          }
+        }
+      ]
     },
     "b": {
       "name": "quiz-relay-federation-b-erasure-test",
+      "observability": {
+        "enabled": true,
+        "redact_query_string": true,
+        "logs": {
+          "enabled": true,
+          "persist": true,
+          "head_sampling_rate": 1,
+          "invocation_logs": false
+        },
+        "traces": {
+          "enabled": false
+        }
+      },
       "vars": {
         "GAME_CONFIG_PROFILE": "default",
         "FEDERATION_ORIGIN": "https://quiz-relay-federation-b-test.quiz-relay.workers.dev",
-        "SIGNING_KID": "federation-test-b-v1"
+        "SIGNING_KID": "federation-test-b-v1",
+        "ROOM_LIFECYCLE_LOGS": "true"
       },
       "d1_databases": [
         {
@@ -66,7 +110,23 @@
             "script_name": "quiz-relay-federation-b-test"
           }
         ]
-      }
+      },
+      "services": [
+        {
+          "binding": "ACCOUNT_ERASURE",
+          "service": "quiz-relay-federation-b-erasure-test"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "FEDERATION_LIMITER",
+          "namespace_id": "716329422",
+          "simple": {
+            "limit": 600,
+            "period": 60
+          }
+        }
+      ]
     }
   }
 }

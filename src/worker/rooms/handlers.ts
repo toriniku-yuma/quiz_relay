@@ -18,13 +18,13 @@ import {
   personalSets,
   previewInstance,
   publicInstances,
-  roomIds,
   roomOptions,
   roomSharedSources,
   saveCasualSettings,
 } from './database.ts';
 import { history, report } from './reports.ts';
 import { roomResult } from './rpc.ts';
+import { roomViews } from './store.ts';
 
 export const optionalAuth: MiddlewareHandler<AuthEnv> = (httpContext, next) =>
   httpContext.req.header('Authorization') ? authenticate(httpContext, next) : next();
@@ -199,6 +199,7 @@ export const casual: Handler<AuthEnv> = async (httpContext) => {
     identity.scope,
     identity.actor.guest,
     input.operationId === undefined ? undefined : validId(input.operationId),
+    identity.actor.serverName,
   );
   if (!result.ok)
     return httpContext.json(
@@ -238,8 +239,31 @@ export const results: Handler<AuthEnv> = async (httpContext) => {
   } catch {
     throw new OrganizationError('INVALID_SETUP', 400);
   }
+  const reservation = httpContext.req.query('reservation');
+  if (reservation && !getCookie(httpContext, `qr_fed_${reservation}`))
+    throw new OrganizationError('PARTICIPATION_SESSION_REQUIRED', 401);
   return httpContext.json(
-    await history(httpContext.env, await context(httpContext, 'room', true), query),
+    await history(
+      httpContext.env,
+      await participantContext(
+        httpContext.env,
+        httpContext.req.query('instance') ?? '',
+        'room',
+        httpContext.req.query('reservation') ? undefined : httpContext.get('subject'),
+        getCookie(httpContext, 'qr_guest'),
+        true,
+        false,
+        Object.entries(getCookie(httpContext))
+          .filter(
+            ([key]) =>
+              key.startsWith('qr_fed_') &&
+              (!httpContext.req.query('reservation') ||
+                key === `qr_fed_${httpContext.req.query('reservation')}`),
+          )
+          .map(([key, secret]) => ({ id: key.slice(7), secret })),
+      ),
+      query,
+    ),
   );
 };
 export const reports: Handler<AuthEnv> = async (httpContext) =>
@@ -253,11 +277,13 @@ export const reports: Handler<AuthEnv> = async (httpContext) =>
 export const info: Handler<AuthEnv> = async (httpContext) => {
   const input = await body(httpContext),
     room = validId(input.room);
-  const view = roomResult(
-    await httpContext.env.GAME_ROOM.getByName(userRoomName(room)).userRoomInfo(
-      typeof input.invite === 'string' ? input.invite : '',
-    ),
+  const [view] = await roomViews(
+    httpContext.env,
+    undefined,
+    room,
+    typeof input.invite === 'string' ? input.invite : '',
   );
+  if (!view) throw new OrganizationError('ROOM_NOT_FOUND', 404);
   const instance = await previewInstance(
     httpContext.env,
     view.instanceId,
@@ -280,21 +306,7 @@ export const list: Handler<AuthEnv> = async (httpContext) => {
     : await previewInstance(httpContext.env, httpContext.req.query('instance') ?? '');
   if (!httpContext.get('subject') && !instance.casualConfig.roomGuests)
     throw new OrganizationError('GUEST_NOT_ALLOWED', 403);
-  const rows = await roomIds(httpContext.env, instance.id);
-  const results = await Promise.allSettled(
-    rows.map((room) =>
-      httpContext.env.GAME_ROOM.getByName(userRoomName(room.id)).userRoomInfo(),
-    ),
-  );
-  return httpContext.json({
-    rooms: results.flatMap((result) =>
-      result.status === 'fulfilled' &&
-      'settings' in result.value &&
-      result.value.settings.public
-        ? [result.value]
-        : [],
-    ),
-  });
+  return httpContext.json({ rooms: await roomViews(httpContext.env, instance.id) });
 };
 export const options: Handler<AuthEnv> = async (httpContext) => {
   const identity = await context(httpContext, 'room', true);

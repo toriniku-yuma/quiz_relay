@@ -27,6 +27,24 @@ export const resultInbox: Handler<AuthEnv> = async (context) => {
       ? receiveControlEvent
       : receiveResultEvent;
   const receipt = await receive(context.env, delivery.issuer, delivery.body.event);
+  if (receive === receiveControlEvent && !receipt.applied) {
+    if (!context.env.ACCOUNT_ERASURE)
+      throw new OrganizationError('ERASURE_UNAVAILABLE', 503);
+    const response = await context.env.ACCOUNT_ERASURE.fetch(
+      'https://account-erasure.internal/maintenance',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task: 'federationControlApply',
+          peerOrigin: delivery.issuer,
+          eventId: receipt.eventId,
+        }),
+      },
+    );
+    receipt.applied = response.ok;
+    await response.arrayBuffer();
+  }
   return context.json(
     {
       message: await signedDelivery(

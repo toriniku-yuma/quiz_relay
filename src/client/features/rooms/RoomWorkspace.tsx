@@ -9,6 +9,7 @@ import Button from '../../components/Button';
 import DataTable from '../../components/DataTable';
 import Modal from '../../components/Modal';
 import Panel from '../../components/Panel';
+import PlayerName from '../../components/PlayerName';
 import TextField from '../../components/TextField';
 import LoginForm from '../auth/LoginForm';
 import ParticipationConflict from '../matchmaking/ParticipationConflict';
@@ -268,12 +269,25 @@ export default function RoomWorkspace() {
             <p>インスタンスを選んでください。</p>
           ) : (
             <Panel title="公開部屋一覧">
-              <DataTable label="公開部屋" columns={['部屋名', '人数', '状態', '参加']}>
+              <DataTable
+                label="公開部屋"
+                columns={['部屋名', '部屋主', '人数', '状態', '参加']}
+              >
                 {rooms.map((room) => (
                   <tr key={room.id}>
                     <td>
                       {room.settings.name}
                       {room.password ? '（パスワードあり）' : ''}
+                    </td>
+                    <td>
+                      {room.hostName && (
+                        <PlayerName
+                          player={{
+                            name: room.hostName,
+                            serverName: room.hostServerName,
+                          }}
+                        />
+                      )}
                     </td>
                     <td>
                       {room.memberCount} /{' '}

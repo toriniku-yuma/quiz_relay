@@ -6,6 +6,7 @@ import { matchRoomName } from '../game/room-names.ts';
 import { OrganizationError } from '../organization/access.ts';
 import { organizationDatabase, organizationIdentity } from '../organization/database.ts';
 import { requireUnrestricted } from '../organization/moderation.ts';
+import { actorRooms } from './actor-rooms.ts';
 import { matchmaker } from './instance.ts';
 
 const roomId = (value: unknown): value is string =>
@@ -69,6 +70,7 @@ export const enterMatch: Handler<AuthEnv> = async (context) => {
     { id: context.get('instanceId'), owner: context.get('instanceOwner') },
     false,
     typeof value.operationId === 'string' ? value.operationId : undefined,
+    context.get('organizationName'),
   );
   if (!result.ok)
     return context.json(
@@ -172,7 +174,10 @@ export const logoutActor: Handler<AuthEnv> = async (context) => {
     await close();
   }
   if (identity)
-    await matchmaker(context.env).logoutActor(identity.account.actorId, rooms);
+    await matchmaker(context.env).logoutActor(identity.account.actorId, [
+      ...rooms,
+      ...(await actorRooms(context.env, identity.account.actorId)),
+    ]);
   for (const room of rooms)
     deleteCookie(context, `qr_match_${room}`, {
       path: '/api/matchmaking',

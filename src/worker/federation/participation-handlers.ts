@@ -33,10 +33,9 @@ import {
   validateHomeParticipation,
 } from './participation.ts';
 import {
-  hostParticipationStatus,
-  logoutHostParticipation,
-  releaseHostParticipation,
-} from './slots.ts';
+  authorizeSessionParticipation,
+  joinForeignLogin,
+} from './session-participation.ts';
 import { verifyParticipationTicket } from './tickets.ts';
 import { federationDatabase, receiveDelivery, signedDelivery } from './transport.ts';
 
@@ -44,7 +43,7 @@ export const cookieOptions = {
   httpOnly: true,
   secure: true,
   sameSite: 'Strict' as const,
-  path: '/api/v1/participation',
+  path: '/api',
 };
 export const reservationId = (context: Parameters<Handler<AuthEnv>>[0]) =>
   validId(context.req.query('reservation'));
@@ -211,44 +210,6 @@ export const participationValidation: Handler<AuthEnv> = async (context) => {
     ),
   });
 };
-export const participationRelease: Handler<AuthEnv> = async (context) => {
-  const delivery = await receiveDelivery(
-      context.req.raw,
-      context.env,
-      'reservation.request',
-      16384,
-    ),
-    body = await releaseHostParticipation(context.env, delivery.issuer, delivery.body);
-  return context.json({
-    message: await signedDelivery(
-      context.env,
-      delivery.issuer,
-      API_PATHS.participationRelease,
-      'reservation.response',
-      body,
-      { replyTo: delivery.nonce },
-    ),
-  });
-};
-export const participationStatus: Handler<AuthEnv> = async (context) => {
-  const delivery = await receiveDelivery(
-      context.req.raw,
-      context.env,
-      'reservation.request',
-      16384,
-    ),
-    body = await hostParticipationStatus(context.env, delivery.issuer, delivery.body);
-  return context.json({
-    message: await signedDelivery(
-      context.env,
-      delivery.issuer,
-      API_PATHS.participationStatus,
-      'reservation.response',
-      body,
-      { replyTo: delivery.nonce },
-    ),
-  });
-};
 export const participationExchange: Handler<AuthEnv> = async (context) => {
   const input = await context.req.json().catch(() => null);
   const loginSecret = getCookie(context, 'qr_foreign_login');
@@ -262,29 +223,10 @@ export const participationExchange: Handler<AuthEnv> = async (context) => {
     )
       throw new OrganizationError('PARTICIPATION_TICKET_BINDING', 401);
   }
-  const result = await exchangeParticipation(context.env, input);
+  const result = await exchangeParticipation(context.env, input, loginSecret);
   setSession(context, result.row.id, result.secret, result.row.sessionExpiresAt);
   context.header('Cache-Control', 'no-store');
   return context.json({ reservationId: result.row.id });
-};
-export const participationLogout: Handler<AuthEnv> = async (context) => {
-  const delivery = await receiveDelivery(
-      context.req.raw,
-      context.env,
-      'reservation.request',
-      16384,
-    ),
-    body = await logoutHostParticipation(context.env, delivery.issuer, delivery.body);
-  return context.json({
-    message: await signedDelivery(
-      context.env,
-      delivery.issuer,
-      API_PATHS.participationLogout,
-      'reservation.response',
-      body,
-      { replyTo: delivery.nonce },
-    ),
-  });
 };
 export const participationView: Handler<AuthEnv> = async (context) => {
   const identity = await participationSession(
@@ -411,4 +353,49 @@ export const participationSocket: Handler<AuthEnv> = async (context) => {
   return context.env.GAME_ROOM.getByName(matchRoomName(game.room)).fetch(
     new Request(context.req.raw, { headers }),
   );
+};
+
+export const foreignLoginJoin: Handler<AuthEnv> = async (context) => {
+  const result = await joinForeignLogin(
+    context.env,
+    getCookie(context, 'qr_foreign_login') ?? '',
+    await context.req.json().catch(() => null),
+  );
+  setSession(context, result.row.id, result.secret, result.row.sessionExpiresAt);
+  context.header('Cache-Control', 'no-store');
+  return context.json(
+    publicSession(await participationSession(context.env, result.secret, result.row.id)),
+  );
+};
+export const participationAuthorize: Handler<AuthEnv> = async (context) => {
+  const delivery = await receiveDelivery(
+    context.req.raw,
+    context.env,
+    'reservation.request',
+    16384,
+  );
+  let body:
+    | Awaited<ReturnType<typeof authorizeSessionParticipation>>
+    | { code: string; status: 401 | 403 | 409 };
+  try {
+    body = await authorizeSessionParticipation(
+      context.env,
+      delivery.issuer,
+      delivery.body,
+    );
+  } catch (error) {
+    if (!(error instanceof OrganizationError) || ![401, 403, 409].includes(error.status))
+      throw error;
+    body = { code: error.code, status: error.status as 401 | 403 | 409 };
+  }
+  return context.json({
+    message: await signedDelivery(
+      context.env,
+      delivery.issuer,
+      API_PATHS.participationAuthorize,
+      'reservation.response',
+      body,
+      { replyTo: delivery.nonce },
+    ),
+  });
 };

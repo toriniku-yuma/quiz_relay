@@ -7,7 +7,6 @@ import {
   participationOrigin,
 } from '../../../shared/participation';
 import { PlayRequestError, playMessages } from '../rooms/api';
-import { beginForeignAuthorization } from './redirect';
 
 const storageKey = 'quiz-relay-foreign-reservation';
 type Recovery = {
@@ -44,7 +43,11 @@ function saveRecovery(value: Recovery | null) {
   }
 }
 const messages: Record<string, string> = {
-  SESSION_REQUIRED: '参加セッションがありません。所属元で本人確認を行ってください。',
+  SESSION_REQUIRED:
+    'ログインの有効期限が切れました。所属元からログインし直してください。',
+  ACCOUNT_WITHDRAWN: 'この所属元アカウントは退会済みです。',
+  FOREIGN_LOGIN_EXPIRED:
+    'ログインの有効期限が切れました。所属元からログインし直してください。',
   STALE_RESERVATION: 'この参加予約は終了しました。改めて参加してください。',
   PARTICIPATION_RESTRICTED: '現在、この対戦への参加が制限されています。',
   FEDERATION_PARTICIPATION_DENIED: 'この対戦への連携参加は現在許可されていません。',
@@ -90,8 +93,14 @@ export function useForeignParticipation(ready: boolean) {
     [busy, setBusy] = useState(false);
   const [recovery, setRecovery] = useState(readRecovery);
   const revision = useRef(0);
+  const pendingJoin = useRef<{
+    key: string;
+    operationId: string;
+    promise?: Promise<ForeignSession | undefined>;
+  } | null>(null);
   const endSession = useCallback(() => {
     revision.current++;
+    pendingJoin.current = null;
     saveRecovery(null);
     setRecovery(null);
     setSession(null);
@@ -105,7 +114,7 @@ export function useForeignParticipation(ready: boolean) {
       generation = ++revision.current;
     if (participationId(id)) {
       setBusy(true);
-      void foreignRequest<ForeignSession>(API_PATHS.participationResume, {}, id)
+      void foreignRequest<ForeignSession>(API_PATHS.participationSession, {}, id)
         .then((value) => {
           if (active && revision.current === generation) setSession(value);
         })
@@ -128,7 +137,7 @@ export function useForeignParticipation(ready: boolean) {
   }, [ready]);
   async function cancel(forfeit: boolean) {
     if (!session) return;
-    revision.current++;
+    const generation = ++revision.current;
     setBusy(true);
     setError('');
     try {
@@ -137,19 +146,21 @@ export function useForeignParticipation(ready: boolean) {
         { forfeit },
         session.reservationId,
       );
-      saveRecovery(null);
+      if (revision.current !== generation) return;
+      if (readRecovery()?.reservationId === session.reservationId) saveRecovery(null);
       setRecovery(null);
       setSession(null);
     } catch (error) {
+      if (revision.current !== generation) return;
       if (error instanceof PlayRequestError && error.code === 'SESSION_REQUIRED') {
-        saveRecovery(null);
+        if (readRecovery()?.reservationId === session.reservationId) saveRecovery(null);
         setRecovery(null);
         setSession(null);
         return;
       }
       setError(error instanceof Error ? error.message : '取消を確認できませんでした。');
     } finally {
-      setBusy(false);
+      if (revision.current === generation) setBusy(false);
     }
   }
   const exchange = useCallback(async (ticket: string, target: ParticipationTarget) => {
@@ -190,17 +201,62 @@ export function useForeignParticipation(ready: boolean) {
       if (revision.current === generation) setBusy(false);
     }
   }, []);
-  function join(target: ParticipationTarget) {
-    const operation =
-      recovery && JSON.stringify(recovery.target) === JSON.stringify(target)
-        ? recovery.operationId
-        : crypto.randomUUID();
-    try {
-      beginForeignAuthorization(target, 'participation', operation);
-    } catch {
-      setError('本人確認の保存に失敗しました。ブラウザーの保存設定を確認してください。');
-    }
-  }
+  const join = useCallback(
+    (
+      target: ParticipationTarget,
+      operationId?: string,
+    ): Promise<ForeignSession | undefined> => {
+      const key = JSON.stringify(target);
+      if (pendingJoin.current?.promise) return pendingJoin.current.promise;
+      const attempt =
+        pendingJoin.current?.key === key && !operationId
+          ? pendingJoin.current
+          : { key, operationId: operationId ?? crypto.randomUUID() };
+      pendingJoin.current = attempt;
+      const generation = ++revision.current;
+      setBusy(true);
+      setError('');
+      const promise = (async () => {
+        try {
+          const value = await foreignRequest<ForeignSession>(API_PATHS.foreignLoginJoin, {
+            hostInstanceId: target.hostInstanceId,
+            mode: target.mode,
+            operationId: attempt.operationId,
+          });
+          if (revision.current !== generation) return;
+          if (
+            value.homeOrigin !== target.peerOrigin ||
+            value.sourceOrganizationId !== target.sourceOrganizationId ||
+            value.instanceId !== target.hostInstanceId ||
+            value.mode !== target.mode
+          )
+            throw new Error(messages.PARTICIPATION_TICKET_BINDING);
+          const saved = {
+            reservationId: value.reservationId,
+            operationId: value.operationId,
+            target,
+          };
+          saveRecovery(saved);
+          setRecovery(saved);
+          setSession(value);
+          pendingJoin.current = null;
+          return value;
+        } catch (error) {
+          if (revision.current === generation) {
+            if (error instanceof PlayRequestError && error.code === 'STALE_RESERVATION')
+              pendingJoin.current = null;
+            setError(error instanceof Error ? error.message : '参加を確認できません。');
+          }
+        } finally {
+          attempt.promise = undefined;
+          if (revision.current === generation) setBusy(false);
+        }
+      })();
+      attempt.promise = promise;
+      return promise;
+    },
+    [],
+  );
   return {
     session,
     error,

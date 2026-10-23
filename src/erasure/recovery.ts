@@ -146,7 +146,6 @@ export async function restorePrivacyJournal(db: Database, input: unknown) {
         authDeletedAt: null,
         erasedAt: null,
         auditErasedAt: null,
-        roomCursor: null,
         lastAttemptAt: '1970-01-01T00:00:00.000Z',
         retryAt: new Date().toISOString(),
       });
@@ -192,16 +191,13 @@ export async function restorePrivacyJournal(db: Database, input: unknown) {
         requestedAt: job.requestedAt,
         deletedAt: job.deletedAt,
         acceptedAt: job.acceptedAt,
-        checkCursor: null,
-        roomCursor: null,
-        inventoryPending: true,
         lastAttemptAt: '1970-01-01T00:00:00.000Z',
       });
     }
     writes.push(
       db
         .update(instances)
-        .set({ state: 'preparing', roomInventoryComplete: false })
+        .set({ state: 'preparing' })
         .where(eq(instances.organizationId, organization.id)),
     );
     if (accountRows.length)

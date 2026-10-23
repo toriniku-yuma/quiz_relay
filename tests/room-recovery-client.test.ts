@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { connectGameSocket } from '../src/client/features/game/connection';
 import { useGame } from '../src/client/features/game/useGame';
+import { OrganizationRequestError } from '../src/client/features/organization/useOrganization';
 import RoomLobby from '../src/client/features/rooms/RoomLobby';
 import { useRoom } from '../src/client/features/rooms/useRoom';
 import { API_PATHS } from '../src/shared/api-paths';
 import { newRoomSettings, type RoomView } from '../src/shared/rooms';
+import { snapshot } from '../src/worker/game/state';
+import { resultFixture } from './fixtures/result';
 
 const mocks = vi.hoisted(() => ({
   slots: [] as unknown[],
@@ -98,11 +101,11 @@ function roomView(id: string): RoomView {
     waiting: false,
   };
 }
-function room() {
+function room(identity = 'user-a') {
   mocks.cursor = 0;
   mocks.effects = [];
   // biome-ignore lint/correctness/useHookAtTopLevel: 状態を保持し、描画前の遅延応答を再現する。
-  return useRoom('user-a');
+  return useRoom(identity);
 }
 function game() {
   mocks.cursor = 0;
@@ -110,12 +113,174 @@ function game() {
   // biome-ignore lint/correctness/useHookAtTopLevel: 同じhookを再描画するハーネス。
   return useGame('formal', 'user-a', 'instance-a');
 }
+it('ゲスト本人確認の完了後も保存済みの試合結果と参加先を復元する', () => {
+  const matchId = crypto.randomUUID();
+  const { state } = resultFixture();
+  const saved = {
+    room: { id: matchId, instanceId: 'instance-a' },
+    snapshot: { ...snapshot(state), matchId },
+  };
+  sessionStorage.setItem('quiz-relay-match:room:guest-a', JSON.stringify(saved));
+  sessionStorage.setItem(
+    'quiz-relay-room:guest-a',
+    JSON.stringify({ id: 'room-a', instanceId: 'instance-a' }),
+  );
+  room('');
+  mocks.effects[0]();
+  mocks.effects[2]();
+  room('guest-a');
+  mocks.effects[0]();
+  mocks.effects[2]();
+  const recovered = room('guest-a');
+  expect(recovered.active?.id).toBe('room-a');
+  expect(recovered.game.roomId).toBe(matchId);
+  expect(recovered.game.snapshot).toEqual(saved.snapshot);
+  expect(
+    JSON.parse(sessionStorage.getItem('quiz-relay-match:room:guest-a') ?? 'null'),
+  ).toEqual(saved);
+});
+it('ロビー再接続は現在の参加先と試合を保持し、古い接続の通知を無視する', async () => {
+  mocks.request.mockResolvedValue({ room: roomView('room-a') });
+  room().join('room-a', 'instance-a');
+  room().game.attach('running-match');
+  const before = room();
+  const cleanup = mocks.effects[4]();
+  await settle();
+  const previous = mocks.connect.mock.calls.at(-1)?.[1];
+  previous?.error('connection lost');
+  before.reconnect();
+  const after = room();
+  expect(after.active).toBe(before.active);
+  expect(after.game.roomId).toBe('running-match');
+  expect(after.error).toBe('');
+  cleanup?.();
+  previous?.error('late error');
+  expect(room().error).toBe('');
+});
+it('ロビー状態の受信後は古いHTTP応答で上書きせず、試合接続エラーも消さない', async () => {
+  const initial = deferred<{ room: RoomView }>();
+  mocks.request.mockImplementation((path: string) =>
+    path === API_PATHS.roomGame
+      ? Promise.reject(new OrganizationRequestError('game denied', 403))
+      : initial.promise,
+  );
+  room().join('room-a', 'instance-a');
+  room();
+  const cleanup = mocks.effects[4]();
+  const socket = mocks.connect.mock.calls.at(-1)?.[1];
+  const current = { ...roomView('room-a'), revision: 5 };
+  socket?.message(JSON.stringify({ type: 'lobby', room: current }));
+  initial.resolve({ room: { ...roomView('room-a'), revision: 1 } });
+  await settle();
+  expect(room().room?.revision).toBe(5);
+  const gameCleanup = mocks.effects[5]();
+  await settle();
+  socket?.message(JSON.stringify({ type: 'lobby', room: current }));
+  expect(room().error).toBe('game denied');
+  cleanup?.();
+  gameCleanup?.();
+});
+it('ロビーの初期HTTP取得が失敗しても状態の受信でエラーを解除する', async () => {
+  mocks.request.mockRejectedValue(new OrganizationRequestError('initial failure', 503));
+  room().join('room-a', 'instance-a');
+  room();
+  const cleanup = mocks.effects[4]();
+  await settle();
+  expect(room().error).toBe('initial failure');
+  mocks.connect.mock.calls
+    .at(-1)?.[1]
+    .message(JSON.stringify({ type: 'lobby', room: roomView('room-a') }));
+  expect(room().error).toBe('');
+  cleanup?.();
+});
+it('開始済み試合の接続情報取得が一時的に失敗しても、同じ試合へ接続する', async () => {
+  vi.useFakeTimers();
+  let attempts = 0;
+  let cleanup: undefined | (() => void);
+  try {
+    mocks.request.mockImplementation((path: string) => {
+      if (path !== API_PATHS.roomGame)
+        return Promise.resolve({ room: roomView('room-a') });
+      attempts++;
+      return attempts === 1
+        ? Promise.reject(new OrganizationRequestError('temporary failure', 500))
+        : Promise.resolve({ room: 'match-room-a' });
+    });
+    room().join('room-a', 'instance-a');
+    room();
+    mocks.effects[4]();
+    await vi.advanceTimersByTimeAsync(0);
+    room();
+    cleanup = mocks.effects[5]();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(attempts).toBe(2);
+    expect(room().game.roomId).toBe('match-room-a');
+  } finally {
+    cleanup?.();
+    vi.useRealTimers();
+  }
+});
+it.each([403, 500])(
+  '試合の接続情報取得は拒否または再試行期限で止まる: %s',
+  async (status) => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    let cleanup: undefined | (() => void);
+    try {
+      mocks.request.mockImplementation((path: string) => {
+        if (path !== API_PATHS.roomGame)
+          return Promise.resolve({ room: roomView('room-a') });
+        attempts++;
+        return Promise.reject(new OrganizationRequestError('request failed', status));
+      });
+      room().join('room-a', 'instance-a');
+      room();
+      mocks.effects[4]();
+      await vi.advanceTimersByTimeAsync(0);
+      room();
+      cleanup = mocks.effects[5]();
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(attempts).toBe(status === 403 ? 1 : 20);
+      expect(room().game.roomId).toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      cleanup?.();
+      vi.useRealTimers();
+    }
+  },
+);
+it('復旧期限を超えて届いた接続情報で試合へ移動しない', async () => {
+  vi.useFakeTimers();
+  const child = deferred<{ room: string }>();
+  let cleanup: undefined | (() => void);
+  try {
+    mocks.request.mockImplementation((path: string) =>
+      path === API_PATHS.roomGame
+        ? child.promise
+        : Promise.resolve({ room: roomView('room-a') }),
+    );
+    room().join('room-a', 'instance-a');
+    room();
+    mocks.effects[4]();
+    await vi.advanceTimersByTimeAsync(0);
+    room();
+    cleanup = mocks.effects[5]();
+    await vi.advanceTimersByTimeAsync(30000);
+    child.resolve({ room: 'match-room-a' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(room().game.roomId).toBeNull();
+    expect(room().error).toContain('復旧できません');
+  } finally {
+    cleanup?.();
+    vi.useRealTimers();
+  }
+});
 it.each(['HTTP', 'WebSocket'])('%sで閉鎖を確認した部屋は再接続しない', async (source) => {
   const view = deferred<{ room: RoomView }>();
   mocks.request.mockReturnValue(view.promise);
   room().join('room-a', 'instance-a');
   room();
-  mocks.effects[3]();
+  mocks.effects[4]();
   const callbacks = mocks.connect.mock.calls[0][1];
   expect(callbacks.finished?.()).toBe(false);
   const closed = { ...roomView('room-a'), closed: true, playing: false, matchRoom: null };
@@ -132,7 +297,7 @@ it.each(['ROOM_CLOSED', 'ROOM_NOT_FOUND'])(
     mocks.request.mockRejectedValue({ code, message: '部屋は利用できません' });
     room().join('room-a', 'instance-a');
     room();
-    mocks.effects[3]();
+    mocks.effects[4]();
     await settle();
     expect(room().active).toBeNull();
     expect(sessionStorage.getItem('quiz-relay-room:user-a')).toBeNull();
@@ -146,11 +311,11 @@ it('Bへ入室直後の旧AのHTTP・ゲーム接続・切替通知で、新参�
   );
   room().join('room-a', 'instance-a');
   const active = room();
-  mocks.effects[3]();
+  mocks.effects[4]();
   const callbacks = mocks.connect.mock.calls[0][1];
   callbacks.message(JSON.stringify({ type: 'lobby', room: roomView('room-a') }));
   room();
-  mocks.effects[4]();
+  mocks.effects[5]();
   const refresh = active.refresh();
   active.join('room-b', 'instance-b');
   callbacks.released?.();
@@ -175,7 +340,7 @@ it('Bへ入室直後の旧AのHTTP・ゲーム接続・切替通知で、新参�
 it('旧対戦接続の遅い通知・状態で、新対戦の復帰情報を消さない', () => {
   game().attach('match-a', 'instance-a');
   const active = game();
-  const cleanup = mocks.effects[0]();
+  const cleanup = mocks.effects[1]();
   const callbacks = mocks.connect.mock.calls[0][1];
   active.attach('match-b', 'instance-b');
   callbacks.released?.();
@@ -223,6 +388,7 @@ function lobbySession(waiting = false) {
     exit: { submit: vi.fn(), busy: false, uncertain: false, error: '' },
     refresh: vi.fn().mockResolvedValue(undefined),
     leave: vi.fn(),
+    reconnect: vi.fn(),
     isCurrent: (id: unknown) => id === current,
   } as unknown as ReturnType<typeof useRoom>;
   return {
@@ -234,6 +400,20 @@ function lobbySession(waiting = false) {
     },
   };
 }
+it.each([false, true])(
+  '初期状態未取得でも、停止したロビーに手動再接続できる（状態未取得:%s）',
+  (missing) => {
+    const { session } = lobbySession();
+    session.connection = 'stopped';
+    if (missing) session.room = null;
+    const reconnect = button(lobby(session), 'ロビーに再接続');
+    expect(reconnect).toBeDefined();
+    reconnect?.onClick();
+    expect(session.reconnect).toHaveBeenCalledOnce();
+    expect(session.leave).not.toHaveBeenCalled();
+    expect(session.game.leave).not.toHaveBeenCalled();
+  },
+);
 it.each([false, true])(
   '閉じた部屋からの退出は拒否されるAPIを使わない（外部:%s）',
   (external) => {
@@ -321,3 +501,36 @@ it.each(['保存応答前', '表示更新中'])(
     expect(mocks.navigate).not.toHaveBeenCalled();
   },
 );
+
+it('D1の結果を復元し、古い対戦状態で上書きしない', async () => {
+  const id = crypto.randomUUID();
+  game().attach(id, 'instance-a');
+  game();
+  const { state } = resultFixture();
+  if (!state.result) throw new Error('result');
+  const final = {
+    ...snapshot(state),
+    matchId: id,
+    result: { ...state.result, storage: 'confirmed' as const },
+  };
+  mocks.request.mockResolvedValue({
+    actorId: 'a',
+    history: [{ matchId: id, snapshot: final, parentRoomId: 'parent' }],
+  });
+  const cleanups = mocks.effects.map((effect) => effect());
+  await settle();
+  expect(game().snapshot).toEqual(final);
+  expect(game().parentRoomId).toBe('parent');
+  expect(
+    mocks.connect.mock.calls[0][1].message(
+      JSON.stringify({ type: 'state', snapshot: { matchId: id, phase: 'WAITING' } }),
+    ),
+  ).toBe(false);
+  expect(mocks.request).toHaveBeenCalledWith(
+    API_PATHS.playResults,
+    { section: 'history', matchId: id },
+    'instance-a',
+    expect.any(AbortSignal),
+  );
+  for (const cleanup of cleanups) cleanup?.();
+});

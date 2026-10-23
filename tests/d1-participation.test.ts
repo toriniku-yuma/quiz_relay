@@ -15,7 +15,6 @@ import {
   federationLoginSessions,
   federationParticipations,
   federationPeers,
-  federationReservationClosures,
   federationReservations,
   federationResultDeliveries,
   federationResultInbox,
@@ -57,12 +56,17 @@ import {
   reviewForeignResult,
 } from '../src/worker/federation/results';
 import {
+  authorizeSessionParticipation,
+  joinForeignLogin,
+} from '../src/worker/federation/session-participation';
+import {
+  expireFederationSessions,
   expireHostParticipations,
-  hostParticipationStatus,
   logoutHostParticipation,
 } from '../src/worker/federation/slots';
 import {
   signParticipationTicket,
+  verifyParticipationGrant,
   verifyParticipationTicket,
 } from '../src/worker/federation/tickets';
 import { signedDelivery } from '../src/worker/federation/transport';
@@ -74,6 +78,7 @@ import {
   setupOrganization,
 } from '../src/worker/organization/database';
 import { readResults } from '../src/worker/results/read';
+import { scheduledD1 } from '../src/worker/scheduled';
 import { commitFixtureResult } from './fixtures/match';
 import { resetMatchmaker } from './fixtures/matchmaker';
 import { resultFixture } from './fixtures/result';
@@ -98,7 +103,7 @@ let source: Env,
   phase: 'WAITING' | 'REVEALING' | 'FINISHED',
   matchId: string,
   roomId: string;
-let authorizationId: string, authenticated: boolean;
+let authorizationId: string;
 const enter = vi.fn(),
   identity = vi.fn(),
   cancelAdmission = vi.fn(),
@@ -118,23 +123,6 @@ beforeAll(async () => {
     FEDERATION_ORIGIN: sourceOrigin,
     SIGNING_KID: 'source',
     SIGNING_PRIVATE_KEY: await exportPKCS8(sourceKeys.privateKey),
-    MATCHMAKER: {
-      getByName: () => ({
-        claimForeign: async (
-          _actor: string,
-          _target: unknown,
-          _operation: string,
-          name: string,
-        ) => ({ ok: true, name, authorizationId }),
-        commitForeign: async () => ({ ok: true }),
-        foreignContinuation: async () => phase !== 'WAITING',
-        foreignAuthorization: async (
-          _actor: string,
-          _operation: string,
-          generation: string,
-        ) => authenticated && generation === authorizationId,
-      }),
-    },
   } as unknown as Env;
   host = {
     ...env,
@@ -216,7 +204,6 @@ beforeEach(async () => {
   roomId = crypto.randomUUID();
   operationId = crypto.randomUUID();
   authorizationId = crypto.randomUUID();
-  authenticated = true;
   cancel.mockReset().mockResolvedValue({ ok: true });
   cancelAdmission.mockReset().mockResolvedValue({ ok: true });
   sourceId = (await sourceDb.select().from(organizations))[0].id;
@@ -276,6 +263,7 @@ const request = () => ({
   operationId,
   actorId,
   displayName: '参加者',
+  serverName: '所属元',
   authorizationId,
 });
 it('参加APIはレート制限のbindingが無ければ処理せず設定エラーを返す', async () => {
@@ -653,19 +641,6 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
   try {
     await open(lobby, identity.token);
     await open(lobby, nativeAdmission.token);
-    authenticated = false;
-    await refreshParticipationAccess(realHost, hostId, [session.row.actorId], true);
-    expect(
-      (
-        await call('mutate', {
-          room: parent,
-          action: 'ready',
-          ready: true,
-          operationId: crypto.randomUUID(),
-        })
-      ).status,
-    ).toBe(409);
-    authenticated = true;
     await refreshParticipationAccess(realHost, hostId, [session.row.actorId], true);
     expect(
       (
@@ -733,12 +708,6 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
       kind: 'room',
       matchId,
     });
-    expect(
-      await hostParticipationStatus(realHost, sourceOrigin, {
-        operationId,
-        sourceActorId: actorId,
-      }),
-    ).toMatchObject({ active: true, phase: 'WAITING' });
   } finally {
     for (const socket of sockets) socket.close();
     // Stop the test's live lobby before its alarm can outlast the fetch mocks.
@@ -755,7 +724,7 @@ it('外部ログインで実ルームを作成・再送・開始し、親部屋�
     globalThis.fetch = originalFetch;
   }
 });
-it('所属元の参加停止は新規・待機の再認証を拒否し、開始済みの同じ試合だけ復帰できる', async () => {
+it('所属元の参加停止は新規・待機の再認証を拒否し、開始済みでもチケットを再発行しない', async () => {
   const first = await authorize(),
     session = await exchangeParticipation(host, { ticket: first.ticket });
   await changeD1(sourceDb, async (writes) => {
@@ -768,33 +737,19 @@ it('所属元の参加停止は新規・待機の再認証を拒否し、開始�
   });
   await expect(authorize()).rejects.toThrow('FEDERATION_PARTICIPATION_DENIED');
   phase = 'REVEALING';
-  const ticket = await authorize(),
-    recovered = await exchangeParticipation(host, { ticket: ticket.ticket });
-  expect(recovered.row.id).toBe(session.row.id);
-  expect(recovered.row.matchId).toBe(matchId);
+  await expect(authorize()).rejects.toThrow('FEDERATION_PARTICIPATION_DENIED');
+  expect((await participationSession(host, session.secret)).reservation.id).toBe(
+    session.row.id,
+  );
 });
-it('終了済みの試合は所属元の枠だけ解放し、開催元の結果表示とCookieを取り消さない', async () => {
-  const ticket = await authorize(),
-    session = await exchangeParticipation(host, { ticket: ticket.ticket });
+it('終了後も開催元の参加セッションを結果取得に使える', async () => {
+  const ticket = await authorize();
+  const session = await exchangeParticipation(host, { ticket: ticket.ticket });
   phase = 'FINISHED';
-  const completed = {
-    ...host,
-    GAME_ROOM: {
-      getByName: () => ({
-        lobbyStatus: async () => ({ phase, actors: [session.row.actorId], closed: true }),
-      }),
-    },
-  } as unknown as Env;
-  expect(
-    await hostParticipationStatus(completed, sourceOrigin, {
-      operationId,
-      sourceActorId: actorId,
-    }),
-  ).toEqual({ active: false, phase: 'FINISHED' });
-  expect(cancel).not.toHaveBeenCalled();
   expect((await participationSession(host, session.secret)).reservation.state).toBe(
     'exchanged',
   );
+  expect(cancel).not.toHaveBeenCalled();
 });
 // The actor's history spans every test, so each test reads only its own result.
 const deliveredHistory = async (matchId: string) =>
@@ -939,16 +894,32 @@ it('通信断でも原本と未配送を保ち、復旧時に同じイベント�
   expect(failed.receivedAt).toBeNull();
   expect(failed.quarantined).toBe(false);
   expect(failed.nextAttemptAt).toBeGreaterThan(Date.now());
-  await changeD1(hostDb, async (writes) => {
-    writes.push(
-      hostDb
-        .update(federationResultDeliveries)
-        .set({ nextAttemptAt: 0 })
-        .where(eq(federationResultDeliveries.eventId, job.eventId)),
-    );
-  });
   if (transport) vi.mocked(globalThis.fetch).mockImplementation(transport);
-  await deliverResult(host, job.eventId);
+  const dispatched: string[] = [];
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Date.now() + 3600000);
+  try {
+    await scheduledD1(
+      {
+        ...host,
+        ACCOUNT_ERASURE: {
+          fetch: async (_url: string, init: RequestInit) => {
+            const task = JSON.parse(String(init.body));
+            if (task.task === 'federationResult') {
+              dispatched.push(task.eventId);
+              await deliverResult(host, task.eventId);
+            }
+            return Response.json({ ok: true });
+          },
+        } as Fetcher,
+      },
+      Date.now(),
+      'hourly',
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+  expect(dispatched).toContain(job.eventId);
   const [saved] = await hostDb
     .select()
     .from(federationResultDeliveries)
@@ -956,6 +927,7 @@ it('通信断でも原本と未配送を保ち、復旧時に同じイベント�
   expect(saved.message).toBe(failed.message);
   expect(saved.payloadHash).toBe(failed.payloadHash);
   expect(saved.receivedAt).not.toBeNull();
+  await deliverResult(host, job.eventId);
   vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
   expect(await deliveredHistory(job.matchId)).toHaveLength(1);
 });
@@ -973,34 +945,26 @@ it('同一イベントの別内容を409で隔離し、既に受信した原本�
   expect(row.payload).toEqual(job.payload);
   expect(row.conflictHash).not.toBeNull();
 });
-it('所属元ログアウト後の古い参加券とCookieを拒否し、開始済みの試合を再認証で保持する', async () => {
-  const first = await authorize(),
-    session = await exchangeParticipation(host, { ticket: first.ticket }),
-    oldAuthorization = authorizationId;
+it('開催元のログアウトと再認証は許可IDで旧Cookieを失効させる', async () => {
+  const first = await authorize();
+  const session = await exchangeParticipation(host, { ticket: first.ticket });
+  const oldAuthorization = session.row.authorizationId;
   phase = 'REVEALING';
-  const unexchanged = await authorize();
-  authenticated = false;
-  await expect(
-    exchangeParticipation(host, { ticket: unexchanged.ticket }),
-  ).rejects.toThrow('PARTICIPATION_RESTRICTED');
   await logoutHostParticipation(host, sourceOrigin, {
     operationId,
     sourceActorId: actorId,
-    authorizationId,
+    authorizationId: oldAuthorization,
   });
   await expect(participationSession(host, session.secret)).rejects.toThrow(
     'SESSION_REQUIRED',
   );
-  expect(cancel).toHaveBeenCalledWith(session.row.actorId, roomId, true, hostId, false);
-  authenticated = true;
-  authorizationId = crypto.randomUUID();
   const renewed = await authorize();
-  await expect(
-    exchangeParticipation(host, { ticket: unexchanged.ticket }),
-  ).rejects.toThrow('PARTICIPATION_TICKET_BINDING');
+  await expect(exchangeParticipation(host, { ticket: first.ticket })).rejects.toThrow(
+    'PARTICIPATION_TICKET_REPLAY',
+  );
   const resumed = await exchangeParticipation(host, { ticket: renewed.ticket });
   expect(resumed.row.id).toBe(session.row.id);
-  expect(resumed.row.matchId).toBe(matchId);
+  expect(resumed.row.authorizationId).not.toBe(oldAuthorization);
   await logoutHostParticipation(host, sourceOrigin, {
     operationId,
     sourceActorId: actorId,
@@ -1010,6 +974,7 @@ it('所属元ログアウト後の古い参加券とCookieを拒否し、開始�
     session.row.id,
   );
 });
+
 it('別試合の参加許可を流用せず、Cookieの予約名を付け替えても別予約を操作しない', async () => {
   const result = await authorize(),
     session = await exchangeParticipation(host, { ticket: result.ticket });
@@ -1075,6 +1040,15 @@ it('応答消失後に同じ操作を再送しても予約は増えず、内容�
   const first = await reserveParticipation(host, sourceOrigin, request()),
     again = await reserveParticipation(host, sourceOrigin, request());
   expect(again.reservationId).toBe(first.reservationId);
+  expect(enter).toHaveBeenLastCalledWith(
+    expect.any(String),
+    '参加者',
+    false,
+    expect.any(Object),
+    false,
+    operationId,
+    '所属元',
+  );
   expect(
     await hostDb
       .select()
@@ -1155,7 +1129,9 @@ it('所属元の取得失敗は待機を閉じ、既に交換した開始済み�
   const result = await authorize(),
     session = await exchangeParticipation(host, { ticket: result.ticket });
   vi.mocked(globalThis.fetch).mockRejectedValue(new Error('offline'));
-  await refreshParticipationAccess(host, hostId, [session.row.actorId], true);
+  await expect(
+    refreshParticipationAccess(host, hostId, [session.row.actorId], true),
+  ).rejects.toThrow('FEDERATION_PEER_UNAVAILABLE');
   expect(
     await allowedInstanceActors(host, { id: hostId, owner: hostOwner }, [
       session.row.actorId,
@@ -1199,6 +1175,7 @@ it('通常WorkerがSecure・HttpOnly・Strict Cookieを発行し、秘密をJSON
   expect(Object.keys(data)).toEqual(['reservationId']);
   expect(cookie).toContain('Secure');
   expect(cookie).toContain('HttpOnly');
+  expect(cookie).toContain('Path=/api;');
   expect(cookie).toContain('SameSite=Strict');
   const view = await app.request(
     `${hostOrigin}/api/v1/participation/session?reservation=${data.reservationId}`,
@@ -1250,24 +1227,15 @@ it('期限切れは2件ずつ停止し、停止RPC失敗後も原本と未確認
   const rows = await hostDb.select().from(federationReservations);
   expect(
     rows.filter((row) => ids.includes(row.id) && row.state === 'closed'),
-  ).toHaveLength(2);
-  expect(
-    (await hostDb.select().from(federationReservationClosures)).some(
-      (row) => !row.confirmed,
-    ),
-  ).toBe(true);
+  ).toHaveLength(1);
   await expireHostParticipations(host);
   expect(
     (await hostDb.select().from(federationReservations)).filter(
       (row) => ids.includes(row.id) && row.state === 'closed',
     ),
   ).toHaveLength(3);
+  await expireFederationSessions(host);
   expect(await hostDb.select().from(federationSessions)).toHaveLength(0);
-  expect(
-    (await hostDb.select().from(federationReservationClosures)).every(
-      (row) => row.confirmed,
-    ),
-  ).toBe(true);
 });
 
 async function loginProof() {
@@ -1304,6 +1272,7 @@ it('外部ログインだけでは予約・参加者・所属元の参加履歴�
   expect(result).not.toHaveProperty('secret');
   const cookie = response.headers.get('Set-Cookie') ?? '';
   expect(cookie).toContain('HttpOnly');
+  expect(cookie).toContain('Path=/api;');
   expect(cookie).toContain('Secure');
   expect(cookie).toContain('SameSite=Strict');
   expect(await hostDb.select().from(organizationAccounts)).toEqual(before);
@@ -1407,14 +1376,18 @@ it('開催元だけのログアウトで開催元のCookieを失効させ、所�
   await expect(foreignLoginSession(host, login.secret)).rejects.toThrow(
     'SESSION_REQUIRED',
   );
-  expect(await hostDb.select().from(federationSessions)).toHaveLength(0);
+  expect(
+    await hostDb
+      .select()
+      .from(federationSessions)
+      .where(eq(federationSessions.reservationId, participation.row.id)),
+  ).toHaveLength(0);
   expect(await hostDb.select().from(federationLoginSessions)).toEqual([other]);
   expect(
     (await sourceDb.select().from(organizationAccounts)).find(
       (row) => row.actorId === actorId,
     ),
   ).toEqual(before);
-  expect(authenticated).toBe(true);
   expect(cancel).toHaveBeenCalledWith(expect.any(String), roomId, true, hostId, false);
   await expect(exchangeParticipation(host, { ticket: unused.ticket })).rejects.toThrow();
   expect(cancelAdmission).toHaveBeenCalledWith(
@@ -1503,3 +1476,337 @@ it('外部ログインCookieと別人の参加証明を混ぜても参加Cookie�
 });
 
 beforeEach(resetMatchmaker);
+
+it('参加Cookieで確定済みの本人の結果をD1から読み、他人の結果を返さない', async () => {
+  const ticket = await authorize();
+  const session = await exchangeParticipation(host, { ticket: ticket.ticket });
+  const { record } = resultFixture();
+  record.owner = hostOwner;
+  for (const key of ['competition', 'ruleset', 'questionSet'] as const)
+    record.definition[key].owner = hostOwner;
+  record.players[0].id = session.row.actorId;
+  record.players[0].disqualified = true;
+  record.players[0].forfeited = true;
+  record.result.winnerId = record.players[1].id;
+  await commitFixtureResult(runtime.GAME_D1, record);
+  const response = await app.fetch(
+    new Request(
+      `${hostOrigin}/api/play/results?instance=${hostId}&reservation=${session.row.id}`,
+      {
+        method: 'POST',
+        headers: {
+          Origin: hostOrigin,
+          'Content-Type': 'application/json',
+          Cookie: `qr_fed_${session.row.id}=${session.secret}`,
+        },
+        body: JSON.stringify({ section: 'history', matchId: record.matchId }),
+      },
+    ),
+    host,
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({
+    actorId: session.row.actorId,
+    history: [
+      {
+        snapshot: {
+          matchId: record.matchId,
+          questionCount: record.questionCount,
+          result: { storage: 'confirmed' },
+          players: [
+            { id: session.row.actorId, disqualified: true, forfeited: true },
+            { id: record.players[1].id },
+          ],
+        },
+      },
+    ],
+  });
+});
+
+it('認可と発行を分け、合計5秒を超えても開催先への入れ子通信なしで参加できる', async () => {
+  const login = await exchangeForeignLogin(host, await loginProof());
+  vi.mocked(fetch).mockImplementation(async (request, options) => {
+    const url = new URL((request as Request).url);
+    expect(url.origin).toBe(sourceOrigin);
+    if (url.pathname === '/federation/v1/participation/authorize') {
+      await new Promise((resolve) => setTimeout(resolve, 2700));
+      options?.signal?.throwIfAborted();
+    }
+    return app.request(
+      request as Request,
+      undefined,
+      url.origin === hostOrigin ? host : source,
+    );
+  });
+  const response = await app.request(
+    `${hostOrigin}/api/v1/participation/login/join`,
+    {
+      method: 'POST',
+      headers: { Origin: hostOrigin, Cookie: `qr_foreign_login=${login.secret}` },
+      body: JSON.stringify({
+        hostInstanceId: hostId,
+        mode: 'ranked',
+        operationId: crypto.randomUUID(),
+      }),
+    },
+    host,
+  );
+  expect(response.status).toBe(200);
+  expect((await response.json()) as { sourceActorId: string }).toMatchObject({
+    sourceActorId: actorId,
+  });
+});
+
+it('発行応答を失っても同じ操作の再試行は予約と所属元履歴の照合記録を重複させない', async () => {
+  const login = await exchangeForeignLogin(host, await loginProof());
+  let authorizations = 0;
+  vi.mocked(fetch).mockImplementation(async (request) => {
+    const url = new URL((request as Request).url);
+    const response = await app.request(
+      request as Request,
+      undefined,
+      url.origin === hostOrigin ? host : source,
+    );
+    if (
+      url.pathname === '/federation/v1/participation/authorize' &&
+      ++authorizations === 2
+    )
+      throw new Error('RESPONSE_LOST');
+    return response;
+  });
+  const input = { hostInstanceId: hostId, mode: 'ranked', operationId };
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    await expect(joinForeignLogin(host, login.secret, input)).rejects.toThrow(
+      'FEDERATION_PEER_UNAVAILABLE',
+    );
+    const diagnostic = log.mock.calls
+      .map(([line]) => JSON.parse(line))
+      .find((entry) => entry.event === 'federation_join_failed');
+    expect(diagnostic).toMatchObject({
+      operationId,
+      stage: 'home.issue',
+      code: 'FEDERATION_PEER_UNAVAILABLE',
+    });
+    expect(JSON.stringify(log.mock.calls)).not.toContain(login.secret);
+  } finally {
+    log.mockRestore();
+  }
+  const reservations = await hostDb
+    .select()
+    .from(federationReservations)
+    .where(eq(federationReservations.operationId, operationId));
+  expect(reservations).toHaveLength(1);
+  expect(
+    await hostDb
+      .select()
+      .from(federationSessions)
+      .where(eq(federationSessions.reservationId, reservations[0].id)),
+  ).toHaveLength(0);
+  const joined = await joinForeignLogin(host, login.secret, input);
+  expect(joined.row.operationId).toBe(operationId);
+  expect(
+    await hostDb
+      .select()
+      .from(federationReservations)
+      .where(eq(federationReservations.operationId, operationId)),
+  ).toHaveLength(1);
+  expect(
+    await sourceDb
+      .select()
+      .from(federationParticipations)
+      .where(eq(federationParticipations.reservationId, joined.row.id)),
+  ).toHaveLength(1);
+  expect(
+    await hostDb
+      .select()
+      .from(federationSessions)
+      .where(eq(federationSessions.reservationId, joined.row.id)),
+  ).toHaveLength(1);
+});
+
+it('ログアウト中に新しい参加が確定した場合は完了を返さず、再試行で両方を失効させる', async () => {
+  const login = await exchangeForeignLogin(host, await loginProof());
+  const first = await joinForeignLogin(host, login.secret, {
+    hostInstanceId: hostId,
+    mode: 'ranked',
+    operationId,
+  });
+  let second: Awaited<ReturnType<typeof joinForeignLogin>> | undefined;
+  cancel.mockImplementationOnce(async () => {
+    matchId = crypto.randomUUID();
+    roomId = crypto.randomUUID();
+    second = await joinForeignLogin(host, login.secret, {
+      hostInstanceId: hostId,
+      mode: 'ranked',
+      operationId: crypto.randomUUID(),
+    });
+    return { ok: true };
+  });
+  await expect(logoutForeignLogin(host, login.secret)).rejects.toThrow(
+    'PARTICIPATION_LOGOUT_PENDING',
+  );
+  expect(second).toBeDefined();
+  await logoutForeignLogin(host, login.secret);
+  await expect(foreignLoginSession(host, login.secret)).rejects.toThrow(
+    'SESSION_REQUIRED',
+  );
+  if (!second) throw new Error('CONCURRENT_JOIN_MISSING');
+  for (const participation of [first, second]) {
+    expect(
+      await hostDb
+        .select()
+        .from(federationSessions)
+        .where(eq(federationSessions.reservationId, participation.row.id)),
+    ).toHaveLength(0);
+    const [row] = await hostDb
+      .select()
+      .from(federationReservations)
+      .where(eq(federationReservations.id, participation.row.id));
+    expect(row.state).toBe('closed');
+  }
+});
+
+it('交換前に失効した外部ログインから参加セッションを作らない', async () => {
+  const login = await exchangeForeignLogin(host, await loginProof());
+  const ticket = await authorize();
+  const [reservation] = await hostDb
+    .select()
+    .from(federationReservations)
+    .where(eq(federationReservations.operationId, operationId));
+  await changeD1(hostDb, async (writes) => {
+    writes.push(hostDb.delete(federationLoginSessions));
+  });
+  await expect(exchangeParticipation(host, ticket, login.secret)).rejects.toThrow(
+    'INVALID_PARTICIPATION',
+  );
+  await expect(
+    exchangeParticipation(host, { ticket: ticket.ticket }, login.secret),
+  ).rejects.toThrow('SESSION_REQUIRED');
+  expect(
+    await hostDb
+      .select()
+      .from(federationSessions)
+      .where(eq(federationSessions.reservationId, reservation.id)),
+  ).toHaveLength(0);
+});
+
+it('同じ外部ログインCookieで再ログインせず次の対戦へ参加し、所属元の記録を残す', async () => {
+  const login = await exchangeForeignLogin(host, await loginProof());
+  const ids: string[] = [];
+  for (let index = 0; index < 2; index++) {
+    const response = await app.request(
+      `${hostOrigin}/api/v1/participation/login/join`,
+      {
+        method: 'POST',
+        headers: { Origin: hostOrigin, Cookie: `qr_foreign_login=${login.secret}` },
+        body: JSON.stringify({
+          hostInstanceId: hostId,
+          mode: 'ranked',
+          operationId: crypto.randomUUID(),
+        }),
+      },
+      host,
+    );
+    expect(response.status).toBe(200);
+    const session = (await response.json()) as {
+      reservationId: string;
+      sourceActorId: string;
+    };
+    expect(session.sourceActorId).toBe(actorId);
+    expect(session).not.toHaveProperty('grant');
+    ids.push(session.reservationId);
+    const cancelled = await app.request(
+      `${hostOrigin}/api/v1/participation/cancel?reservation=${session.reservationId}`,
+      {
+        method: 'POST',
+        headers: {
+          Origin: hostOrigin,
+          Cookie: String(response.headers.get('Set-Cookie')).split(';')[0],
+        },
+        body: JSON.stringify({ forfeit: false }),
+      },
+      host,
+    );
+    expect(cancelled.status).toBe(200);
+    matchId = crypto.randomUUID();
+    roomId = crypto.randomUUID();
+  }
+  expect(new Set(ids).size).toBe(2);
+  const records = await sourceDb.select().from(federationParticipations);
+  expect(records.filter((record) => ids.includes(record.reservationId))).toHaveLength(2);
+  expect((await foreignLoginSession(host, login.secret)).sourceActorId).toBe(actorId);
+  const rejected = await app.request(
+    `${hostOrigin}/api/v1/participation/login/join`,
+    {
+      method: 'POST',
+      headers: { Origin: sourceOrigin, Cookie: `qr_foreign_login=${login.secret}` },
+      body: JSON.stringify({
+        hostInstanceId: hostId,
+        mode: 'ranked',
+        operationId: crypto.randomUUID(),
+      }),
+    },
+    host,
+  );
+  expect(rejected.status).toBe(403);
+});
+it('継続参加の証明は開催先・署名・期限を検証し、現在の禁止と退会を優先する', async () => {
+  const login = await exchangeForeignLogin(host, await loginProof());
+  const input = {
+    grant: login.row.grant,
+    phase: 'prepare',
+    hostInstanceId: hostId,
+    mode: 'ranked',
+    operationId,
+  };
+  await expect(
+    verifyParticipationGrant(source, sourceOrigin, input.grant),
+  ).rejects.toThrow('FOREIGN_LOGIN_EXPIRED');
+  await expect(
+    verifyParticipationGrant(source, hostOrigin, `${input.grant.slice(0, -8)}AAAAAAAA`),
+  ).rejects.toThrow('FOREIGN_LOGIN_EXPIRED');
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Date.now() + 43210000);
+  await expect(verifyParticipationGrant(source, hostOrigin, input.grant)).rejects.toThrow(
+    'FOREIGN_LOGIN_EXPIRED',
+  );
+  vi.useRealTimers();
+  await changeD1(sourceDb, async (writes) => {
+    writes.push(
+      sourceDb
+        .update(federationPeers)
+        .set({ participationBlocked: true })
+        .where(eq(federationPeers.origin, hostOrigin)),
+    );
+  });
+  await expect(authorizeSessionParticipation(source, hostOrigin, input)).rejects.toThrow(
+    'FEDERATION_PARTICIPATION_DENIED',
+  );
+  await changeD1(sourceDb, async (writes) => {
+    writes.push(
+      sourceDb
+        .update(federationPeers)
+        .set({ participationBlocked: false })
+        .where(eq(federationPeers.origin, hostOrigin)),
+      sourceDb
+        .update(organizationAccounts)
+        .set({ withdrawnAt: new Date().toISOString() })
+        .where(eq(organizationAccounts.actorId, actorId)),
+    );
+  });
+  await expect(authorizeSessionParticipation(source, hostOrigin, input)).rejects.toThrow(
+    'ACCOUNT_WITHDRAWN',
+  );
+  const denied = await app.request(
+    `${hostOrigin}/api/v1/participation/login/join`,
+    {
+      method: 'POST',
+      headers: { Origin: hostOrigin, Cookie: `qr_foreign_login=${login.secret}` },
+      body: JSON.stringify({ hostInstanceId: hostId, mode: 'ranked', operationId }),
+    },
+    host,
+  );
+  expect(denied.status).toBe(403);
+  expect(await denied.json()).toMatchObject({ code: 'ACCOUNT_WITHDRAWN' });
+});

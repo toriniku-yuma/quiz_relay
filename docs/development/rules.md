@@ -40,7 +40,7 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 本人の識別に表示名やメールの一致を使いません。
 
 `.dev.vars`、`.env.erasure-local`、`.wrangler` の秘密情報を表示・コミットしません。
-一時QAスクリプトは内容を確認してから実行します。整理を理由に既存DB・DO・outboxの原本を消しません。
+一時QAスクリプトは内容を確認してから実行します。整理を理由に既存DB・未保存結果を持つDO・outboxの原本を消しません。試合DOはD1への結果保存と終了通知が済んだ後に削除します。
 
 ## ファイルの置き場所
 
@@ -59,12 +59,12 @@ HonoのContextは `context`、Drizzleのテーブル定義の引数は `table`�
 | `src/worker/organization/`・`questions/`・`results/` | 組織・権限・運営、作問・審査・出題、結果・履歴・順位 |
 | `src/worker/catalog/` | 問題セット・ルールの不変版と管理CLIの処理 |
 | `src/worker/auth/` | 認証の検証 |
-| `src/worker/scheduled.ts` | 定期保守 |
+| `src/worker/scheduled.ts` | 毎時の再試行・連合同期と、毎日の期限消去・集計 |
 | `src/worker/probes/` | 検証API・検証DO・DBプローブ |
 | `src/worker/federation/` | 組織間の署名通信・外部参加・問題共有・結果配送 |
 | `src/worker/env.ts` | Worker bindingの型 |
 | `src/worker/db/`・`drizzle-d1/` | Drizzleスキーマ・D1接続とmigration |
-| `src/erasure/` | 非公開の消去Worker（退会・完全削除・期限消去） |
+| `src/erasure/` | 非公開Worker。退会・完全削除・期限消去・配送を小分けにし、自己service bindingで継続 |
 | `tests/`・`scripts/` | テストと、管理CLI・実HTTP・DB検証 |
 
 正式機能を probes に追加しません。機能が大きくなったときだけ、その中で routes・state・validation などに分けます。

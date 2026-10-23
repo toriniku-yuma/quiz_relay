@@ -14,7 +14,9 @@
       "migrations_dir": "drizzle-d1"
     }
   ],
-  "vars": { "GAME_CONFIG_PROFILE": "default" },
+  "vars": {
+    "GAME_CONFIG_PROFILE": "default"
+  },
   "durable_objects": {
     "bindings": [
       {
@@ -29,5 +31,21 @@
       }
     ]
   },
-  "routes": []
+  "routes": [],
+  "services": [
+    {
+      "binding": "ACCOUNT_ERASURE",
+      "service": "quiz-relay-account-erasure"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "FEDERATION_LIMITER",
+      "namespace_id": "716329420",
+      "simple": {
+        "limit": 600,
+        "period": 60
+      }
+    }
+  ]
 }

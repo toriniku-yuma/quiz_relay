@@ -10,6 +10,7 @@ import probes from './probes/routes.ts';
 import questions from './questions/routes.ts';
 import results from './results/routes.ts';
 import rooms from './rooms/routes.ts';
+import { scheduledD1 } from './scheduled.ts';
 
 export { GameRoom } from './game/GameRoom.ts';
 export { Matchmaker } from './matchmaking/Matchmaker.ts';
@@ -33,18 +34,14 @@ app.notFound(notFound);
 app.onError(handleError);
 
 export default Object.assign(app, {
-  scheduled: async (_event: ScheduledController, env: Env, _ctx: ExecutionContext) => {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        await env.MATCHMAKER.getByName('maintenance').runMaintenance();
-        return;
-      } catch (error) {
-        const failure = error as { retryable?: boolean; overloaded?: boolean } | null;
-        if (attempt || failure?.retryable !== true || failure.overloaded) throw error;
-        // Platform errors can invalidate the stub. Retry once with a new stub;
-        // committed jobs and leases remain in D1, and overlapping calls share a run.
-        await new Promise((resolve) => setTimeout(resolve, 500 + Math.random() * 500));
-      }
-    }
+  scheduled: async (event: ScheduledController, env: Env, _ctx: ExecutionContext) => {
+    if (!['0 * * * *', '0 19 * * *'].includes(event.cron))
+      throw new Error('UNKNOWN_SCHEDULE');
+    await scheduledD1(
+      env,
+      // A retry carries the original scheduled time; due jobs use the current clock.
+      Date.now(),
+      event.cron === '0 19 * * *' ? 'daily' : 'hourly',
+    );
   },
 });

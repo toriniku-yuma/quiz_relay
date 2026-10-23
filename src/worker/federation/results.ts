@@ -82,6 +82,7 @@ export async function planResultDeliveries(
           ({
             id,
             name,
+            serverName,
             correct,
             mistakes,
             ratingDelta,
@@ -92,6 +93,7 @@ export async function planResultDeliveries(
           }) => ({
             id,
             name,
+            serverName,
             correct,
             mistakes,
             ratingDelta,
@@ -156,7 +158,7 @@ function resultEvent(value: unknown): FederatedResult {
     if (
       !player ||
       Object.keys(player)
-        .filter((key) => !['guest', 'role', 'forfeited'].includes(key))
+        .filter((key) => !['guest', 'role', 'forfeited', 'serverName'].includes(key))
         .sort()
         .join(',') !== 'correct,disqualified,id,mistakes,name,ratingDelta' ||
       (player.guest !== undefined && typeof player.guest !== 'boolean') ||
@@ -167,6 +169,8 @@ function resultEvent(value: unknown): FederatedResult {
       !/^[a-f0-9]{64}$/.test(player.id) ||
       typeof player.name !== 'string' ||
       player.name.length > 80 ||
+      (player.serverName != null &&
+        (typeof player.serverName !== 'string' || player.serverName.length > 80)) ||
       typeof player.disqualified !== 'boolean' ||
       ![player.correct, player.mistakes, player.ratingDelta].every(
         Number.isSafeInteger,

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import type { ForeignAccount, ForeignSession } from '../../../shared/participation';
 import type { RoomView } from '../../../shared/rooms';
+import { useApp } from '../../app/context';
 import { ROOMS_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
@@ -33,6 +34,7 @@ export default function ForeignRooms({
     name = session?.name ?? entry?.account.name ?? '',
     account = entry?.account;
   const restartEntry = useRef(false);
+  const authorizeJoin = useApp().foreignParticipation?.join;
   const request: typeof playRequest = useCallback(
     async <T,>(path: string, body: object = {}) => {
       const action =
@@ -47,13 +49,26 @@ export default function ForeignRooms({
         restartEntry.current &&
         (action === 'create' || action === 'join')
       ) {
-        await restartForeignRoomEntry(session, account, instanceId, action, body);
+        const pending = await restartForeignRoomEntry(
+          session,
+          account,
+          instanceId,
+          action,
+          body,
+        );
+        if (!authorizeJoin || !(await authorizeJoin(pending.target, pending.operationId)))
+          throw new Error('部屋への参加を確認できません。もう一度お試しください。');
         return new Promise<T>(() => {});
       }
       if (!session) {
         if ((action === 'create' || action === 'join') && account) {
-          beginForeignRoomEntry(account, instanceId, action, body);
-          // Navigation returns to this page and retries the saved, same operation.
+          const pending = beginForeignRoomEntry(account, instanceId, action, body);
+          if (
+            !authorizeJoin ||
+            !(await authorizeJoin(pending.target, pending.operationId))
+          )
+            throw new Error('部屋への参加を確認できません。もう一度お試しください。');
+          // The session replaces this entry component and applies the saved operation.
           return new Promise<T>(() => {});
         }
         return foreignRequest<T>(`${API_PATHS.foreignLoginRooms}/${action}`, {
@@ -82,7 +97,7 @@ export default function ForeignRooms({
       if (action === 'leave') onEnded();
       return result;
     },
-    [session, account, instanceId, onEnded],
+    [session, account, instanceId, onEnded, authorizeJoin],
   );
   const room = useRoom(
     session ? `federation:${session.reservationId}` : `foreign-entry:${instanceId}`,

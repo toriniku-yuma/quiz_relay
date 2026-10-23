@@ -1,67 +1,45 @@
-import { eq, sql } from 'drizzle-orm';
-import { changeD1, connectD1, type Database, readD1 } from '../worker/db/d1.ts';
+import { and, eq, isNull, lte, sql } from 'drizzle-orm';
+import { connectD1, type Database, readD1 } from '../worker/db/d1.ts';
 import {
   accountWithdrawals,
+  federationControlDeliveries,
   instanceDeletions,
-  instanceRooms,
   instances,
 } from '../worker/db/schema.ts';
 import type { Env } from '../worker/env.ts';
 import { applyControlEvent, deliverControlEvent } from '../worker/federation/controls.ts';
 import { refreshScheduledFederationMetadata } from '../worker/federation/metadata.ts';
 import { syncQuestionImport } from '../worker/federation/question-imports.ts';
+import { refreshQuestionSource } from '../worker/federation/question-sources.ts';
 import { deliverResult } from '../worker/federation/results.ts';
-import { expireHostParticipations } from '../worker/federation/slots.ts';
+import {
+  expireFederationSessions,
+  expireHostParticipations,
+} from '../worker/federation/slots.ts';
 import { expireFederationNonces } from '../worker/federation/transport.ts';
-import { failureCode } from '../worker/http/handlers.ts';
+import { failureCode, failureDetails } from '../worker/http/diagnostics.ts';
 import { OrganizationError } from '../worker/organization/access.ts';
 import { updateDifficultyInstance } from '../worker/questions/daily.ts';
 import { clerkAuthDeletion } from './clerk.ts';
 import { eraseInstance } from './instances.ts';
-import type { InventoryEnv } from './inventory.ts';
-import { reconcileRoomInventory } from './inventory.ts';
 import { eraseAuthentication } from './jobs.ts';
 import { eraseResultNames } from './results.ts';
 import { expireRecords } from './retention.ts';
 import { expireSharedQuestions } from './shared-questions.ts';
 import { anonymizeWithdrawal } from './withdrawals.ts';
 
-type ErasureEnv = InventoryEnv &
-  Pick<
-    Env,
-    | 'MATCHMAKER'
-    | 'CLERK_SECRET_KEY'
-    | 'GAME_CONFIG_PROFILE'
-    | 'FEDERATION_ORIGIN'
-    | 'SIGNING_KID'
-    | 'SIGNING_PRIVATE_KEY'
-  > & { GAME_D1: D1Database };
-async function expireRoomReviews(db: Database, rooms: Env['GAME_ROOM']) {
-  const due = await db
-    .select()
-    .from(instanceRooms)
-    .orderBy(instanceRooms.reviewAttemptedAt, instanceRooms.roomId)
-    .limit(5);
-  let failed = false;
-  for (const room of due)
-    try {
-      await rooms.get(rooms.idFromString(room.roomId)).expireReview();
-    } catch {
-      failed = true;
-    }
-  if (due.length)
-    await changeD1(db, async (writes) => {
-      writes.push(
-        db
-          .update(instanceRooms)
-          .set({ reviewAttemptedAt: new Date().toISOString() })
-          .where(
-            sql`${instanceRooms.roomId} in (select value from json_each(${JSON.stringify(due.map((room) => room.roomId))}))`,
-          ),
-      );
-    });
-  if (failed) throw new Error('REVIEW_EXPIRY_INCOMPLETE');
-}
+type ErasureEnv = Pick<
+  Env,
+  | 'MATCHMAKER'
+  | 'GAME_ROOM'
+  | 'ACCOUNT_ERASURE'
+  | 'CLERK_SECRET_KEY'
+  | 'GAME_CONFIG_PROFILE'
+  | 'FEDERATION_LIMITER'
+  | 'FEDERATION_ORIGIN'
+  | 'SIGNING_KID'
+  | 'SIGNING_PRIVATE_KEY'
+> & { GAME_D1: D1Database };
 function operationId(input: Record<string, unknown>) {
   if (
     typeof input.operationId !== 'string' ||
@@ -77,12 +55,33 @@ async function maintenance(
   env: ErasureEnv,
   input: Record<string, unknown>,
 ) {
+  if (input.task === 'federationControls') {
+    if (typeof input.eventId !== 'string') throw new Error('INVALID_OPERATION');
+    const [job] = await db
+      .select()
+      .from(federationControlDeliveries)
+      .where(
+        and(
+          eq(federationControlDeliveries.eventId, input.eventId),
+          isNull(federationControlDeliveries.appliedAt),
+          eq(federationControlDeliveries.quarantined, false),
+          lte(federationControlDeliveries.nextAttemptAt, Date.now()),
+          lte(federationControlDeliveries.leaseUntil, Date.now()),
+        ),
+      )
+      .limit(1);
+    if (!job) return true;
+    await deliverControlEvent(env as Env, job.peerOrigin, job.eventId);
+    return false;
+  }
   if (input.task === 'federationNonces') {
     await expireFederationNonces(db);
     return true;
   }
+  if (input.task === 'federationReservations')
+    return expireHostParticipations(env as Env);
   if (input.task === 'federationSessions') {
-    await expireHostParticipations(env as Env);
+    await expireFederationSessions(env as Env);
     return true;
   }
   if (input.task === 'federationResult') {
@@ -90,9 +89,24 @@ async function maintenance(
     await deliverResult(env as Env, input.eventId);
     return true;
   }
+  if (input.task === 'federationQuestionSource') {
+    if (
+      typeof input.instanceId !== 'string' ||
+      typeof input.peerOrigin !== 'string' ||
+      typeof input.sourceInstanceId !== 'string'
+    )
+      throw new Error('INVALID_OPERATION');
+    await refreshQuestionSource(env as Env, {
+      instanceId: input.instanceId,
+      peerOrigin: input.peerOrigin,
+      sourceInstanceId: input.sourceInstanceId,
+    });
+    return true;
+  }
   if (input.task === 'federationQuestions') {
     if (typeof input.importId !== 'string') throw new Error('INVALID_OPERATION');
-    return syncQuestionImport(env as Env, input.importId);
+    const result = await syncQuestionImport(env as Env, input.importId);
+    return !result.pending;
   }
   if (input.task === 'sharedQuestionRetention') {
     await expireSharedQuestions(db);
@@ -101,6 +115,8 @@ async function maintenance(
   if (input.task === 'federationControl' || input.task === 'federationControlApply') {
     if (typeof input.eventId !== 'string' || typeof input.peerOrigin !== 'string')
       throw new Error('INVALID_OPERATION');
+    if (input.task === 'federationControlApply' && (await eraseResultNames(db)) > 0)
+      return false;
     const run =
       input.task === 'federationControl' ? deliverControlEvent : applyControlEvent;
     await run(env as Env, input.peerOrigin, input.eventId);
@@ -117,22 +133,14 @@ async function maintenance(
     return true;
   }
   if (input.task === 'results') {
-    await eraseResultNames(db);
-    return true;
+    return (await eraseResultNames(db)) === 0;
   }
   if (input.task === 'retention') {
     await expireRecords(db);
     return true;
   }
-  if (input.task === 'reviews') {
-    await expireRoomReviews(db, env.GAME_ROOM);
-    return true;
-  }
-  if (input.task === 'inventory') return reconcileRoomInventory(db, env);
-  if (input.task === 'instance')
-    return eraseInstance(db, env.GAME_ROOM, operationId(input));
-  if (input.task === 'anonymization')
-    return anonymizeWithdrawal(db, env, operationId(input));
+  if (input.task === 'instance') return eraseInstance(db, operationId(input));
+  if (input.task === 'anonymization') return anonymizeWithdrawal(db, operationId(input));
   if (input.task === 'authentication') {
     const id = operationId(input);
     if (!env.CLERK_SECRET_KEY) throw new Error('AUTH_ERASURE_CONFIGURATION_REQUIRED');
@@ -155,19 +163,16 @@ async function maintenance(
   }
   throw new Error('INVALID_OPERATION');
 }
-// No public route and no Cron here. The root scheduler dispatches one task per service invocation.
+// Private service. Each invocation runs one batch; a chain is limited to 32 batches.
 export default {
   async fetch(request: Request, env: ErasureEnv) {
     if (request.method !== 'POST') return new Response(null, { status: 404 });
     const path = new URL(request.url).pathname;
-    if (
-      !['/status', '/maintenance', '/inventory', '/withdrawal', '/instance'].includes(
-        path,
-      )
-    )
+    if (!['/status', '/maintenance', '/withdrawal', '/instance'].includes(path))
       return new Response(null, { status: 404 });
     const db = connectD1(env.GAME_D1);
     let taskName = 'invalid';
+    let instanceId: string | undefined;
     if (path === '/status')
       return Response.json(
         await readD1(db, async () => {
@@ -183,15 +188,10 @@ export default {
             .from(accountWithdrawals);
           const [deletions] = await db
             .select({
-              pendingInstanceDeletion: sql<number>`count(*) filter(where ${instanceDeletions.deletedAt} is null or ${instanceDeletions.inventoryPending})`,
+              pendingInstanceDeletion: sql<number>`count(*) filter(where ${instanceDeletions.deletedAt} is null)`,
             })
             .from(instanceDeletions);
-          const [inventory] = await db
-            .select({
-              unreconciledInstances: sql<number>`count(*) filter(where not ${instances.roomInventoryComplete})`,
-            })
-            .from(instances);
-          return { ...withdrawals, ...deletions, ...inventory };
+          return { ...withdrawals, ...deletions };
         }),
       );
     try {
@@ -200,29 +200,33 @@ export default {
       const input = body ? JSON.parse(body) : {};
       if (!input || typeof input !== 'object' || Array.isArray(input))
         return new Response(null, { status: 400 });
+      if (
+        typeof input.instanceId === 'string' &&
+        /^[a-f0-9-]{36}$/.test(input.instanceId)
+      )
+        instanceId = input.instanceId;
       const task =
         path === '/withdrawal'
           ? 'authentication'
           : path === '/instance'
             ? 'instance'
-            : path === '/inventory'
-              ? 'inventory'
-              : input.task;
+            : input.task;
       if (
         typeof task === 'string' &&
         [
+          'federationControls',
+          'federationReservations',
           'federationNonces',
           'federationSessions',
           'federationResult',
           'federationQuestions',
+          'federationQuestionSource',
           'sharedQuestionRetention',
           'federationControl',
           'federationControlApply',
           'federationMetadata',
           'results',
           'retention',
-          'reviews',
-          'inventory',
           'instance',
           'anonymization',
           'authentication',
@@ -230,16 +234,49 @@ export default {
         ].includes(task)
       )
         taskName = task;
-      const ready = await maintenance(db, env, { ...input, task });
-      return Response.json(
-        typeof ready === 'object' ? { ready: true, ...ready } : { ready },
-        { status: ready ? 200 : 503 },
-      );
+      const depth = input.depth === undefined ? 0 : input.depth;
+      if (!Number.isInteger(depth) || depth < 0 || depth >= 32)
+        throw new Error('INVALID_OPERATION');
+      let ready = await maintenance(db, env, { ...input, task });
+      if ((path === '/withdrawal' || path === '/instance') && env.ACCOUNT_ERASURE) {
+        const delivery = await env.ACCOUNT_ERASURE.fetch(
+          'https://account-erasure.internal/maintenance',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              task: 'federationControls',
+              eventId: operationId(input),
+              depth: depth + 1,
+            }),
+          },
+        );
+        await delivery.arrayBuffer();
+      }
+      let nextTask = task;
+      if (task === 'authentication' && ready) {
+        ready = await anonymizeWithdrawal(db, operationId(input));
+        nextTask = 'anonymization';
+      }
+      if (!ready && nextTask !== 'authentication' && depth < 31) {
+        if (!env.ACCOUNT_ERASURE) throw new Error('MAINTENANCE_CONFIGURATION_REQUIRED');
+        return await env.ACCOUNT_ERASURE.fetch(
+          'https://account-erasure.internal/maintenance',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...input, task: nextTask, depth: depth + 1 }),
+          },
+        );
+      }
+      return Response.json({ ready }, { status: ready ? 200 : 503 });
     } catch (error) {
       console.error(
         JSON.stringify({
           event: 'maintenance_failed',
           task: taskName,
+          instanceId,
+          ...failureDetails(error),
           code: error instanceof OrganizationError ? error.code : failureCode(error),
         }),
       );

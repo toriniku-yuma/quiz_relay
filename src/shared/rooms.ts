@@ -24,6 +24,7 @@ export type RoomSettings = {
 export type RoomMember = {
   id: string;
   name: string;
+  serverName?: string | null;
   guest: boolean;
   ready: boolean;
   joinedAt: number;
@@ -37,6 +38,8 @@ export type RoomView = {
   password: boolean;
   revision: number;
   hostId: string;
+  hostName?: string | null;
+  hostServerName?: string | null;
   members: RoomMember[];
   closed: boolean;
   playing: boolean;

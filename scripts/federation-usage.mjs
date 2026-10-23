@@ -6,6 +6,55 @@ import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 const account = 'cb60779f06e19f44410227423dd55e41';
+export function usageDiagnostics(response, result) {
+  const ray = response.headers.get('cf-ray');
+  const retryAfter = response.headers.get('retry-after');
+  return {
+    status: response.status,
+    rayId: typeof ray === 'string' && /^[a-f0-9]{16}-[A-Z]{3}$/.test(ray) ? ray : null,
+    errorRayIds: Array.isArray(result?.errors)
+      ? [
+          ...new Set(
+            result.errors
+              .map((error) => error?.extensions?.ray_id)
+              .filter(
+                (value) =>
+                  typeof value === 'string' && /^[a-f0-9]{16}-[A-Z]{3}$/.test(value),
+              ),
+          ),
+        ]
+      : [],
+    retryAfterSeconds:
+      typeof retryAfter === 'string' && /^\d{1,8}$/.test(retryAfter)
+        ? Number(retryAfter)
+        : null,
+    // Retain only documented codes; server messages can contain private input.
+    budgetRejected:
+      Array.isArray(result?.errors) &&
+      result.errors.some((error) => error?.extensions?.code === 'budget'),
+  };
+}
+export function usageQueryError(status, errors) {
+  // Classify known API diagnostics without retaining messages, query text or credentials.
+  const messages = JSON.stringify(errors ?? []);
+  const code = /budget/i.test(messages)
+    ? 'RATE_LIMIT_BUDGET'
+    : /excessive resources/i.test(messages)
+      ? 'RATE_LIMIT_RESOURCES'
+      : /too many nodes, zones and accounts/i.test(messages)
+        ? 'RATE_LIMIT_QUERY_NODES'
+        : status === 429 || /rate.limit/i.test(messages)
+          ? 'RATE_LIMIT'
+          : /auth|token|permission|access/i.test(messages)
+            ? 'AUTHORIZATION'
+            : /limit|filter|argument|query/i.test(messages)
+              ? 'QUERY'
+              : 'API_ERROR';
+  return Object.assign(
+    new Error(`Cloudflare usage query failed: HTTP ${status} ${code}`),
+    { code },
+  );
+}
 async function refreshAuthentication() {
   // Capture CLI output so account details and credentials never enter the report.
   try {
@@ -44,15 +93,34 @@ export async function cloudUsage() {
       workersInvocationsAdaptive(${filter}) { sum { requests errors } }
     } } }`;
   let result;
+  const diagnostics = [];
   for (let attempt = 0; attempt < 3; attempt++) {
+    const request = {
+      attempt: attempt + 1,
+      rateLimitMode: 'account-based',
+      startedAt: new Date().toISOString(),
+    };
+    diagnostics.push(request);
     try {
       const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'X-Rate-Limit-Type': request.rateLimitMode,
+        },
         body: JSON.stringify({ query }),
         signal: AbortSignal.timeout(12000),
       });
-      result = await response.json();
+      Object.assign(request, usageDiagnostics(response, null));
+      try {
+        result = await response.json();
+      } catch (error) {
+        // A throttled response may be HTML or empty; do not retry its parse failure.
+        if (response.status === 429) throw usageQueryError(response.status, []);
+        throw error;
+      }
+      Object.assign(request, usageDiagnostics(response, result));
       if (!response.ok || result.errors?.length) {
         if (response.status === 401 && attempt < 2) {
           // whoami can reuse a nearly expired token; refresh again after actual rejection.
@@ -61,29 +129,28 @@ export async function cloudUsage() {
           token = /^oauth_token\s*=\s*"([^"\r\n]+)"/m.exec(authentication)?.[1];
           if (!token) throw new Error('Cloudflare authentication unavailable');
         }
-        const messages = JSON.stringify(result.errors ?? []);
-        const reason = /rate.limit|budget/i.test(messages)
-          ? 'RATE_LIMIT'
-          : /auth|token|permission|access/i.test(messages)
-            ? 'AUTHORIZATION'
-            : /limit|filter|argument|query/i.test(messages)
-              ? 'QUERY'
-              : 'API_ERROR';
-        throw new Error(
-          `Cloudflare usage query failed: HTTP ${response.status} ${reason}`,
-        );
+        throw usageQueryError(response.status, result.errors);
       }
       break;
     } catch (error) {
-      if (attempt === 2)
-        throw new Error(
-          `Cloudflare usage unavailable after 3 attempts (${error.message.startsWith('Cloudflare usage query failed:') ? error.message : error.name})`,
+      request.failure = error.message.startsWith('Cloudflare usage query failed:')
+        ? error.code
+        : 'REQUEST_FAILED';
+      if (error.code?.startsWith('RATE_LIMIT') || attempt === 2)
+        throw Object.assign(
+          new Error(
+            `Cloudflare usage unavailable after ${attempt + 1} attempts (${error.message.startsWith('Cloudflare usage query failed:') ? error.message : error.name})`,
+          ),
+          { diagnostics },
         );
-      await pause(3000);
+    } finally {
+      request.finishedAt = new Date().toISOString();
     }
+    await pause(3000);
   }
   const data = result.data?.viewer?.accounts?.[0];
-  if (!data) throw new Error('Cloudflare usage unavailable');
+  if (!data)
+    throw Object.assign(new Error('Cloudflare usage unavailable'), { diagnostics });
   const sum = (groups, fields) =>
     Object.fromEntries(
       fields.map((field) => [
@@ -94,6 +161,7 @@ export async function cloudUsage() {
   return {
     checkedAt: new Date().toISOString(),
     utcDate: date,
+    analytics: { diagnostics },
     d1: sum(data.d1AnalyticsAdaptiveGroups, ['rowsRead', 'rowsWritten']),
     workers: sum(data.workersInvocationsAdaptive, ['requests', 'errors']),
     durableObjects: {
@@ -126,4 +194,11 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 )
-  console.log(JSON.stringify(await cloudUsage()));
+  try {
+    console.log(JSON.stringify(await cloudUsage()));
+  } catch (error) {
+    console.error(
+      JSON.stringify({ message: error.message, diagnostics: error.diagnostics }),
+    );
+    process.exitCode = 1;
+  }

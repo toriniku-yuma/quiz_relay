@@ -66,6 +66,9 @@ beforeAll(async () => {
     ...env,
     FEDERATION_LIMITER: unlimited,
     GAME_D1: runtime.PEER_D1,
+    ACCOUNT_ERASURE: {
+      fetch: vi.fn(async () => Response.json({ ready: false }, { status: 503 })),
+    },
     FEDERATION_ORIGIN: hostOrigin,
     SIGNING_KID: 'host',
     SIGNING_PRIVATE_KEY: await exportPKCS8(hostKeys.privateKey),
@@ -167,6 +170,14 @@ it('通信断と受信後の反映待ちを区別し、同じ署名原本を再�
   expect(received.message).toBe(failed.message);
   expect(received.receivedAt).not.toBeNull();
   expect(received.appliedAt).toBeNull();
+  if (!host.ACCOUNT_ERASURE) throw new Error('TEST_SERVICE_REQUIRED');
+  expect(
+    vi
+      .mocked(host.ACCOUNT_ERASURE.fetch)
+      .mock.calls.some(
+        ([, init]) => JSON.parse(String(init?.body)).task === 'federationControls',
+      ),
+  ).toBe(true);
   expect(
     (
       await hostDb
@@ -183,9 +194,6 @@ it('通信断と受信後の反映待ちを区別し、同じ署名原本を再�
         .where(eq(federationActors.actorId, account.actorId))
     )[0].displayName,
   ).toBeNull();
-  await changeD1(hostDb, async (writes) => {
-    writes.push(hostDb.update(instances).set({ roomInventoryComplete: false }));
-  });
   await applyControlEvent(host, sourceOrigin, payload.eventId);
   const inbox = async () =>
     (
@@ -194,13 +202,10 @@ it('通信断と受信後の反映待ちを区別し、同じ署名原本を再�
         .from(federationControlInbox)
         .where(eq(federationControlInbox.eventId, payload.eventId))
     )[0];
-  expect((await inbox()).appliedAt).toBeNull();
-  await changeD1(hostDb, async (writes) => {
-    writes.push(hostDb.update(instances).set({ roomInventoryComplete: true }));
-  });
+  expect((await inbox()).appliedAt).not.toBeNull();
   await applyControlEvent(host, sourceOrigin, payload.eventId);
-  expect(logout).toHaveBeenCalledWith(account.actorId);
-  expect(anonymize).toHaveBeenCalledWith(account.actorId, []);
+  expect(logout).not.toHaveBeenCalled();
+  expect(anonymize).not.toHaveBeenCalled();
   await manageFederation(sourceDb, 'source-admin', {
     operation: 'retryControl',
     peerOrigin: hostOrigin,

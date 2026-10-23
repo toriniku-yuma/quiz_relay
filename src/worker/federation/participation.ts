@@ -5,10 +5,10 @@ import { contentHash } from '../catalog/hash.ts';
 import { changeD1 } from '../db/d1.ts';
 import {
   federationActors,
+  federationLoginSessions,
   federationNonces,
   federationParticipations,
   federationPeers,
-  federationReservationClosures,
   federationReservations,
   federationRetiredIdentities,
   federationSessions,
@@ -19,7 +19,12 @@ import {
 import type { Env } from '../env.ts';
 import { matchRoomName, userRoomName } from '../game/room-names.ts';
 import { matchmaker } from '../matchmaking/instance.ts';
-import { actorForSubject, OrganizationError, validId } from '../organization/access.ts';
+import {
+  actorForSubject,
+  OrganizationError,
+  validId,
+  validName,
+} from '../organization/access.ts';
 import { allowedInstanceActors } from '../organization/database.ts';
 import { ensureCasualCatalog } from '../rooms/database.ts';
 import { roomResult } from '../rooms/rpc.ts';
@@ -39,12 +44,13 @@ import {
 
 const participationLifetime = 60000;
 type Reservation = typeof federationReservations.$inferSelect;
-type ReservationRequest = {
+export type ReservationRequest = {
   sourceOrganizationId: string;
   hostInstanceId: string;
   mode: 'ranked' | 'casual' | 'room';
   actorId: string;
   displayName: string;
+  serverName: string;
   operationId: string;
   authorizationId: string;
 };
@@ -62,7 +68,7 @@ function reservationRequest(value: unknown): ReservationRequest {
   const input = object(value);
   if (
     Object.keys(input).sort().join(',') !==
-      'actorId,authorizationId,displayName,hostInstanceId,mode,operationId,sourceOrganizationId' ||
+      'actorId,authorizationId,displayName,hostInstanceId,mode,operationId,serverName,sourceOrganizationId' ||
     typeof input.actorId !== 'string' ||
     !/^[a-f0-9]{64}$/.test(input.actorId)
   )
@@ -76,6 +82,7 @@ function reservationRequest(value: unknown): ReservationRequest {
     mode: participationMode(input.mode),
     actorId: input.actorId,
     displayName,
+    serverName: validName(input.serverName),
     operationId: validId(input.operationId),
     authorizationId: validId(input.authorizationId),
   };
@@ -136,7 +143,7 @@ async function reservationIdentity(
     admission.token,
   );
 }
-export async function authorizeParticipation(env: Env, subject: string, value: unknown) {
+export async function prepareParticipation(env: Env, subject: string, value: unknown) {
   const input = object(value);
   if (
     Object.keys(input).sort().join(',') !==
@@ -151,60 +158,48 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
     operationId = validId(input.operationId),
     identity = await participationSource(db, subject, sourceOrganizationId);
   if (!identity.account.displayName) throw new OrganizationError('PROFILE_REQUIRED', 409);
-  const check = async () => {
-    await requireParticipationSending(db, peerOrigin);
-    if (
-      !(
-        await sourceActors(db, sourceOrganizationId, mode, [identity.account.actorId])
-      ).includes(identity.account.actorId)
-    )
-      throw new OrganizationError('PARTICIPATION_RESTRICTED', 403);
-  };
-  const maker = matchmaker(env),
-    target = { sourceOrganizationId, hostInstanceId, peerOrigin, mode };
-  try {
-    await check();
-  } catch (error) {
-    if (
-      !(error instanceof OrganizationError) ||
-      !['FEDERATION_PARTICIPATION_DENIED', 'PARTICIPATION_RESTRICTED'].includes(
-        error.code,
-      ) ||
-      !(await maker.foreignContinuation(identity.account.actorId, operationId, target))
-    )
-      throw error;
-  }
-  const claimed = await maker.claimForeign(
-    identity.account.actorId,
-    target,
-    operationId,
-    identity.account.displayName,
-  );
-  if (!claimed.ok)
-    throw new OrganizationError(claimed.code, claimed.code === 'RATE_LIMIT' ? 429 : 409);
-  const response = await requestPeer(
-    env,
+  await requireParticipationSending(db, peerOrigin);
+  if (
+    !(
+      await sourceActors(db, sourceOrganizationId, mode, [identity.account.actorId])
+    ).includes(identity.account.actorId)
+  )
+    throw new OrganizationError('PARTICIPATION_RESTRICTED', 403);
+  return {
     peerOrigin,
-    API_PATHS.participationReservations,
-    'reservation.request',
-    'reservation.response',
-    {
+    reservation: {
       sourceOrganizationId,
       hostInstanceId,
       mode,
       operationId,
       actorId: identity.account.actorId,
-      displayName: claimed.name,
-      authorizationId: claimed.authorizationId,
+      displayName: identity.account.displayName,
+      serverName: identity.organization.name,
+      authorizationId: crypto.randomUUID(),
     },
-    32768,
-    true,
+  };
+}
+
+export async function issueParticipation(
+  env: Env,
+  subject: string,
+  value: unknown,
+  authorizationId: string,
+  reservation: unknown,
+) {
+  // Re-read the account and restrictions after reservation; a preparation is not a ticket.
+  const { peerOrigin, reservation: authorized } = await prepareParticipation(
+    env,
+    subject,
+    value,
   );
-  const result = object(response.body);
+  const { actorId, sourceOrganizationId, hostInstanceId, mode } = authorized;
+  validId(authorizationId);
+  const db = federationDatabase(env);
+  const result = object(reservation);
   if (
     Object.keys(result).sort().join(',') !==
-      'existingStarted,expiresAt,matchId,reservationId,sessionExpiresAt' ||
-    typeof result.existingStarted !== 'boolean' ||
+      'expiresAt,matchId,reservationId,sessionExpiresAt' ||
     !Number.isSafeInteger(result.expiresAt) ||
     Number(result.expiresAt) <= Date.now() + 5000 ||
     Number(result.expiresAt) > Date.now() + participationLifetime + 5000 ||
@@ -213,23 +208,32 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
     Number(result.sessionExpiresAt) > Date.now() + 43200000 + 5000
   )
     throw new OrganizationError('INVALID_RESERVATION_RESPONSE', 503);
-  if (!result.existingStarted) await check();
-  const committed = await maker.commitForeign(
-    identity.account.actorId,
-    operationId,
-    validId(result.reservationId),
-    Number(result.sessionExpiresAt),
-    claimed.authorizationId,
-  );
-  if (!committed.ok) throw new OrganizationError(committed.code, 409);
   await changeD1(db, async (writes) => {
+    const [previous] = await db
+      .select()
+      .from(federationParticipations)
+      .where(
+        and(
+          eq(federationParticipations.peerOrigin, peerOrigin),
+          eq(federationParticipations.reservationId, validId(result.reservationId)),
+        ),
+      );
+    if (
+      previous &&
+      (previous.actorId !== actorId ||
+        previous.sourceOrganizationId !== sourceOrganizationId ||
+        previous.hostInstanceId !== hostInstanceId ||
+        previous.matchId !== result.matchId ||
+        previous.mode !== mode)
+    )
+      throw new OrganizationError('PARTICIPATION_BINDING', 409);
     writes.push(
       db
         .insert(federationParticipations)
         .values({
           peerOrigin,
           reservationId: validId(result.reservationId),
-          actorId: identity.account.actorId,
+          actorId,
           sourceOrganizationId,
           hostInstanceId,
           matchId: validId(result.matchId),
@@ -244,20 +248,41 @@ export async function authorizeParticipation(env: Env, subject: string, value: u
     ticket: await signParticipationTicket(env, {
       protocolVersion: 1,
       iss: federationConfig(env).origin,
-      sub: identity.account.actorId,
+      sub: actorId,
       aud: peerOrigin,
       sourceOrganizationId,
       hostInstanceId,
       mode,
       matchId: validId(result.matchId),
       reservationId: validId(result.reservationId),
-      authorizationId: claimed.authorizationId,
+      authorizationId,
       jti: crypto.randomUUID(),
       iat: now,
       exp: Math.min(now + 60, Math.floor(Number(result.expiresAt) / 1000)),
     }),
     expiresAt: Number(result.expiresAt),
   };
+}
+
+export async function authorizeParticipation(env: Env, subject: string, value: unknown) {
+  const prepared = await prepareParticipation(env, subject, value);
+  const response = await requestPeer(
+    env,
+    prepared.peerOrigin,
+    API_PATHS.participationReservations,
+    'reservation.request',
+    'reservation.response',
+    prepared.reservation,
+    32768,
+    true,
+  );
+  return issueParticipation(
+    env,
+    subject,
+    value,
+    prepared.reservation.authorizationId,
+    response.body,
+  );
 }
 
 export async function reserveParticipation(env: Env, peerOrigin: string, value: unknown) {
@@ -270,40 +295,6 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
     organization.identityNamespace,
     `federation:${peerOrigin}:${input.actorId}`,
   );
-  const [prior] = await db
-    .select()
-    .from(federationReservations)
-    .where(
-      and(
-        eq(federationReservations.peerOrigin, peerOrigin),
-        eq(federationReservations.operationId, input.operationId),
-      ),
-    );
-  let continuation:
-    | {
-        admission: { ok: true; room: string; token: string; expires: number };
-        matchId: string;
-      }
-    | undefined;
-  if (
-    prior?.state === 'exchanged' &&
-    prior.requestHash === hash &&
-    (prior.roomId || prior.mode === 'room') &&
-    prior.sessionExpiresAt > Date.now()
-  ) {
-    const [host] = await db
-      .select()
-      .from(instances)
-      .where(eq(instances.id, prior.instanceId));
-    if (host) {
-      const admission = await reservationAdmission(env, prior, host);
-      if (admission.ok && admission.room === (prior.roomId ?? '')) {
-        const actual = await reservationIdentity(env, prior, admission);
-        if (actual.matchId === prior.matchId && actual.phase !== 'WAITING')
-          continuation = { admission, matchId: actual.matchId };
-      }
-    }
-  }
   const reservation = await changeD1(db, async (writes) => {
     const [retired] = await db
       .select()
@@ -315,31 +306,19 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
         ),
       );
     if (retired) throw new OrganizationError('ACCOUNT_WITHDRAWN', 403);
-    const [closed] = await db
-      .select()
-      .from(federationReservationClosures)
-      .where(
-        and(
-          eq(federationReservationClosures.peerOrigin, peerOrigin),
-          eq(federationReservationClosures.operationId, input.operationId),
-        ),
-      );
-    if (closed) throw new OrganizationError('STALE_RESERVATION', 409);
     const [instance] = await db
       .select()
       .from(instances)
       .where(eq(instances.id, input.hostInstanceId));
     if (
-      !instance ||
-      (!continuation &&
-        (instance.state !== 'published' ||
-          (input.mode === 'ranked'
-            ? instance.rankedPauseReason
-            : instance.casualPauseReason ||
-              (input.mode === 'casual' && !instance.casualConfig.enabled))))
+      instance?.state !== 'published' ||
+      (input.mode === 'ranked'
+        ? instance.rankedPauseReason
+        : instance.casualPauseReason ||
+          (input.mode === 'casual' && !instance.casualConfig.enabled))
     )
       throw new OrganizationError('INSTANCE_NOT_AVAILABLE', 403);
-    if (!continuation) await requireParticipationReceiving(db, peerOrigin, input.mode);
+    await requireParticipationReceiving(db, peerOrigin, input.mode);
     const [account] = await db
       .select()
       .from(organizationAccounts)
@@ -418,6 +397,7 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
       instanceId: instance.id,
       mode: input.mode,
       displayName: input.displayName,
+      serverName: input.serverName,
       roomId: null,
       matchId: null,
       state: 'creating',
@@ -456,21 +436,18 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
       matchId: row.id,
       expiresAt: Date.now() + participationLifetime,
       sessionExpiresAt: admission.expires,
-      existingStarted: !!continuation,
     };
   }
-  if (!continuation && input.mode === 'casual')
-    await ensureCasualCatalog(env, instance.id);
-  const result =
-    continuation?.admission ??
-    (await matchmaker(env).enter(
-      actorId,
-      input.displayName,
-      row.state === 'exchanged',
-      participationScope(instance, input.mode),
-      false,
-      row.state === 'exchanged' ? undefined : input.operationId,
-    ));
+  if (input.mode === 'casual') await ensureCasualCatalog(env, instance.id);
+  const result = await matchmaker(env).enter(
+    actorId,
+    input.displayName,
+    row.state === 'exchanged',
+    participationScope(instance, input.mode),
+    false,
+    row.state === 'exchanged' ? undefined : input.operationId,
+    input.serverName,
+  );
   if (!result.ok)
     throw new OrganizationError(
       result.code,
@@ -490,7 +467,7 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
     row.state === 'exchanged' ? result.expires : row.expiresAt,
   );
   await changeD1(db, async (writes) => {
-    if (!continuation) await requireParticipationReceiving(db, peerOrigin, input.mode);
+    await requireParticipationReceiving(db, peerOrigin, input.mode);
     const [current] = await db
       .select()
       .from(federationReservations)
@@ -514,7 +491,6 @@ export async function reserveParticipation(env: Env, peerOrigin: string, value: 
     matchId: actual.matchId,
     expiresAt,
     sessionExpiresAt: result.expires,
-    existingStarted: !!continuation,
   };
 }
 
@@ -546,8 +522,8 @@ export async function validateHomeParticipation(
     throw new OrganizationError('INVALID_PARTICIPATION', 400);
   const db = federationDatabase(env),
     sourceOrganizationId = validId(input.sourceOrganizationId),
-    hostInstanceId = validId(input.hostInstanceId),
     mode = participationMode(input.mode);
+  validId(input.hostInstanceId);
   const actors = input.actors.map((actor) => ({
     actorId: String(actor.actorId),
     operationId: validId(actor.operationId),
@@ -575,22 +551,7 @@ export async function validateHomeParticipation(
     actorIds,
     input.existing,
   );
-  const verified: string[] = [];
-  for (const actor of actors) {
-    if (!allowed.includes(actor.actorId)) continue;
-    if (
-      await matchmaker(env).foreignAuthorization(
-        actor.actorId,
-        actor.operationId,
-        actor.authorizationId,
-        { peerOrigin, sourceOrganizationId, hostInstanceId, mode },
-      )
-    )
-      verified.push(actor.actorId);
-  }
-  return {
-    actors: verified,
-  };
+  return { actors: allowed };
 }
 
 export async function refreshParticipationAccess(
@@ -639,6 +600,7 @@ export async function refreshParticipationAccess(
   for (const group of groups.values()) {
     const first = group[0];
     let allowed: string[] = [];
+    let unavailable = false;
     try {
       const response = await requestPeer(
         env,
@@ -669,7 +631,7 @@ export async function refreshParticipationAccess(
         throw new OrganizationError('INVALID_PARTICIPATION_RESPONSE', 503);
       allowed = result.actors as string[];
     } catch {
-      /* A cached permission cannot bypass a failed home check. */
+      unavailable = true;
     }
     await changeD1(db, async (writes) => {
       for (const row of group)
@@ -689,10 +651,15 @@ export async function refreshParticipationAccess(
             ),
         );
     });
+    if (unavailable) throw new OrganizationError('FEDERATION_PEER_UNAVAILABLE', 503);
   }
 }
 
-export async function exchangeParticipation(env: Env, value: unknown) {
+export async function exchangeParticipation(
+  env: Env,
+  value: unknown,
+  loginSecret?: string,
+) {
   const input = object(value);
   if (Object.keys(input).join(',') !== 'ticket')
     throw new OrganizationError('INVALID_PARTICIPATION', 400);
@@ -763,6 +730,24 @@ export async function exchangeParticipation(env: Env, value: unknown) {
   const secret = crypto.randomUUID() + crypto.randomUUID(),
     hash = await contentHash(secret);
   const row = await changeD1(db, async (writes) => {
+    if (loginSecret !== undefined) {
+      const [login] = await db
+        .select()
+        .from(federationLoginSessions)
+        .where(
+          and(
+            eq(federationLoginSessions.hash, await contentHash(loginSecret)),
+            gt(federationLoginSessions.expiresAt, Date.now()),
+          ),
+        );
+      if (!login) throw new OrganizationError('SESSION_REQUIRED', 401);
+      if (
+        login.peerOrigin !== ticket.iss ||
+        login.sourceActorId !== ticket.sub ||
+        login.sourceOrganizationId !== ticket.sourceOrganizationId
+      )
+        throw new OrganizationError('PARTICIPATION_TICKET_BINDING', 401);
+    }
     const [current] = await db
         .select()
         .from(federationReservations)

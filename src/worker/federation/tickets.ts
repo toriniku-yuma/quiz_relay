@@ -4,10 +4,17 @@ import {
   CompactSign,
   compactVerify,
   decodeProtectedHeader,
+  exportJWK,
+  importJWK,
   importPKCS8,
   importSPKI,
+  jwtVerify,
+  SignJWT,
 } from 'jose';
-import type { ForeignLoginTicket } from '../../shared/participation.ts';
+import {
+  FOREIGN_LOGIN_LIFETIME,
+  type ForeignLoginTicket,
+} from '../../shared/participation.ts';
 import { normalizeDisplayName } from '../../shared/profile.ts';
 import { federationPeers } from '../db/schema.ts';
 import type { Env } from '../env.ts';
@@ -139,10 +146,13 @@ function loginClaims(value: unknown): ForeignLoginTicket {
   const ticket = value as ForeignLoginTicket;
   if (
     Object.keys(ticket).sort().join(',') !==
-      'aud,exp,hostInstanceId,iat,iss,jti,mode,name,organizationName,protocolVersion,sourceOrganizationId,state,sub' ||
+      'aud,exp,grant,hostInstanceId,iat,iss,jti,mode,name,organizationName,protocolVersion,sourceOrganizationId,state,sub' ||
     ticket.protocolVersion !== 1 ||
     !/^[a-f0-9]{64}$/.test(ticket.sub) ||
     !['ranked', 'casual', 'room'].includes(ticket.mode) ||
+    typeof ticket.grant !== 'string' ||
+    ticket.grant.length > 4096 ||
+    !ticket.grant ||
     !ticket.name ||
     normalizeDisplayName(ticket.name) !== ticket.name ||
     validName(ticket.organizationName) !== ticket.organizationName
@@ -177,3 +187,70 @@ export async function signForeignLoginTicket(env: Env, ticket: ForeignLoginTicke
 }
 export const verifyForeignLoginTicket = (env: Env, message: unknown) =>
   verifyTicket(env, message, loginType, loginClaims);
+
+const grantType = 'quiz-relay-participation-grant+jwt';
+export async function signParticipationGrant(
+  env: Env,
+  peerOrigin: string,
+  actorId: string,
+  organizationId: string,
+) {
+  const config = federationConfig(env),
+    now = Math.floor(Date.now() / 1000);
+  return new SignJWT({ sourceOrganizationId: organizationId })
+    .setProtectedHeader({ alg: 'EdDSA', kid: config.kid, typ: grantType })
+    .setIssuer(config.origin)
+    .setAudience(peerOrigin)
+    .setSubject(actorId)
+    .setJti(crypto.randomUUID())
+    .setIssuedAt(now)
+    .setExpirationTime(now + FOREIGN_LOGIN_LIFETIME / 1000)
+    .sign(await importPKCS8(config.privateKey, 'EdDSA'));
+}
+export async function verifyParticipationGrant(
+  env: Env,
+  peerOrigin: string,
+  grant: unknown,
+) {
+  try {
+    if (typeof grant !== 'string' || grant.length > 4096) throw new Error('SIZE');
+    const config = federationConfig(env);
+    const privateKey = await importPKCS8(config.privateKey, 'EdDSA', {
+      extractable: true,
+    });
+    const { kty, crv, x } = await exportJWK(privateKey);
+    const { payload, protectedHeader } = await jwtVerify(
+      grant,
+      await importJWK({ kty, crv, x }, 'EdDSA'),
+      {
+        algorithms: ['EdDSA'],
+        issuer: config.origin,
+        audience: peerOrigin,
+        typ: grantType,
+        maxTokenAge: FOREIGN_LOGIN_LIFETIME / 1000,
+        clockTolerance: CLOCK_SKEW,
+      },
+    );
+    if (
+      protectedHeader.kid !== config.kid ||
+      Object.keys(payload).sort().join(',') !==
+        'aud,exp,iat,iss,jti,sourceOrganizationId,sub' ||
+      typeof payload.sub !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(payload.sub) ||
+      typeof payload.iat !== 'number' ||
+      !Number.isSafeInteger(payload.iat) ||
+      typeof payload.exp !== 'number' ||
+      !Number.isSafeInteger(payload.exp) ||
+      payload.exp <= payload.iat ||
+      payload.exp - payload.iat > FOREIGN_LOGIN_LIFETIME / 1000
+    )
+      throw new Error('CLAIMS');
+    validId(payload.jti);
+    return {
+      actorId: payload.sub,
+      organizationId: validId(payload.sourceOrganizationId),
+    };
+  } catch {
+    throw new OrganizationError('FOREIGN_LOGIN_EXPIRED', 401);
+  }
+}

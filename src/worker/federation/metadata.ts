@@ -244,7 +244,7 @@ async function refreshFederationMetadata(
             peerOrigin,
             attemptId,
             leaseUntil: Date.now() + 10000,
-            nextAttemptAt: Date.now() + 60000,
+            nextAttemptAt: (Math.floor(Date.now() / 3600000) + 1) * 3600000,
           },
         ],
         true,
@@ -341,8 +341,8 @@ async function refreshFederationMetadata(
             leaseUntil: 0,
             failures: 0,
             errorCode: null,
-            // Cron already limits refreshes to one pass per minute. Rounding a late
-            // completion forward can skip the next tick and expire the 90s cache.
+            // The hourly Cron limits refreshes. Keep completed jobs eligible for the
+            // next invocation even when a request crosses the hour boundary.
             nextAttemptAt: Date.now(),
           })
           .where(jobKey),

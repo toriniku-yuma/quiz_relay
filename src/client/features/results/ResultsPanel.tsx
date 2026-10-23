@@ -10,6 +10,7 @@ import { HISTORY_PATH } from '../../app/paths';
 import Button from '../../components/Button';
 import DataTable from '../../components/DataTable';
 import Panel from '../../components/Panel';
+import PlayerName from '../../components/PlayerName';
 import PlayReport from '../rooms/PlayReport';
 import SelfRanking from './SelfRanking';
 import { useResults } from './useResults';
@@ -109,7 +110,9 @@ export default function ResultsPanel({
             {results.data?.ranking.map((player) => (
               <tr key={player.actorId}>
                 <td>{player.rank}位</td>
-                <td>{player.name}</td>
+                <td>
+                  <PlayerName player={player} />
+                </td>
                 <td>{player.rating}</td>
               </tr>
             ))}
@@ -138,7 +141,7 @@ export default function ResultsPanel({
               {entry.players.map((player) => (
                 <tr key={player.id}>
                   <td>
-                    {player.name}
+                    <PlayerName player={player} />
                     {player.guest ? '（ゲスト）' : ''}
                     {player.role === 'presenter' ? '（出題専任）' : ''}
                   </td>
@@ -149,7 +152,7 @@ export default function ResultsPanel({
                     {instanceId && actor && !player.guest && player.id !== actor && (
                       <PlayReport
                         instanceId={instanceId}
-                        title={`${player.name}を通報`}
+                        title={`$<PlayerName player={player} />を通報`}
                         input={{
                           action: 'user',
                           actorId: player.id,

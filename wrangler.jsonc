@@ -30,7 +30,7 @@
       "migrations_dir": "drizzle-d1"
     }
   ],
-  "triggers": { "crons": ["* * * * *"] },
+  "triggers": { "crons": ["0 * * * *", "0 19 * * *"] },
   "services": [
     {
       "binding": "ACCOUNT_ERASURE",
@@ -55,8 +55,18 @@
     {
       "name": "FEDERATION_LIMITER",
       "namespace_id": "716329420",
-      "simple": { "limit": 60, "period": 60 }
+      "simple": { "limit": 600, "period": 60 }
     }
   ],
-  "observability": { "enabled": false }
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "persist": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": false
+    },
+    "traces": { "enabled": false }
+  }
 }

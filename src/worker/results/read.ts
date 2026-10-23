@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql, sum } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, sql, sum } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { ResultsOverview, ResultsQuery } from '../../shared/results.ts';
 import { type Database, readD1 } from '../db/d1.ts';
@@ -6,6 +6,7 @@ import { resultPlayers as p, matches as r } from '../db/schema.ts';
 import { privateResultSQL } from './privacy.ts';
 import { ratingPolicy } from './rating.ts';
 import type { ResultRecord } from './record.ts';
+import { resultSnapshot } from './snapshot.ts';
 
 export async function readResults(
   db: Database,
@@ -20,6 +21,13 @@ export async function readResults(
     const ranked = db
       .select({
         actorId: p.actorId,
+        serverName: sql<string | null>`(select json_extract(player.value, '$.serverName')
+            from ${r} as ${sql.identifier('latest_result')}, json_each(${privateResultSQL(latest.payload)}, '$.players') player
+            where ${latest.owner} = ${owner} and json_extract(${latest.payload}, '$.kind') = 'ranked'
+              and json_extract(player.value, '$.id') = ${p.actorId}
+            order by ${latest.finishedAt} desc, ${latest.matchId} desc limit 1)`.as(
+          'serverName',
+        ),
         name: sql<string>`(select json_extract(player.value, '$.name')
             from ${r} as ${sql.identifier('latest_result')}, json_each(${privateResultSQL(latest.payload)}, '$.players') player
             where ${latest.owner} = ${owner} and json_extract(${latest.payload}, '$.kind') = 'ranked'
@@ -39,6 +47,7 @@ export async function readResults(
       .where(
         and(
           eq(r.owner, owner),
+          isNotNull(r.finishedAt),
           sql`${r.payload}->>'kind' = 'ranked'`,
           excludedActors.length
             ? sql`${p.actorId} not in (select value from json_each(${JSON.stringify(excludedActors)}))`
@@ -75,6 +84,7 @@ export async function readResults(
           .where(
             and(
               eq(r.owner, owner),
+              isNotNull(r.finishedAt),
               eq(p.actorId, actorId),
               sql`${r.payload}->>'kind' = 'ranked'`,
             ),
@@ -89,6 +99,7 @@ export async function readResults(
         : await db
             .select({
               matchId: r.matchId,
+              status: r.status,
               finishedAt: sql<string>`${r.finishedAt}`,
               reason: sql<string>`${r.payload}->'result'->>'reason'`,
               winnerId: sql<string | null>`${r.payload}->'result'->>'winnerId'`,
@@ -103,6 +114,7 @@ export async function readResults(
             .where(
               and(
                 eq(r.owner, owner),
+                isNotNull(r.finishedAt),
                 eq(p.actorId, actorId),
                 query.kind ? sql`${r.payload}->>'kind' = ${query.kind}` : undefined,
                 query.matchId ? eq(r.matchId, query.matchId) : undefined,
@@ -121,6 +133,7 @@ export async function readResults(
       last = page.at(-1);
 
     return {
+      actorId,
       ranking,
       ...(self ? { self } : {}),
       ...(query.section === 'history' && !query.matchId
@@ -134,9 +147,18 @@ export async function readResults(
                 : null,
           }
         : {}),
-      history: page.map(({ payload, ...entry }) => ({
+      history: page.map(({ payload, status, ...entry }) => ({
         ...entry,
         kind: payload.kind,
+        ...(query.matchId
+          ? {
+              snapshot: resultSnapshot(
+                payload,
+                status === 'conflict' ? 'conflict' : 'confirmed',
+              ),
+              parentRoomId: payload.parentRoomId,
+            }
+          : {}),
         correct: payload.players.find((player) => player.id === actorId)?.correct ?? 0,
         mistakes: payload.players.find((player) => player.id === actorId)?.mistakes ?? 0,
         questions: payload.completedQuestions?.map(
@@ -161,12 +183,26 @@ export async function readResults(
                   ? 'win'
                   : 'loss',
         players: payload.players.map(
-          ({ id, name, correct, mistakes, ratingDelta, guest, role }) => ({
+          ({
             id,
             name,
+            serverName,
             correct,
             mistakes,
             ratingDelta,
+            guest,
+            role,
+            disqualified,
+            forfeited,
+          }) => ({
+            id,
+            name,
+            serverName,
+            correct,
+            mistakes,
+            ratingDelta,
+            disqualified,
+            ...(forfeited ? { forfeited } : {}),
             ...(guest ? { guest } : {}),
             ...(role ? { role } : {}),
           }),

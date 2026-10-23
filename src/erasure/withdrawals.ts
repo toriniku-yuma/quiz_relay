@@ -1,8 +1,7 @@
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { changeD1, type Database } from '../worker/db/d1.ts';
 import {
   instanceRooms,
-  instances,
   accountWithdrawals as jobs,
   moderationEvents,
   moderationRequests,
@@ -16,20 +15,18 @@ import {
   questionSets,
   questionSubmissionEvents,
   questionSubmissions,
-  questionVersions,
   resultPrivacyJobs,
+  roomMembers,
   sanctionAppeals,
   userReports,
 } from '../worker/db/schema.ts';
-import type { Env } from '../worker/env.ts';
-import { matchmaker } from '../worker/matchmaking/instance.ts';
 import { privateSelectionSQL } from '../worker/results/privacy.ts';
 import {
   anonymousAuditDetails,
   anonymousAuditReason,
   anonymousSanction,
 } from './audit.ts';
-import { erasureBatch } from './limits.ts';
+import { eraseResultNames } from './results.ts';
 
 async function eraseWithdrawalAudit(db: Database, id: string) {
   return changeD1(db, async (writes) => {
@@ -41,6 +38,11 @@ async function eraseWithdrawalAudit(db: Database, id: string) {
     if (!job?.withdrawn) throw new Error('WITHDRAWAL_REQUIRED');
     const actor = job.actorId;
     writes.push(
+      db.delete(roomMembers).where(eq(roomMembers.actorId, actor)),
+      db
+        .update(instanceRooms)
+        .set({ original: [] })
+        .where(eq(instanceRooms.sourceOwner, actor)),
       db
         .update(moderationEvents)
         .set({
@@ -117,11 +119,7 @@ async function eraseWithdrawalAudit(db: Database, id: string) {
   });
 }
 
-export async function anonymizeWithdrawal(
-  db: Database,
-  env: Pick<Env, 'GAME_ROOM' | 'MATCHMAKER'>,
-  id: string,
-) {
+export async function anonymizeWithdrawal(db: Database, id: string) {
   const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
   if (!job || job.erasedAt) return true;
   const [account] = await db
@@ -137,79 +135,8 @@ export async function anonymizeWithdrawal(
         .where(eq(jobs.id, id)),
     );
   });
-  const maker = matchmaker(env);
-  const admission = await maker.beginWithdrawal(job.actorId, job.id);
-  if (!admission.ok) throw new Error(admission.code);
-  await maker.logoutActor(job.actorId);
   if (!job.auditErasedAt) await eraseWithdrawalAudit(db, id);
-  const scopes = await db
-    .select()
-    .from(instances)
-    .where(eq(instances.organizationId, job.organizationId));
-  if (scopes.some((scope) => !scope.roomInventoryComplete)) {
-    await changeD1(db, async (writes) => {
-      writes.push(db.update(jobs).set({ roomCursor: null }).where(eq(jobs.id, id)));
-    });
-    return false;
-  }
-  const authored = await db
-    .select()
-    .from(questionSubmissions)
-    .where(
-      and(
-        eq(questionSubmissions.authorId, job.actorId),
-        isNull(questionSubmissions.provenance),
-      ),
-    );
-  const ids = new Set(
-    authored.flatMap((row) => [
-      row.id,
-      row.seriesId,
-      ...(row.publishedId ? [row.publishedId] : []),
-    ]),
-  );
-  const versions = ids.size
-    ? await db
-        .select({ id: questionVersions.questionId })
-        .from(questionVersions)
-        .innerJoin(instances, eq(instances.owner, questionVersions.owner))
-        .where(
-          and(
-            eq(instances.organizationId, job.organizationId),
-            sql`json_extract(${questionVersions.payload}, '$.seriesId') in (select value from json_each(${JSON.stringify([...ids])}))`,
-          ),
-        )
-    : [];
-  for (const version of versions) ids.add(version.id);
-  const rooms = await db
-    .select({ roomId: instanceRooms.roomId })
-    .from(instanceRooms)
-    .innerJoin(instances, eq(instances.id, instanceRooms.instanceId))
-    .where(
-      and(
-        eq(instances.organizationId, job.organizationId),
-        job.roomCursor ? gt(instanceRooms.roomId, job.roomCursor) : undefined,
-      ),
-    )
-    .orderBy(instanceRooms.roomId)
-    .limit(erasureBatch.rooms);
-  for (const room of rooms)
-    await env.GAME_ROOM.get(env.GAME_ROOM.idFromString(room.roomId)).anonymizeAccount(
-      job.actorId,
-      [...ids],
-    );
-  await changeD1(db, async (writes) => {
-    const [current] = await db.select().from(jobs).where(eq(jobs.id, id));
-    if (current && current.roomCursor === job.roomCursor && rooms.length)
-      writes.push(
-        db
-          .update(jobs)
-          .set({ roomCursor: rooms[rooms.length - 1].roomId })
-          .where(eq(jobs.id, id)),
-      );
-  });
-  if (rooms.length === erasureBatch.rooms) return false;
-  await maker.anonymizeAccount(job.actorId, [...ids]);
+  await eraseResultNames(db);
   return changeD1(db, async (writes) => {
     const [current] = await db.select().from(jobs).where(eq(jobs.id, id));
     const [remaining] = await db

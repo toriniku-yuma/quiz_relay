@@ -1,6 +1,6 @@
-import { and, eq, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, lte, or, sql } from 'drizzle-orm';
 import { API_PATHS } from '../../shared/api-paths.ts';
-import { QUESTION_SYNC_INTERVAL_MS } from '../../shared/federation-questions.ts';
+import { nextQuestionSyncAt } from '../../shared/federation-questions.ts';
 import { changeD1, type Database } from '../db/d1.ts';
 import {
   federationPeers,
@@ -129,7 +129,7 @@ export async function refreshQuestionSource(
           .set({
             categories: page.categories.map(({ id, name }) => ({ id, name })),
             lastSuccessAt: Date.now(),
-            nextAttemptAt: Date.now() + QUESTION_SYNC_INTERVAL_MS,
+            nextAttemptAt: nextQuestionSyncAt(Date.now()),
             leaseUntil: 0,
             errorCode: null,
           })
@@ -145,7 +145,7 @@ export async function refreshQuestionSource(
           .update(federationQuestionSources)
           .set({
             leaseUntil: 0,
-            nextAttemptAt: Date.now() + QUESTION_SYNC_INTERVAL_MS,
+            nextAttemptAt: Date.now() + 60000,
             errorCode:
               error instanceof OrganizationError
                 ? error.code
@@ -159,7 +159,7 @@ export async function refreshQuestionSource(
     throw error;
   }
 }
-export async function dueQuestionSources(env: Env, now: number) {
+export async function dueQuestionSources(env: Env, now: number, retryOnly = false) {
   return federationDatabase(env)
     .select({
       instanceId: federationQuestionSources.instanceId,
@@ -184,11 +184,17 @@ export async function dueQuestionSources(env: Env, now: number) {
       and(
         lte(federationQuestionSources.nextAttemptAt, now),
         lte(federationQuestionSources.leaseUntil, now),
+        retryOnly
+          ? or(
+              gt(federationQuestionSources.nextAttemptAt, 0),
+              gt(federationQuestionSources.leaseUntil, 0),
+              isNotNull(federationQuestionSources.errorCode),
+            )
+          : undefined,
         eq(federationPeers.approved, true),
         sql`${instances.state}<>'archived'`,
         eq(federationPolicies.receiveQuestions, true),
       ),
     )
-    .orderBy(federationQuestionSources.nextAttemptAt)
-    .limit(2);
+    .orderBy(federationQuestionSources.nextAttemptAt);
 }

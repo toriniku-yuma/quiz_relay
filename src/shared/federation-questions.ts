@@ -1,7 +1,16 @@
 import type { QuestionInput } from './questions.ts';
 
-export const QUESTION_SYNC_INTERVAL_MS = 300000;
+export const QUESTION_SYNC_INTERVAL_MS = 86400000;
 export const QUESTION_SYNC_FRESH_MS = QUESTION_SYNC_INTERVAL_MS + 120000;
+
+export function nextQuestionSyncAt(now: number) {
+  const offset = 19 * 3600000;
+  return (
+    (Math.floor((now - offset) / QUESTION_SYNC_INTERVAL_MS) + 1) *
+      QUESTION_SYNC_INTERVAL_MS +
+    offset
+  );
+}
 
 export type SharedQuestion = {
   seriesId: string;

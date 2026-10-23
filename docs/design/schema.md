@@ -3,7 +3,7 @@
 [一覧](../README.md) ／ [DB操作](../guides/database.md)
 
 **実装済みの列・制約は `src/worker/db/schema.ts` が正です。**
-このページはデータの責任範囲を説明します。作問・運営・カジュアルマッチ・部屋・組織間連携をD1の72テーブルへ保存します。migrationはDrizzleスキーマから生成します。
+このページはデータの責任範囲を説明します。作問・運営・カジュアルマッチ・部屋・組織間連携をD1の70テーブルへ保存します。migrationはDrizzleスキーマから生成します。
 
 ## 識別と分離
 
@@ -24,7 +24,7 @@ D1はWorker bindingからだけ接続し、ブラウザーへDBを公開しま�
 | 改訂 | 新questionIdを作る。不変の改訂系列と旧IDへの関連を保持 |
 | 使用停止 | 不変内容と別の question_availability で管理 |
 | 有効な設定 | matchmaking_settings の参照を切り替える |
-| 試合 | 開始時のルール・問題・種別・開催元を固定 |
+| 試合 | 待機時に行を作り、開始時のルール・問題・参加者を固定。試合IDとDO名のUUIDを一致させる |
 | 結果 | 原本・各参加者の固定レート差分・outboxを同一TXで保存 |
 | 表示用順位 | 開催元別の確定差分から再生成可能 |
 
@@ -45,11 +45,11 @@ D1にはDBロールや行単位のアクセス制御がないため、通常API�
 
 ## 結果の確定
 
-resultIdと `(owner, matchId)` を一意にします。同一ID・同一hashの再試行だけを成功扱いにし、別内容をON CONFLICTで上書きしません。
+`quiz_game_matches.match_id`をUUIDの主キーとします。待機・進行・確定・無効・競合・取消を同じ行で管理し、確定前は結果をnullにします。同じID・hashの再送だけを成功とし、別hashはconflictへ更新して通常履歴・順位から除外します。
 結果・参加者差分・outboxは不変トリガーで守り、Workerの保存処理だけが原本を追加し、通常APIへoutboxを公開しません。
 
 DB障害ではDOに未保存原本と再試行予定を残します。commit後の応答消失も同じ原本で再試行します。
-部屋の参加枠を解放しても未保存結果を削除しません。[復旧設計](architecture.md)。
+D1の確定と終了通知が終わるまで試合DOを保持し、完了後に削除します。[復旧設計](architecture.md)。
 
 レートの計算・INVALID・同順位の扱いは[対戦仕様](../spec/gameplay.md#specification-027)を参照します。
 外部結果を所属元の通常レートへ足しません。部屋・カジュアルマッチはすべてのランキング指標から除外します。
@@ -64,9 +64,9 @@ DB障害ではDOに未保存原本と再試行予定を残します。commit後�
 | ランク人数 | 既存の `competitions.players_per_match`。参加設定の保存で全実力帯へ新しい不変版を発行し、有効参照を切り替える。カジュアルマッチ人数と独立し、列の追加や旧版の更新はしない |
 | ゲスト本人 | `guest_sessions`。Cookie乱数のSHA-256、組織・表示名・30日期限。期限切れの行を消去Workerで削除 |
 | 本人の保存問題セット | `personal_question_sets`。組織・作成者・revision・問題。本人だけがCRUD／出力でき、退会時と復元後の再消去で削除 |
-| 公開部屋の検索 | `room_directory`。インスタンス・公開・閉鎖状態。参加状態・未出題内容は保持しない。表示前に親DOの公開状態を再確認 |
-| ロビー・開始の固定要求 | 親DO。操作ID・要求hash・revision、参加権、設定、持込内容と期限 |
-| 試合と結果 | 子DOと既存の結果／outbox。部屋ごとに新しい試合ID・結果IDで固定。`kind`と専任／ゲストを保持し、非レート差分は0 |
+| 公開部屋の検索 | `instance_rooms`に設定・部屋主・作成者・秘密値・持込問題・閉鎖を保存。人数と部屋主名をD1だけで取得 |
+| ロビー・開始の固定要求 | メンバーは`room_members`。DOは接続・準備・開始中の固定要求と子sessionだけを保持 |
+| 試合と結果 | D1のmatches行と結果／outbox。試合ごとに新しいmatchIdで固定。`kind`と専任／ゲストを保持し、非レート差分は0 |
 
 D1のmigrationで列・表・FK・indexと不変保護を管理します。ブラウザーのDB直接接続は提供しません。ゲストは通報者になれますが個人通報の対象にはできず、対象ユーザーのFKは登録アカウントに維持します。持込問題は出題済み内容だけを30日公開し、問題通報自体の365日保持とは分けます。
 
@@ -84,16 +84,16 @@ D1のmigrationで列・表・FK・indexと不変保護を管理します。ブ�
 | 取り込み専用カテゴリ | カテゴリの `import_only`。通常投稿・JSON取込・通常問題の移動をAPIで禁止 |
 | 共有元カテゴリの候補 | `quiz_federation_question_sources` の `(instance_id, peer_origin, source_instance_id)`。名前・取得日時・次回予定・lease・エラーを保持。画面APIはキャッシュを読み、定期処理で取得 |
 | inbox | 結果・制御とも `(peerOrigin, eventId)` 一意。署名原本・hash・受領／処理状態・競合hash |
-| outbox配送先 | 結果は `eventId` 主キーと `(resultId, peerOrigin, sourceActorId)` 一意、制御は `(eventId, peerOrigin)` 一意。試行回数・次回時刻・lease・エラー・隔離状態 |
+| outbox配送先 | 結果は `eventId` 主キーと `(matchId, peerOrigin, sourceActorId)` 一意、制御は `(eventId, peerOrigin)` 一意。試行回数・次回時刻・lease・エラー・隔離状態 |
 | チケット消費 | `quiz_federation_nonces` の `(issuer, purpose, nonce)` 一意。jtiをnonceとして期限まで重複交換を拒否 |
 | 参加セッション | tokenのhash・actor・開催instance・match・期限・失効 |
-| 外部ログイン | tokenのhash・所属origin・所属組織・所属actor・表示名・組織名・12時間の期限。参加予約やClerk会員とは独立 |
+| 外部ログイン | tokenのhash・所属origin・所属組織・所属actor・表示名・組織名・所属元が署名した継続参加の証明・12時間の期限。参加予約やClerk会員とは独立 |
 
 受信側はinboxと原本を同一TXで保存してからACKします。受領と履歴反映は別状態として再処理可能にします。
 開催元の参加予約と所属元の結果inboxは所属組織IDを `source_organization_id` に保存します。結果配送は本人の外部対戦履歴のために使い、問題本文・正答・入力履歴は配送しません。[通信](protocol.md)。
 
 参加用キャッシュには自組織IDを保存し、Workerで自組織の範囲を検証します。URL取得先・メタデータ・同期ジョブは所属元instanceへのFKを持たず、問題共有の対象instanceへの制約を持ちます。本人の外部履歴は組織アカウントで取得します。
-`quiz_federation_login_sessions` には期限・本人の索引、参加予約には本人索引を設けます。ログインCookieの秘密はhashだけをDBへ保存し、期限到来時は参加清掃で最大100件ずつ削除します。
+`quiz_federation_login_sessions` には期限・本人の索引、参加予約には本人索引を設けます。ログインCookieの秘密はhashだけをDBへ保存し、期限到来後は日次処理で最大100件ずつ削除します。
 
 ## 制約とmigration
 
@@ -101,7 +101,7 @@ D1のmigrationで列・表・FK・indexと不変保護を管理します。ブ�
 JSON・文字列長・期限・件数は入力境界で検証し、DBでも可能なCHECK・FK・UNIQUEを設けます。
 参照中の固定版をcascade削除しません。署名秘密鍵はDBへ保存せずWorker secretsで管理します。
 
-outboxの状態／再試行時刻、inboxの処理状態／受信時刻、開催元／終了時刻、resultId検索にindexを設けます。
+outboxの状態／再試行時刻、inboxの処理状態／受信時刻、開催元／終了時刻、matchId検索にindexを設けます。
 Drizzle Kitの生成・custom migrationと migration journalとD1の適用履歴 に管理を統一します。
 データのあるDBへ初期seedを再投入しません。[DB手順](../guides/database.md)。
 

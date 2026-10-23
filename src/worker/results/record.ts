@@ -4,6 +4,8 @@ import type { State } from '../game/state.ts';
 import { type MatchKind, ratingChange, ratingPolicy } from './rating.ts';
 
 export type ResultRecord = {
+  questionCount: number;
+  questionNumber: number;
   parentRoomId?: string;
   answerStats: State['answerStats'];
   startingRatings?: Record<string, number>;
@@ -31,6 +33,7 @@ export function makeResultRecord(
     parentRoomId?: string;
     definition?: Omit<MatchDefinition, 'questions' | 'rules'>;
     rules: MatchDefinition['rules'];
+    questionIndex: number;
     matchId: string;
     matchKind: MatchKind;
     startedAt?: number;
@@ -53,6 +56,11 @@ export function makeResultRecord(
     ...(state.completedQuestions ? { completedQuestions: state.completedQuestions } : {}),
     answerStats: state.answerStats,
     questions: state.questions,
+    questionCount:
+      state.rules.winMode === 'questions' && state.rules.questionLimit !== undefined
+        ? Math.min(state.questions.length, state.rules.questionLimit)
+        : state.questions.length,
+    questionNumber: state.questionIndex + 1,
     version: 1,
     owner: state.definition.competition.owner,
     matchId: state.matchId,

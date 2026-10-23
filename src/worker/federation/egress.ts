@@ -9,9 +9,7 @@ const paths = new Set([
   '/federation/v1/results/review',
   '/api/v1/participation/reservations',
   '/federation/v1/participation/validate',
-  '/federation/v1/participation/release',
-  '/federation/v1/participation/status',
-  '/federation/v1/participation/logout',
+  '/federation/v1/participation/authorize',
 ]);
 
 // Initial egress profile: exact approved workers.dev origins only; no custom DNS.

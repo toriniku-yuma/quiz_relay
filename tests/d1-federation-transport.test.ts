@@ -10,7 +10,11 @@ import {
 } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
 import { manageFederation } from '../src/worker/federation/management';
-import { METADATA_PATH, syncPeerMetadata } from '../src/worker/federation/metadata';
+import {
+  METADATA_PATH,
+  refreshScheduledFederationMetadata,
+  syncPeerMetadata,
+} from '../src/worker/federation/metadata';
 import {
   boundedText,
   consumeNonce,
@@ -136,8 +140,8 @@ it('別D1・別署名鍵の通常Worker同士で署名要求・応答とイン�
     fetch.mockRestore();
   }
 });
-it('分の境界をまたぐ同期でも次の毎分実行で再取得できる', async () => {
-  const started = Math.floor(Date.now() / 60000) * 60000 + 59000;
+it('時の境界をまたぐ同期でも次の毎時実行で再取得できる', async () => {
+  const started = Math.floor(Date.now() / 3600000) * 3600000 + 3599000;
   let now = started;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
   const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
@@ -155,7 +159,72 @@ it('分の境界をまたぐ同期でも次の毎分実行で再取得できる'
       .from(federationMetadataJobs)
       .where(eq(federationMetadataJobs.instanceId, instanceId));
     expect(job.errorCode).toBeNull();
-    expect(job.nextAttemptAt).toBeLessThanOrEqual(started + 60000);
+    expect(job.nextAttemptAt).toBeLessThanOrEqual(started + 3600000);
+  } finally {
+    fetch.mockRestore();
+    clock.mockRestore();
+  }
+});
+it('失敗したCronの元の予定時刻が再送されても、待機期限後にメタデータ同期を再開する', async () => {
+  const scheduledTime = Date.now();
+  let now = scheduledTime;
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('network'));
+  const environment = {
+    ...source,
+    ACCOUNT_ERASURE: {
+      fetch: async (_url: string, init: RequestInit) => {
+        const task = JSON.parse(String(init.body));
+        if (task.task === 'federationMetadata')
+          await refreshScheduledFederationMetadata(
+            source,
+            task.instanceId,
+            task.peerOrigin,
+          );
+        return Response.json({ ready: true });
+      },
+    },
+  } as unknown as Env;
+  const run = () =>
+    app.scheduled(
+      { cron: '0 * * * *', scheduledTime } as ScheduledController,
+      environment,
+      {} as ExecutionContext,
+    );
+  try {
+    await expect(
+      syncPeerMetadata(source, 'source-admin', {
+        operation: 'syncMetadata',
+        instanceId,
+        peerOrigin: hostOrigin,
+      }),
+    ).rejects.toThrow('FEDERATION_PEER_UNAVAILABLE');
+    const [failed] = await db
+      .select()
+      .from(federationMetadataJobs)
+      .where(eq(federationMetadataJobs.instanceId, instanceId));
+    expect(failed.failures).toBe(1);
+    expect(failed.leaseUntil).toBe(0);
+    expect(failed.nextAttemptAt).toBeGreaterThan(scheduledTime);
+    fetch.mockImplementation(async (input) =>
+      app.request(input as Request, undefined, host),
+    );
+    await run();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    now = failed.nextAttemptAt + 1;
+    await run();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const [recovered] = await db
+      .select()
+      .from(federationMetadataJobs)
+      .where(eq(federationMetadataJobs.instanceId, instanceId));
+    expect(recovered).toMatchObject({ failures: 0, errorCode: null, leaseUntil: 0 });
+    const [cached] = await db
+      .select()
+      .from(federationMetadata)
+      .where(eq(federationMetadata.instanceId, instanceId));
+    expect(cached.lastSuccessAt).toBe(now);
+    expect(cached.errorCode).toBeNull();
   } finally {
     fetch.mockRestore();
     clock.mockRestore();

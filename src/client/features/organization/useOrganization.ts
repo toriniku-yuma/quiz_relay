@@ -79,7 +79,7 @@ const errors: Record<string, string> = {
   INVALID_TIMEOUT: '終了日時は現在から1分以上30日以内にしてください。',
   REASON_REQUIRED: '理由を1〜1000文字で入力してください。',
   OPERATION_CONFLICT: '再試行の内容が変わっています。詳細を開き直してください。',
-  STALE_REQUEST: 'この参加要求は終了しました。開催先へ戻って、改めて参加してください。',
+  STALE_REQUEST: '参加要求が更新されました。もう一度お試しください。',
   STALE_RESERVATION:
     'この参加予約は終了しました。開催先へ戻って、改めて参加してください。',
   SANCTION_NOT_FOUND: '指定した処分が見つかりません。',

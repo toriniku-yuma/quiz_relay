@@ -1,8 +1,19 @@
+import type { Snapshot } from './game.ts';
+
 export type ResultsOverview = {
+  actorId?: string;
   self?: { rank: number | null; rating: number };
   nextCursor?: HistoryCursor | null;
-  ranking: { actorId: string; name: string; rating: number; rank: number }[];
+  ranking: {
+    actorId: string;
+    name: string;
+    serverName?: string | null;
+    rating: number;
+    rank: number;
+  }[];
   history: {
+    snapshot?: Snapshot;
+    parentRoomId?: string;
     kind?: 'ranked' | 'casual' | 'room' | 'development';
     questions?: {
       authorName?: string;
@@ -22,10 +33,13 @@ export type ResultsOverview = {
     correct?: number;
     mistakes?: number;
     players: {
+      disqualified?: boolean;
+      forfeited?: boolean;
       guest?: boolean;
       role?: 'presenter';
       id: string;
       name: string;
+      serverName?: string | null;
       correct: number;
       mistakes: number;
       ratingDelta: number;

@@ -15,7 +15,6 @@ import {
   questionSettings,
   questionSubmissions,
   questionVersions,
-  roomDirectory,
 } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
 import {
@@ -25,7 +24,6 @@ import {
 } from '../src/worker/organization/database';
 import { requestInstanceDeletion } from '../src/worker/organization/deletion';
 import { currentProfileNames, saveProfile } from '../src/worker/organization/profile';
-import { registerInstanceRoom } from '../src/worker/organization/rooms';
 import { recordWithdrawal } from '../src/worker/organization/withdrawal';
 import { publishQuestionCatalog } from '../src/worker/questions/catalog';
 import { QuestionPlan } from '../src/worker/questions/plan';
@@ -38,7 +36,6 @@ import {
   mutatePersonalSet,
   participantContext,
   personalSets,
-  publishRoom,
   roomDefinition,
   saveCasualSettings,
 } from '../src/worker/rooms/database';
@@ -406,32 +403,6 @@ it('プロフィールと新しい作問者表示を原子保存し、転載の�
 it('部屋登録の範囲を守り、退会作問者の名前を出題固定時にも匿名化する', async () => {
   const instance = await target();
   const scope = { id: instance.id, owner: instance.owner, mode: 'room' as const };
-  const id = crypto.randomUUID();
-  await publishRoom(environment, id, instance.id, true, false);
-  await publishRoom(environment, id, instance.id, false, true);
-  const other = await target();
-  await expect(publishRoom(environment, id, other.id, true, false)).rejects.toThrow(
-    'OPERATION_CONFLICT',
-  );
-  expect(
-    (await db.select().from(roomDirectory).where(eq(roomDirectory.id, id)))[0].closed,
-  ).toBe(true);
-  await registerInstanceRoom(environment, scope, id, false, {
-    authorNames: {},
-    band: 0,
-    boundaries: [1200, 1600],
-    weights: [1, 0, 0],
-    categories: {},
-    revision: 0,
-  });
-  await expect(
-    registerInstanceRoom(
-      environment,
-      { ...scope, owner: other.owner },
-      crypto.randomUUID(),
-      false,
-    ),
-  ).rejects.toThrow('INSTANCE_NOT_FOUND');
   const definition = await roomDefinition(
     environment,
     scope,
@@ -461,10 +432,6 @@ it('部屋登録の範囲を守り、退会作問者の名前を出題固定時�
         .where(eq(instances.id, instance.id)),
     );
   });
-  await expect(
-    registerInstanceRoom(environment, scope, crypto.randomUUID(), false),
-  ).rejects.toThrow('INSTANCE_NOT_FOUND');
-  await registerInstanceRoom(environment, scope, crypto.randomUUID(), true);
   expect(
     (
       await db
@@ -524,8 +491,8 @@ it('待機取消は再送でき、取消済みの試合を復活させない', a
   const waiting = { ...record, startedAt: null, result: null, players: [] };
   const scope = { id: instance.id, owner: instance.owner };
   await registerMatch(environment, scope, waiting);
-  await cancelMatch(environment, record.matchId);
-  await cancelMatch(environment, record.matchId);
+  await cancelMatch(environment, record.owner, record.matchId);
+  await cancelMatch(environment, record.owner, record.matchId);
   const [cancelled] = await db
     .select()
     .from(matches)
@@ -553,7 +520,7 @@ it('取消試合の出題も期限で消去し、取消行の任意改変を拒�
   await registerMatch(environment, { id: instance.id, owner: instance.owner }, waiting);
   const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() - 366 * 86400000);
   try {
-    await cancelMatch(environment, record.matchId);
+    await cancelMatch(environment, record.owner, record.matchId);
   } finally {
     clock.mockRestore();
   }
@@ -601,7 +568,7 @@ it('待機登録後に退会した参加者の試合は開始せず、取消で�
   await expect(startMatch(environment, { ...record, result: null })).rejects.toThrow(
     'MATCH_START_DENIED',
   );
-  await cancelMatch(environment, record.matchId);
+  await cancelMatch(environment, record.owner, record.matchId);
 });
 
 it('試合が進行中のインスタンスはD1の行を確認して完全削除を拒否する', async () => {
@@ -614,7 +581,7 @@ it('試合が進行中のインスタンスはD1の行を確認して完全削�
   await startMatch(environment, { ...record, result: null });
   await db
     .update(instances)
-    .set({ state: 'archived', roomInventoryComplete: true })
+    .set({ state: 'archived' })
     .where(eq(instances.id, instance.id));
   const fetch = vi.fn();
   await expect(

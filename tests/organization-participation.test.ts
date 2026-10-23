@@ -33,7 +33,6 @@ vi.mock('../src/worker/results/lifecycle', async (original) => ({
   startMatch: vi.fn(),
   cancelMatch: vi.fn(),
 }));
-vi.mock('../src/worker/organization/rooms', () => ({ registerInstanceRoom: vi.fn() }));
 vi.mock('../src/worker/organization/moderation', () => ({
   requireUnrestricted: vi.fn(),
 }));
@@ -223,91 +222,6 @@ it('アーカイブの全体再確認でも開始済み試合・再接続を維�
   actor = 'a';
   expect((await post('resume', {})).status).toBe(200);
   expect((await socket(firstAdmission)).status).toBe(101);
-});
-
-it('退会の受付停止は待機・試合中を拒否し、同じ操作IDだけが解除できる', async () => {
-  const maker = runtime.MATCHMAKER.getByName('matchmaker');
-  const operationId = crypto.randomUUID();
-  const firstAdmission = await join('a');
-  expect(await maker.beginWithdrawal('a', operationId)).toEqual({
-    ok: false,
-    code: 'CANCEL_WAITING_FIRST',
-  });
-  await maker.cancelWithdrawal('a', operationId);
-  const secondAdmission = await join('b');
-  await socket(firstAdmission);
-  await socket(secondAdmission);
-  expect(await maker.beginWithdrawal('a', operationId)).toEqual({
-    ok: false,
-    code: 'MATCH_STARTED',
-  });
-  await maker.cancelWithdrawal('a', operationId);
-  expect(await maker.beginWithdrawal('unused', operationId)).toEqual({ ok: true });
-  await maker.cancelWithdrawal('unused', crypto.randomUUID());
-  expect(await maker.enter('unused', 'unused', false, { id, owner })).toMatchObject({
-    ok: false,
-    code: 'WITHDRAWAL_PENDING',
-  });
-  await maker.cancelWithdrawal('unused', operationId);
-  expect(await maker.enter('unused', 'unused', false, { id, owner })).toMatchObject({
-    ok: true,
-  });
-});
-
-it('完全削除は進行中・未保存結果を拒否し、保存済み部屋だけを消去する', async () => {
-  const firstAdmission = await join('a'),
-    secondAdmission = await join('b');
-  const room = runtime.GAME_ROOM.getByName(`match:${firstAdmission.room}`);
-  await socket(firstAdmission);
-  await socket(secondAdmission);
-  await runInDurableObject(room, async (_instance, ctx) => {
-    const saved = await ctx.storage.get<{ state: State }>('room');
-    if (!saved) throw new Error('MISSING_ROOM');
-    saved.state.phase = 'REVEALING';
-    await ctx.storage.put('room', saved);
-  });
-  expect((await room.deletionStatus(id)).safe).toBe(false);
-  expect(await room.eraseInstance(id)).toEqual({ ok: false, code: 'MATCH_STARTED' });
-  await runInDurableObject(room, async (_instance, ctx) => {
-    const saved = await ctx.storage.get<{ state: State }>('room');
-    if (!saved) throw new Error('MISSING_ROOM');
-    saved.state.phase = 'FINISHED';
-    saved.state.result = {
-      winnerId: 'a',
-      reason: 'exhausted',
-      finishedAt: Date.now(),
-      storage: 'pending',
-    };
-    saved.state.completed = { result: saved.state.result } as State['completed'];
-    await ctx.storage.put('room', saved);
-  });
-  expect((await room.deletionStatus(id)).safe).toBe(false);
-  expect(await room.eraseInstance(id)).toEqual({ ok: false, code: 'RESULT_PENDING' });
-  await runInDurableObject(room, async (_instance, ctx) => {
-    const saved = await ctx.storage.get<{ state: State }>('room');
-    if (!saved?.state.result) throw new Error('MISSING_RESULT');
-    saved.state.result.storage = 'confirmed';
-    await ctx.storage.put('room', saved);
-  });
-  expect(await room.eraseInstance(crypto.randomUUID())).toEqual({
-    ok: false,
-    code: 'INSTANCE_MISMATCH',
-  });
-  expect((await room.deletionStatus(id)).safe).toBe(true);
-  await room.eraseInstance(id);
-  await room.eraseInstance(id);
-  expect(await room.inventoryScope()).toBeNull();
-  expect(
-    await room.reserve(
-      firstAdmission.room,
-      'a',
-      '再入室',
-      'token',
-      undefined,
-      { id, owner },
-      'generation',
-    ),
-  ).toMatchObject({ ok: false });
 });
 
 beforeEach(resetMatchmaker);

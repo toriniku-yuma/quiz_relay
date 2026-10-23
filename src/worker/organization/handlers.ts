@@ -122,6 +122,7 @@ const contextFor =
       context.set('actorId', account.actorId);
       context.set('profileName', account.displayName ?? null);
       context.set('organizationId', organization.id);
+      context.set('organizationName', organization.name);
       context.set('instanceId', instance.id);
       context.set('instanceOwner', instance.owner);
     } finally {

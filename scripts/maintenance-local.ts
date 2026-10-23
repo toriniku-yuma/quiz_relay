@@ -43,6 +43,7 @@ async function run(action: string) {
       name: gameConfig.name,
       main: entry,
       migrations: gameConfig.migrations,
+      services: [{ binding: 'ACCOUNT_ERASURE', service: gameConfig.name }],
       durable_objects: {
         bindings: source.durable_objects.bindings.map(
           ({ name, class_name }: { name: string; class_name: string }) => ({
@@ -80,7 +81,7 @@ async function run(action: string) {
     });
     if (action === 'maintenance') {
       const service = worker;
-      await scheduledD1({
+      const maintenanceEnv = {
         ...runtime,
         GAME_D1: database.binding,
         ACCOUNT_ERASURE: {
@@ -95,27 +96,26 @@ async function run(action: string) {
             }),
         },
         ...values,
-      } as unknown as Env);
+      } as unknown as Env;
+      await scheduledD1(maintenanceEnv, Date.now(), 'hourly');
+      await scheduledD1(maintenanceEnv, Date.now(), 'daily');
     } else {
-      let more: boolean;
-      do {
-        const response = await worker.fetch(`/${action}`, {
-          method: 'POST',
-          signal: AbortSignal.timeout(30000),
-        });
-        const value = (await response.json()) as { ready?: boolean; code?: string };
-        if (
-          (!response.ok && !(response.status === 503 && value.ready === false)) ||
-          value.code
-        )
-          throw new Error(
-            value.code && /^[A-Z_]+$/.test(value.code)
-              ? value.code
-              : 'LOCAL_OPERATIONS_INCOMPLETE',
-          );
-        more = action === 'inventory' && value.ready === false;
-        if (action === 'status') console.log(value);
-      } while (more);
+      const response = await worker.fetch(`/${action}`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(30000),
+      });
+      const value = (await response.json()) as { ready?: boolean; code?: string };
+      if (
+        (!response.ok && !(response.status === 503 && value.ready === false)) ||
+        value.code
+      )
+        throw new Error(
+          value.code && /^[A-Z_]+$/.test(value.code)
+            ? value.code
+            : 'LOCAL_OPERATIONS_INCOMPLETE',
+        );
+
+      if (action === 'status') console.log(value);
     }
     if (action !== 'status') console.log(`Local ${action} batch completed.`);
   } finally {
@@ -128,8 +128,8 @@ async function run(action: string) {
 try {
   const action = process.argv[2];
   if (action === 'setup') setup();
-  else if (['inventory', 'maintenance', 'status'].includes(action)) await run(action);
-  else throw new Error('Use setup, inventory, maintenance, or status');
+  else if (['maintenance', 'status'].includes(action)) await run(action);
+  else throw new Error('Use setup, maintenance, or status');
 } catch (error) {
   const message = error instanceof Error ? error.message : '';
   console.error(/^[A-Z_]+$/.test(message) ? message : 'LOCAL_OPERATIONS_FAILED');

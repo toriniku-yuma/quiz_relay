@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "352c4689-15fb-4c81-91ce-abe2f2d95c00",
+  "id": "68aaf300-73ef-4c49-a992-9b6250dff33c",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "quiz_game_account_instance_selections": {
@@ -139,13 +139,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
-        },
-        "room_cursor": {
-          "name": "room_cursor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "last_attempt_at": {
           "name": "last_attempt_at",
@@ -1007,13 +1000,6 @@
         "applied_at": {
           "name": "applied_at",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "room_cursor": {
-          "name": "room_cursor",
-          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -2377,82 +2363,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "quiz_federation_reservation_closures": {
-      "name": "quiz_federation_reservation_closures",
-      "columns": {
-        "peer_origin": {
-          "name": "peer_origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "operation_id": {
-          "name": "operation_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_actor_id": {
-          "name": "source_actor_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "confirmed": {
-          "name": "confirmed",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "federation_closure_expiry": {
-          "name": "federation_closure_expiry",
-          "columns": [
-            "expires_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "quiz_federation_reservation_closures_peer_origin_quiz_federation_peers_origin_fk": {
-          "name": "quiz_federation_reservation_closures_peer_origin_quiz_federation_peers_origin_fk",
-          "tableFrom": "quiz_federation_reservation_closures",
-          "tableTo": "quiz_federation_peers",
-          "columnsFrom": [
-            "peer_origin"
-          ],
-          "columnsTo": [
-            "origin"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "quiz_federation_reservation_closures_peer_origin_operation_id_pk": {
-          "columns": [
-            "peer_origin",
-            "operation_id"
-          ],
-          "name": "quiz_federation_reservation_closures_peer_origin_operation_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "quiz_federation_reservations": {
       "name": "quiz_federation_reservations",
       "columns": {
@@ -3252,28 +3162,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "check_cursor": {
-          "name": "check_cursor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "room_cursor": {
-          "name": "room_cursor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "inventory_pending": {
-          "name": "inventory_pending",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
         "last_attempt_at": {
           "name": "last_attempt_at",
           "type": "text",
@@ -3408,21 +3296,97 @@
           "notNull": true,
           "autoincrement": false
         },
-        "review_attempted_at": {
-          "name": "review_attempted_at",
+        "settings": {
+          "name": "settings",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": "'1970-01-01T00:00:00.000Z'"
+          "autoincrement": false
+        },
+        "host_id": {
+          "name": "host_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "creator_id": {
+          "name": "creator_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "creation_hash": {
+          "name": "creation_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "invite": {
+          "name": "invite",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "original": {
+          "name": "original",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_owner": {
+          "name": "source_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "closed": {
+          "name": "closed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
         }
       },
       "indexes": {
         "d1_instanceRooms_1": {
           "name": "d1_instanceRooms_1",
           "columns": [
-            "review_attempted_at",
-            "room_id"
+            "instance_id",
+            "closed"
           ],
           "isUnique": false
         }
@@ -3521,14 +3485,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'{\"enabled\":true,\"players\":4,\"casualGuests\":false,\"roomGuests\":false}'"
-        },
-        "room_inventory_complete": {
-          "name": "room_inventory_complete",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
         }
       },
       "indexes": {
@@ -4821,7 +4777,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'\u81ea\u5df1\u7533\u544a'"
+          "default": "'自己申告'"
         }
       },
       "indexes": {},
@@ -5601,7 +5557,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'\u4f5c\u554f\u8005'"
+          "default": "'作問者'"
         },
         "provenance": {
           "name": "provenance",
@@ -6117,112 +6073,100 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "quiz_game_room_directory": {
-      "name": "quiz_game_room_directory",
+    "quiz_game_room_members": {
+      "name": "quiz_game_room_members",
       "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "instance_id": {
-          "name": "instance_id",
+        "room_id": {
+          "name": "room_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "public": {
-          "name": "public",
+        "actor_id": {
+          "name": "actor_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "guest": {
+          "name": "guest",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "closed": {
-          "name": "closed",
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "generation": {
+          "name": "generation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "joined_at": {
+          "name": "joined_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": false
+          "autoincrement": false
+        },
+        "expires": {
+          "name": "expires",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
         }
       },
       "indexes": {
-        "d1_roomDirectory_1": {
-          "name": "d1_roomDirectory_1",
+        "d1_roomMembers_1": {
+          "name": "d1_roomMembers_1",
           "columns": [
-            "instance_id",
-            "public",
-            "closed"
+            "actor_id",
+            "expires"
           ],
           "isUnique": false
         }
       },
       "foreignKeys": {
-        "quiz_game_room_directory_instance_id_quiz_game_instances_id_fk": {
-          "name": "quiz_game_room_directory_instance_id_quiz_game_instances_id_fk",
-          "tableFrom": "quiz_game_room_directory",
-          "tableTo": "quiz_game_instances",
+        "quiz_game_room_members_room_id_quiz_game_instance_rooms_room_id_fk": {
+          "name": "quiz_game_room_members_room_id_quiz_game_instance_rooms_room_id_fk",
+          "tableFrom": "quiz_game_room_members",
+          "tableTo": "quiz_game_instance_rooms",
           "columnsFrom": [
-            "instance_id"
+            "room_id"
           ],
           "columnsTo": [
-            "id"
+            "room_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "quiz_game_room_inventory_scans": {
-      "name": "quiz_game_room_inventory_scans",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "scope_ids": {
-          "name": "scope_ids",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "cursor": {
-          "name": "cursor",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "complete": {
-          "name": "complete",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "local_hash": {
-          "name": "local_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
+      "compositePrimaryKeys": {
+        "quiz_game_room_members_room_id_actor_id_pk": {
+          "columns": [
+            "room_id",
+            "actor_id"
+          ],
+          "name": "quiz_game_room_members_room_id_actor_id_pk"
         }
       },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

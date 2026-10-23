@@ -10,18 +10,17 @@ import { federationOverview, manageFederation } from './management.ts';
 import { localMetadata, METADATA_PATH, syncPeerMetadata } from './metadata.ts';
 import {
   foreignLoginExchange,
+  foreignLoginJoin,
   foreignLoginLogout,
   foreignLoginTickets,
   foreignLoginView,
+  participationAuthorize,
   participationCancel,
   participationConfig,
   participationExchange,
-  participationLogout,
-  participationRelease,
   participationReservations,
   participationResume,
   participationSocket,
-  participationStatus,
   participationTickets,
   participationValidation,
   participationView,
@@ -85,10 +84,13 @@ federation.post(
 );
 federation.post(API_PATHS.participationReservations, participationReservations);
 federation.post(API_PATHS.participationValidation, participationValidation);
-federation.post(API_PATHS.participationRelease, participationRelease);
-federation.post(API_PATHS.participationStatus, participationStatus);
-federation.post(API_PATHS.participationLogout, participationLogout);
+federation.post(API_PATHS.participationAuthorize, participationAuthorize);
 federation.use('/api/v1/participation/*', sameOrigin);
+federation.post(
+  API_PATHS.foreignLoginJoin,
+  bodyLimit({ maxSize: 4096 }),
+  foreignLoginJoin,
+);
 federation.post(
   `${API_PATHS.foreignLoginRooms}/:action`,
   bodyLimit({ maxSize: 2 * 1024 * 1024 }),

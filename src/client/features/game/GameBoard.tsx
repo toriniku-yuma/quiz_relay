@@ -1,5 +1,6 @@
 import Button from '../../components/Button';
 import Panel from '../../components/Panel';
+import PlayerName from '../../components/PlayerName';
 import AnswerPanel from './AnswerPanel';
 import type { Game } from './useGame';
 
@@ -31,7 +32,11 @@ export default function GameBoard({ game }: { game: Game }) {
       <Panel title={`第${state.questionNumber}問 / ${state.questionCount}問`}>
         <p className="mt-3 text-sm" role="status">
           {phases[state.phase]}
-          {holder ? `：${holder.name}` : ''}
+          {holder && (
+            <>
+              ：<PlayerName player={holder} />
+            </>
+          )}
         </p>
 
         <p className="my-6 min-h-32 break-words text-2xl leading-relaxed sm:text-3xl">
@@ -55,7 +60,10 @@ export default function GameBoard({ game }: { game: Game }) {
         {state.response && (
           <div className="mb-5 border border-line bg-result p-4" role="status">
             <p className="text-sm">
-              {state.players.find(({ id }) => id === state.response?.actorId)?.name}の回答
+              <PlayerName
+                player={state.players.find(({ id }) => id === state.response?.actorId)}
+              />
+              の回答
             </p>
             <p className="mt-2 break-words text-3xl font-bold">
               {state.response.text || '文字を選んでいます'}
@@ -73,7 +81,11 @@ export default function GameBoard({ game }: { game: Game }) {
 
         {state.judgment && (
           <p className="mb-5 bg-result p-3 font-bold" role="status">
-            {judged ? `${judged.name}：` : ''}
+            {judged && (
+              <>
+                <PlayerName player={judged} />：
+              </>
+            )}
             {judgments[state.judgment.result]}
           </p>
         )}
@@ -116,11 +128,18 @@ export default function GameBoard({ game }: { game: Game }) {
         {state.result && (
           <div className="mt-5 bg-result p-4" role="status">
             <p className="text-xl font-bold">
-              {state.phase === 'INVALID'
-                ? 'この試合は無効です'
-                : state.result.winnerId
-                  ? `${state.players.find(({ id }) => id === state.result?.winnerId)?.name}の勝利`
-                  : '引き分け'}
+              {state.phase === 'INVALID' ? (
+                'この試合は無効です'
+              ) : state.result.winnerId ? (
+                <>
+                  <PlayerName
+                    player={state.players.find(({ id }) => id === state.result?.winnerId)}
+                  />
+                  の勝利
+                </>
+              ) : (
+                '引き分け'
+              )}
             </p>
             <p className="mt-2">
               {
@@ -152,8 +171,10 @@ export default function GameBoard({ game }: { game: Game }) {
               <ul className="mt-2 text-sm">
                 {state.result.ratingChanges.map(({ actorId, delta }) => (
                   <li key={actorId}>
-                    {state.players.find((entry) => entry.id === actorId)?.name}：レート{' '}
-                    {delta > 0 ? '+' : ''}
+                    <PlayerName
+                      player={state.players.find((entry) => entry.id === actorId)}
+                    />
+                    ：レート {delta > 0 ? '+' : ''}
                     {delta}
                     {state.result?.storage !== 'confirmed' && '（保存待ち）'}
                   </li>
@@ -187,7 +208,7 @@ export default function GameBoard({ game }: { game: Game }) {
           {state.players.map((entry) => (
             <li key={entry.id} className="flex flex-wrap gap-x-5 gap-y-2 py-3">
               <span className="font-bold">
-                {entry.name}
+                <PlayerName player={entry} />
                 {entry.id === game.actorId ? '（あなた）' : ''}
               </span>
               {entry.role === 'presenter' ? (

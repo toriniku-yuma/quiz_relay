@@ -21,7 +21,10 @@ import {
 } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
 import { preparePeer, publicPeerKey } from '../src/worker/federation/discovery';
-import { syncQuestionImport } from '../src/worker/federation/question-imports';
+import {
+  dueQuestionImports,
+  syncQuestionImport,
+} from '../src/worker/federation/question-imports';
 import { questionSharing } from '../src/worker/federation/question-management';
 import { exportSharedQuestions } from '../src/worker/federation/question-source';
 import {
@@ -45,8 +48,46 @@ const runtime = env as unknown as {
   PEER_D1: D1Database;
   D1_MIGRATIONS: Parameters<typeof applyD1Migrations>[1];
 };
-const hostDb = connectD1(runtime.GAME_D1),
-  sourceDb = connectD1(runtime.PEER_D1),
+function metered(database: D1Database) {
+  const usage = { read: 0, written: 0 };
+  const add = (result: D1Result) => {
+    usage.read += result.meta.rows_read;
+    usage.written += result.meta.rows_written;
+  };
+  const statement = (prepared: D1PreparedStatement): D1PreparedStatement =>
+    new Proxy(prepared, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (key === 'bind')
+          return (...values: unknown[]) => statement(target.bind(...values));
+        if (key === 'all' || key === 'run')
+          return async (...args: unknown[]) => {
+            const result = await value.apply(target, args);
+            add(result);
+            return result;
+          };
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  const measured = new Proxy(database, {
+    get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === 'prepare') return (sql: string) => statement(target.prepare(sql));
+      if (key === 'batch')
+        return async (queries: D1PreparedStatement[]) => {
+          const results = await target.batch(queries);
+          results.forEach(add);
+          return results;
+        };
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return { database: measured, usage };
+}
+const hostMeter = metered(runtime.GAME_D1),
+  sourceMeter = metered(runtime.PEER_D1);
+const hostDb = connectD1(hostMeter.database),
+  sourceDb = connectD1(sourceMeter.database),
   sourceOrigin = 'https://source.quiz-relay.workers.dev',
   hostOrigin = 'https://host.quiz-relay.workers.dev';
 let source: Env,
@@ -64,7 +105,7 @@ beforeAll(async () => {
   await applyD1Migrations(runtime.PEER_D1, runtime.D1_MIGRATIONS);
   const sourceKeys = await generateKeyPair('EdDSA', { extractable: true }),
     hostKeys = await generateKeyPair('EdDSA', { extractable: true });
-  const counted = new Proxy(runtime.GAME_D1, {
+  const counted = new Proxy(hostMeter.database, {
     get(target, key) {
       const value = Reflect.get(target, key, target);
       if (key === 'prepare')
@@ -79,7 +120,7 @@ beforeAll(async () => {
     ...env,
     GAME_CONFIG_PROFILE: 'local',
     FEDERATION_LIMITER: unlimited,
-    GAME_D1: runtime.PEER_D1,
+    GAME_D1: sourceMeter.database,
     FEDERATION_ORIGIN: sourceOrigin,
     SIGNING_KID: 'source',
     SIGNING_PRIVATE_KEY: await exportPKCS8(sourceKeys.privateKey),
@@ -255,10 +296,36 @@ it('インスタンス単位の共有許可・権限・固定ページ・クエ�
   expect(page.nextCursor).not.toBeNull();
   expect(JSON.stringify(page)).not.toContain('非公開の確認資料');
   await configure();
-  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
-    app.request(input as Request, undefined, source),
-  );
-  await complete();
+  const fetcher = vi
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(async (input) =>
+      app.request(input as Request, undefined, source),
+    );
+  expect((await sync()).pending).toBe(true);
+  const [progress] = await hostDb
+    .select()
+    .from(federationQuestionImports)
+    .where(eq(federationQuestionImports.id, importId));
+  expect(progress.cursor).not.toBeNull();
+  expect(progress.snapshot).not.toBeNull();
+  fetcher.mockRejectedValueOnce(new Error('offline'));
+  await expect(sync()).rejects.toThrow('FEDERATION_PEER_UNAVAILABLE');
+  const [failed] = await hostDb
+    .select()
+    .from(federationQuestionImports)
+    .where(eq(federationQuestionImports.id, importId));
+  expect(failed.cursor).toBe(progress.cursor);
+  expect(failed.snapshot).toBe(progress.snapshot);
+  expect(await dueQuestionImports(host, Date.now() + 3600000, true)).toContainEqual({
+    id: importId,
+  });
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Date.now() + 3600000);
+  try {
+    await complete();
+  } finally {
+    vi.useRealTimers();
+  }
   const beforeRenew = await hostDb.select().from(questionSubmissions);
   expect((await sync()).pending).toBe(false);
   expect(await hostDb.select().from(questionSubmissions)).toEqual(beforeRenew);
@@ -275,6 +342,100 @@ it('インスタンス単位の共有許可・権限・固定ページ・クエ�
     'QUESTION_IMPORT_OVERLAP',
   );
 });
+it('途中取得の版変更を署名付き応答で識別し、古いcursorを破棄して新しい版を取得する', async () => {
+  const page = await exportSharedQuestions(sourceDb, hostOrigin, {
+    sourceInstanceId: sourceId,
+    targetInstanceId: hostId,
+  });
+  await changeD1(hostDb, async (writes) => {
+    writes.push(
+      hostDb
+        .update(federationQuestionImports)
+        .set({ snapshot: page.snapshot, cursor: page.nextCursor })
+        .where(eq(federationQuestionImports.id, importId)),
+    );
+  });
+  await changeD1(sourceDb, async (writes) => {
+    writes.push(
+      sourceDb
+        .update(instances)
+        .set({ operationRevision: sql`${instances.operationRevision}+1` })
+        .where(eq(instances.id, sourceId)),
+    );
+  });
+  const responses: Response[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+    const response = await app.request(input as Request, undefined, source);
+    responses.push(response.clone());
+    return response;
+  });
+  await expect(sync()).rejects.toThrow('QUESTION_SNAPSHOT_CHANGED');
+  expect(responses[0].status).toBe(200);
+  expect(await responses[0].json()).toEqual({ message: expect.any(String) });
+  const [failed] = await hostDb
+    .select()
+    .from(federationQuestionImports)
+    .where(eq(federationQuestionImports.id, importId));
+  expect(failed.cursor).toBeNull();
+  expect(failed.snapshot).toBeNull();
+  expect(failed.errorCode).toBe('QUESTION_SNAPSHOT_CHANGED');
+  await complete();
+  expect(await hostDb.select().from(federationQuestionLinks)).toHaveLength(27);
+});
+
+it('共有同期の変更なし・1問変更のD1行数を計測し、無変更で本文を書き換えない', async () => {
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) =>
+    app.request(input as Request, undefined, source),
+  );
+  await complete();
+  const resetUsage = () => {
+    for (const meter of [hostMeter, sourceMeter]) {
+      meter.usage.read = 0;
+      meter.usage.written = 0;
+    }
+  };
+  resetUsage();
+  await complete();
+  const unchanged = { source: { ...sourceMeter.usage }, host: { ...hostMeter.usage } };
+  const [row] = await sourceDb.select().from(questionSubmissions).limit(1);
+  await changeD1(sourceDb, async (writes) => {
+    const [instance] = await sourceDb
+      .select()
+      .from(instances)
+      .where(eq(instances.id, sourceId));
+    const plan = new QuestionPlan(sourceId, instance.owner);
+    await plan.load(sourceDb, { operation: 'seed' });
+    let revised = plan.save(row, {
+      input: { ...row.input, explanation: '改訂した解説' },
+      revision: row.revision + 1,
+    });
+    revised = plan.save(revised, { publishedId: await plan.publish(revised) });
+    plan.flush(writes);
+    await publishQuestionCatalog(
+      sourceDb,
+      writes,
+      sourceId,
+      instance.owner,
+      'local',
+      undefined,
+      {
+        submissions: [...plan.changedSubmissions.values()],
+        questions: plan.newVersions,
+        availability: [...plan.availability.values()],
+      },
+    );
+  });
+  resetUsage();
+  await complete();
+  const changed = { source: { ...sourceMeter.usage }, host: { ...hostMeter.usage } };
+  expect(unchanged.source.read + unchanged.host.read).toBeLessThan(500);
+  expect(unchanged.host.written).toBeLessThanOrEqual(10);
+  expect(changed.source.read + changed.host.read).toBeLessThan(2500);
+  expect(changed.host.written).toBeLessThan(750);
+  expect(unchanged.source.read).toBeGreaterThan(0);
+  expect(unchanged.host.written).toBeLessThan(changed.host.written);
+});
+
 it('カテゴリ候補の画面取得はキャッシュだけを読み、定期取得は5分以内に繰り返さない', async () => {
   const scope = {
     instanceId: hostId,

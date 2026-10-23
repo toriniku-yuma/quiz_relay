@@ -20,7 +20,7 @@ try {
   console.log(
     command === 'export'
       ? 'Privacy journal exported. Store it independently of application backups.'
-      : 'Privacy receipts restored. Keep traffic stopped until room inventory and erasure jobs complete.',
+      : 'Privacy receipts restored. Keep traffic stopped until erasure jobs complete.',
   );
 } finally {
   await close();

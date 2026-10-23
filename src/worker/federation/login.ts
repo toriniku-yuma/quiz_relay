@@ -9,6 +9,7 @@ import {
   federationPeers,
   federationReservations,
   federationRetiredIdentities,
+  federationSessions,
   instances,
   organizations,
 } from '../db/schema.ts';
@@ -23,7 +24,11 @@ import { discoverPeer } from './discovery.ts';
 import { participationMode } from './participation.ts';
 import { origin } from './signatures.ts';
 import { logoutHostParticipation, releaseHostParticipation } from './slots.ts';
-import { signForeignLoginTicket, verifyForeignLoginTicket } from './tickets.ts';
+import {
+  signForeignLoginTicket,
+  signParticipationGrant,
+  verifyForeignLoginTicket,
+} from './tickets.ts';
 import { federationConfig, federationDatabase } from './transport.ts';
 
 function object(value: unknown, keys: string) {
@@ -61,6 +66,12 @@ export async function authorizeForeignLogin(env: Env, subject: string, value: un
   // Login creates neither a participation slot nor a host reservation/account.
   return {
     ticket: await signForeignLoginTicket(env, {
+      grant: await signParticipationGrant(
+        env,
+        request.peerOrigin,
+        identity.account.actorId,
+        identity.organization.id,
+      ),
       protocolVersion: 1,
       iss: federationConfig(env).origin,
       aud: request.peerOrigin,
@@ -111,12 +122,13 @@ export async function exchangeForeignLogin(env: Env, value: unknown) {
   const secret = crypto.randomUUID() + crypto.randomUUID();
   const row: Login = {
     hash: await contentHash(secret),
+    grant: proof.grant,
     peerOrigin: proof.iss,
     sourceOrganizationId: proof.sourceOrganizationId,
     sourceActorId: proof.sub,
     displayName: proof.name,
     organizationName: proof.organizationName,
-    expiresAt: Date.now() + FOREIGN_LOGIN_LIFETIME,
+    expiresAt: proof.iat * 1000 + FOREIGN_LOGIN_LIFETIME,
   };
   await changeD1(db, async (writes) => {
     const [instance] = await db
@@ -191,7 +203,7 @@ export async function logoutForeignAccount(
   sourceActorId: string,
 ) {
   const db = federationDatabase(env);
-  const reservations = await db
+  const activeReservations = db
     .select()
     .from(federationReservations)
     .where(
@@ -208,6 +220,7 @@ export async function logoutForeignAccount(
         ),
       ),
     );
+  const reservations = await activeReservations;
   for (const reservation of reservations) {
     if (reservation.state === 'creating')
       await releaseHostParticipation(env, peerOrigin, {
@@ -222,8 +235,14 @@ export async function logoutForeignAccount(
       });
   }
   await changeD1(db, async (writes) => {
+    const current = await activeReservations;
+    if (current.some((row) => !reservations.some((old) => old.id === row.id)))
+      throw new OrganizationError('PARTICIPATION_LOGOUT_PENDING', 503);
     for (const reservation of reservations)
       writes.push(
+        db
+          .delete(federationSessions)
+          .where(eq(federationSessions.reservationId, reservation.id)),
         db
           .update(federationReservations)
           .set({ state: 'closed', allowedUntil: 0 })

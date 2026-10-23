@@ -156,9 +156,11 @@ export async function receiveDelivery(
   if (!peer && admission) {
     const [organization] = await db.select().from(organizations).limit(1);
     if (organization?.externalParticipation === 'unblocked') {
+      if (!env.API_LIMITER)
+        throw new OrganizationError('RATE_LIMITER_NOT_CONFIGURED', 503);
       if (
         !(
-          await limiter.limit({
+          await env.API_LIMITER.limit({
             key: `discovery-ip:${request.headers.get('CF-Connecting-IP') ?? 'local'}`,
           })
         ).success
@@ -175,7 +177,11 @@ export async function receiveDelivery(
     admission ||
     expected?.participation ||
     (messageType === 'reservation.request' &&
-      new URL(request.url).pathname === '/federation/v1/participation/validate') ||
+      [
+        '/federation/v1/participation/validate',
+        '/federation/v1/participation/authorize',
+        '/federation/v1/participation/authorize',
+      ].includes(new URL(request.url).pathname)) ||
     (messageType === 'event' &&
       ['/federation/v1/inbox', '/federation/v1/results/review'].includes(path));
   if (!peer || (!peer.approved && !scoped))
@@ -229,6 +235,14 @@ export async function receiveDelivery(
       .where(eq(federationPeers.origin, issuer));
     if (!current || (!current.approved && !scoped) || current.revision !== peer.revision)
       throw new OrganizationError('UNAPPROVED_PEER', 403);
+    if (env.ROOM_LIFECYCLE_LOGS === 'true')
+      console.log(
+        JSON.stringify({
+          event: 'federation_request',
+          peerOrigin: issuer,
+          at: Date.now(),
+        }),
+      );
     return delivery;
   } catch (error) {
     if (error instanceof OrganizationError) throw error;
@@ -293,9 +307,7 @@ export async function requestPeer(
       '/federation/v1/metadata',
       '/api/v1/participation/reservations',
       '/federation/v1/participation/validate',
-      '/federation/v1/participation/release',
-      '/federation/v1/participation/status',
-      '/federation/v1/participation/logout',
+      '/federation/v1/participation/authorize',
       '/federation/v1/inbox',
       '/federation/v1/results/review',
     ].includes(path)
@@ -306,15 +318,35 @@ export async function requestPeer(
     nonce,
   });
   const request = peerRequest(peerOrigin, [peer.origin], path, message);
+  const timeoutMs = 5000;
+  const signal = AbortSignal.timeout(timeoutMs),
+    startedAt = Date.now();
   let response: Response;
   try {
-    response = rejectRedirect(
-      await fetch(request, { signal: AbortSignal.timeout(5000) }),
-    );
+    response = rejectRedirect(await fetch(request, { signal }));
   } catch {
+    console.error(
+      JSON.stringify({
+        event: 'federation_peer_failed',
+        code: signal.aborted ? 'FEDERATION_PEER_TIMEOUT' : 'FEDERATION_PEER_TRANSPORT',
+        path,
+        timeoutMs,
+        elapsedMs: Date.now() - startedAt,
+      }),
+    );
     throw new OrganizationError('FEDERATION_PEER_UNAVAILABLE', 503);
   }
   if (!response.ok) {
+    console.error(
+      JSON.stringify({
+        event: 'federation_peer_failed',
+        code: 'FEDERATION_PEER_HTTP',
+        path,
+        peerStatus: response.status,
+        timeoutMs,
+        elapsedMs: Date.now() - startedAt,
+      }),
+    );
     const error = new OrganizationError(
       response.status === 429
         ? 'FEDERATION_PEER_RATE_LIMIT'

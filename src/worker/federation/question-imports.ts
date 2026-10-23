@@ -1,7 +1,7 @@
-import { and, eq, gt, lte, sql } from 'drizzle-orm';
+import { and, eq, gt, isNotNull, lte, or, sql } from 'drizzle-orm';
 import { API_PATHS } from '../../shared/api-paths.ts';
 import {
-  QUESTION_SYNC_INTERVAL_MS,
+  nextQuestionSyncAt,
   type SharedQuestionPage,
 } from '../../shared/federation-questions.ts';
 import { validateQuestionInput } from '../../shared/questions.ts';
@@ -37,6 +37,12 @@ type Import = typeof federationQuestionImports.$inferSelect;
 async function parsedPage(value: unknown, job: Import): Promise<SharedQuestionPage> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new OrganizationError('INVALID_SHARED_QUESTIONS', 503);
+  if (
+    Object.keys(value).join(',') === 'code' &&
+    'code' in value &&
+    value.code === 'QUESTION_SNAPSHOT_CHANGED'
+  )
+    throw new OrganizationError('QUESTION_SNAPSHOT_CHANGED', 409);
   const page = value as SharedQuestionPage;
   if (
     Object.keys(page).sort().join(',') !==
@@ -216,7 +222,7 @@ export async function syncQuestionImport(env: Env, id: string) {
                 cursor: null,
                 attemptId: null,
                 leaseUntil: 0,
-                nextAttemptAt: Date.now() + QUESTION_SYNC_INTERVAL_MS,
+                nextAttemptAt: nextQuestionSyncAt(Date.now()),
               })
               .where(key),
           );
@@ -485,7 +491,7 @@ export async function syncQuestionImport(env: Env, id: string) {
             failures: 0,
             attemptId: null,
             leaseUntil: 0,
-            nextAttemptAt: pending ? 0 : Date.now() + QUESTION_SYNC_INTERVAL_MS,
+            nextAttemptAt: pending ? 0 : nextQuestionSyncAt(Date.now()),
           })
           .where(key),
       );
@@ -507,8 +513,8 @@ export async function syncQuestionImport(env: Env, id: string) {
             attemptId: null,
             leaseUntil: 0,
             errorCode: code,
-            snapshot: null,
-            cursor: null,
+            snapshot: code === 'QUESTION_SNAPSHOT_CHANGED' ? null : current.snapshot,
+            cursor: code === 'QUESTION_SNAPSHOT_CHANGED' ? null : current.cursor,
             failures: current.failures + 1,
             nextAttemptAt: Math.max(
               error instanceof OrganizationError ? (error.retryAt ?? 0) : 0,
@@ -523,7 +529,7 @@ export async function syncQuestionImport(env: Env, id: string) {
     throw error;
   }
 }
-export async function dueQuestionImports(env: Env, now: number) {
+export async function dueQuestionImports(env: Env, now: number, retryOnly = false) {
   return federationDatabase(env)
     .select({ id: federationQuestionImports.id })
     .from(federationQuestionImports)
@@ -532,8 +538,15 @@ export async function dueQuestionImports(env: Env, now: number) {
         eq(federationQuestionImports.enabled, true),
         lte(federationQuestionImports.nextAttemptAt, now),
         lte(federationQuestionImports.leaseUntil, now),
+        retryOnly
+          ? or(
+              gt(federationQuestionImports.nextAttemptAt, 0),
+              isNotNull(federationQuestionImports.cursor),
+              isNotNull(federationQuestionImports.attemptId),
+              isNotNull(federationQuestionImports.errorCode),
+            )
+          : undefined,
       ),
     )
-    .orderBy(federationQuestionImports.nextAttemptAt)
-    .limit(2);
+    .orderBy(federationQuestionImports.nextAttemptAt);
 }

@@ -6,7 +6,7 @@ import type { ResultsOverview } from '../src/shared/results';
 import { changeD1, connectD1 } from '../src/worker/db/d1';
 import { instances, matches, resultOutbox } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
-import { readStored, writeStored } from '../src/worker/game/storage';
+import { writeStored } from '../src/worker/game/storage';
 import app from '../src/worker/index';
 import { organizationIdentity } from '../src/worker/organization/database';
 import { makeResultRecord } from '../src/worker/results/record';
@@ -100,10 +100,7 @@ it('通常APIで作った組織に、対戦DOがD1へ保存した結果と本人
       }),
     );
     await object.alarm();
-    expect(
-      (await readStored<{ state: typeof state }>(context.storage, 'room'))?.state.result
-        ?.storage,
-    ).toBe('confirmed');
+    expect((await context.storage.list()).size).toBe(0);
     await object.alarm();
   });
   const matchId = state.matchId;

@@ -88,7 +88,7 @@ it('認証確定による再マウント前には復帰を始めず、確定後�
   render(true);
   const cleanup = hooks.effects[0]();
   expect(request).toHaveBeenCalledTimes(1);
-  expect(String(request.mock.calls[0][0])).toContain(API_PATHS.participationResume);
+  expect(String(request.mock.calls[0][0])).toContain(API_PATHS.participationSession);
   expect(render(true).busy).toBe(true);
   await settle();
   expect(render(true).session).toMatchObject({ actorId: recovered.actorId });
@@ -137,3 +137,79 @@ it('別タブが新しい参加を保存した後に旧予約の409が届いて�
   expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null')).toEqual(next);
   cleanup?.();
 });
+
+it.each(
+  [200, 401, 500].flatMap((status) =>
+    [false, true].map((joinFirst) => ({ status, joinFirst })),
+  ),
+)(
+  '旧取消の応答（$status）が遅れても、次の参加操作の状態を変更しない（参加完了=$joinFirst）',
+  async ({ status, joinFirst }) => {
+    request.mockResolvedValueOnce(Response.json(recovered));
+    render(true);
+    hooks.effects[0]();
+    await settle();
+    let finishCancel!: (value: Response) => void;
+    request.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishCancel = resolve;
+      }),
+    );
+    const cancel = render(true).cancel(false);
+    render(true).endSession();
+    let finishJoin!: (value: Response) => void;
+    request.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishJoin = resolve;
+      }),
+    );
+    const join = render(true).join(saved.target);
+    const next = { ...recovered, reservationId: crypto.randomUUID() };
+    if (joinFirst) {
+      finishJoin(Response.json(next));
+      await join;
+    }
+    finishCancel(
+      Response.json(
+        { code: status === 401 ? 'SESSION_REQUIRED' : 'INTERNAL' },
+        { status },
+      ),
+    );
+    await cancel;
+    expect(render(true).busy).toBe(!joinFirst);
+    expect(render(true).error).toBe('');
+    if (!joinFirst) {
+      finishJoin(Response.json(next));
+      await join;
+    }
+    expect(render(true).session).toEqual(next);
+    expect(render(true).busy).toBe(false);
+    expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null').reservationId).toBe(
+      next.reservationId,
+    );
+  },
+);
+
+it.each([200, 401])(
+  '別タブの新しい参加情報を旧取消の応答（%i）で消さない',
+  async (status) => {
+    request.mockResolvedValueOnce(Response.json(recovered));
+    render(true);
+    hooks.effects[0]();
+    await settle();
+    let finish!: (value: Response) => void;
+    request.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const cancel = render(true).cancel(false);
+    const next = { ...saved, reservationId: crypto.randomUUID() };
+    localStorage.setItem(storageKey, JSON.stringify(next));
+    finish(Response.json({ code: 'SESSION_REQUIRED' }, { status }));
+    await cancel;
+    expect(JSON.parse(localStorage.getItem(storageKey) ?? 'null')).toEqual(next);
+    expect(render(true).session).toBeNull();
+    expect(render(true).busy).toBe(false);
+  },
+);

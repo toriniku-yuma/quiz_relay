@@ -12,6 +12,7 @@ export type Player = {
   guest?: boolean;
   id: string;
   name: string;
+  serverName?: string | null;
   correct: number;
   mistakes: number;
   locked: boolean;

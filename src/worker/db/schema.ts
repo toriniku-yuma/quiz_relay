@@ -30,6 +30,7 @@ import {
   type BroughtQuestion,
   type CasualSettings,
   defaultCasualSettings,
+  type RoomSettings,
 } from '../../shared/rooms.ts';
 import type { FixedQuestion } from '../catalog/definition.ts';
 import type { Rules } from '../game/rules.ts';
@@ -489,7 +490,6 @@ export const accountWithdrawals = sqliteTable(
       .notNull()
       .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),
     attempts: integer().notNull().default(0),
-    roomCursor: text('room_cursor'),
     lastAttemptAt: text('last_attempt_at')
       .notNull()
       .default(sql`'1970-01-01T00:00:00.000Z'`),
@@ -518,9 +518,6 @@ export const instances = sqliteTable(
       .$type<CasualSettings>()
       .notNull()
       .default(defaultCasualSettings),
-    roomInventoryComplete: integer('room_inventory_complete', { mode: 'boolean' })
-      .notNull()
-      .default(false),
   },
   (table) => [
     check('instance_name_length', sql`length(trim(${table.name})) BETWEEN 1 AND 80`),
@@ -555,11 +552,41 @@ export const instanceRooms = sqliteTable(
     instanceId: text('instance_id')
       .notNull()
       .references(() => instances.id),
-    reviewAttemptedAt: text('review_attempted_at')
-      .notNull()
-      .default(sql`'1970-01-01T00:00:00.000Z'`),
+    settings: text({ mode: 'json' }).$type<RoomSettings>().notNull(),
+    hostId: text('host_id').notNull(),
+    creatorId: text('creator_id').notNull(),
+    creationHash: text('creation_hash').notNull(),
+    createdAt: integer('created_at').notNull(),
+    revision: integer().notNull(),
+    password: text({ mode: 'json' }).$type<{ salt: string; hash: string }>(),
+    invite: text(),
+    original: text({ mode: 'json' }).$type<BroughtQuestion[]>(),
+    sourceOwner: text('source_owner'),
+    sourceId: text('source_id'),
+    closed: integer({ mode: 'boolean' }).notNull(),
   },
-  (table) => [index('d1_instanceRooms_1').on(table.reviewAttemptedAt, table.roomId)],
+  (table) => [index('d1_instanceRooms_1').on(table.instanceId, table.closed)],
+);
+
+export const roomMembers = sqliteTable(
+  'quiz_game_room_members',
+  {
+    roomId: text('room_id')
+      .notNull()
+      .references(() => instanceRooms.roomId),
+    actorId: text('actor_id').notNull(),
+    name: text().notNull(),
+    serverName: text('server_name'),
+    guest: integer({ mode: 'boolean' }).notNull(),
+    token: text().notNull(),
+    generation: text().notNull(),
+    joinedAt: integer('joined_at').notNull(),
+    expires: integer().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roomId, table.actorId] }),
+    index('d1_roomMembers_1').on(table.actorId, table.expires),
+  ],
 );
 
 export const instanceDeletions = sqliteTable(
@@ -578,25 +605,12 @@ export const instanceDeletions = sqliteTable(
       .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`),
     deletedAt: text('deleted_at'),
     acceptedAt: text('accepted_at'),
-    checkCursor: text('check_cursor'),
-    roomCursor: text('room_cursor'),
-    inventoryPending: integer('inventory_pending', { mode: 'boolean' })
-      .notNull()
-      .default(false),
     lastAttemptAt: text('last_attempt_at')
       .notNull()
       .default(sql`'1970-01-01T00:00:00.000Z'`),
   },
   () => [],
 );
-
-export const roomInventoryScans = sqliteTable('quiz_game_room_inventory_scans', {
-  id: text().primaryKey(),
-  scopeIds: text('scope_ids', { mode: 'json' }).$type<string[]>().notNull(),
-  cursor: text(),
-  complete: integer({ mode: 'boolean' }).notNull().default(false),
-  localHash: text('local_hash'),
-});
 
 export const instanceGrants = sqliteTable(
   'quiz_game_instance_grants',
@@ -1158,21 +1172,6 @@ export const personalQuestionSets = sqliteTable(
   ],
 );
 
-export const roomDirectory = sqliteTable(
-  'quiz_game_room_directory',
-  {
-    id: text().primaryKey(),
-    instanceId: text('instance_id')
-      .notNull()
-      .references(() => instances.id),
-    public: integer({ mode: 'boolean' }).notNull(),
-    closed: integer({ mode: 'boolean' }).notNull().default(false),
-  },
-  (table) => [
-    index('d1_roomDirectory_1').on(table.instanceId, table.public, table.closed),
-  ],
-);
-
 export const federationPeers = sqliteTable('quiz_federation_peers', {
   origin: text().primaryKey(),
   name: text().notNull(),
@@ -1466,6 +1465,7 @@ export const federationReservations = sqliteTable(
       .references(() => instances.id),
     mode: text({ enum: ['ranked', 'casual', 'room'] }).notNull(),
     displayName: text('display_name').notNull(),
+    serverName: text('server_name'),
     roomId: text('room_id'),
     matchId: text('match_id'),
     state: text({ enum: ['creating', 'reserved', 'exchanged', 'closed'] })
@@ -1505,6 +1505,7 @@ export const federationLoginSessions = sqliteTable(
   'quiz_federation_login_sessions',
   {
     hash: text().primaryKey(),
+    grant: text().notNull(),
     peerOrigin: text('peer_origin')
       .notNull()
       .references(() => federationPeers.origin),
@@ -1519,23 +1520,6 @@ export const federationLoginSessions = sqliteTable(
     index('federation_login_actor').on(table.peerOrigin, table.sourceActorId),
   ],
 );
-export const federationReservationClosures = sqliteTable(
-  'quiz_federation_reservation_closures',
-  {
-    peerOrigin: text('peer_origin')
-      .notNull()
-      .references(() => federationPeers.origin),
-    operationId: text('operation_id').notNull(),
-    sourceActorId: text('source_actor_id').notNull(),
-    confirmed: integer({ mode: 'boolean' }).notNull().default(false),
-    expiresAt: integer('expires_at').notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.peerOrigin, table.operationId] }),
-    index('federation_closure_expiry').on(table.expiresAt),
-  ],
-);
-
 // Delivery originals outlive local instance removal and never depend on an in-memory retry.
 export const federationResultDeliveries = sqliteTable(
   'quiz_federation_result_deliveries',
@@ -1635,7 +1619,6 @@ export const federationControlInbox = sqliteTable(
     message: text().notNull(),
     receivedAt: integer('received_at').notNull(),
     appliedAt: integer('applied_at'),
-    roomCursor: text('room_cursor'),
     conflictHash: text('conflict_hash'),
   },
   (table) => [

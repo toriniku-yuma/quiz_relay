@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import catalogConfig from '../../../config/matchmaking.json' with { type: 'json' };
+import type { ConnectionReport } from '../../shared/connection-report.ts';
 import type { GameMessage, Reply, Snapshot } from '../../shared/game.ts';
 import { settings } from '../../shared/settings.ts';
 import { loadFixedVersion, loadMatchDefinition } from '../catalog/database.ts';
@@ -8,7 +9,8 @@ import { contentHash } from '../catalog/hash.ts';
 import type { Env } from '../env.ts';
 import { refreshParticipationAccess } from '../federation/participation.ts';
 import { dispatchSavedResult } from '../federation/results.ts';
-import { failureCode } from '../http/handlers.ts';
+import { logConnectionReport } from '../http/connection-report.ts';
+import { connectionId, failureCode, failureDetails } from '../http/diagnostics.ts';
 import {
   reservationLifetime,
   sessionLifetime,
@@ -17,7 +19,6 @@ import {
 import { matchmaker } from '../matchmaking/instance.ts';
 import type { InstanceScope } from '../matchmaking/Matchmaker.ts';
 import { allowedInstanceActors } from '../organization/database.ts';
-import { registerInstanceRoom } from '../organization/rooms.ts';
 import { rankingRating } from '../questions/ranking.ts';
 import { ResultConflict, saveResult } from '../results/database.ts';
 import {
@@ -30,7 +31,6 @@ import type { MatchRecord } from '../results/record.ts';
 import type { Participant } from '../rooms/database.ts';
 import { RoomLobby } from '../rooms/RoomLobby.ts';
 import { roomRpc } from '../rooms/rpc.ts';
-import { anonymizeState, expireReview, reviewDeadline } from './privacy.ts';
 import { replayEvents } from './recovery.ts';
 import { matchRoomName, userRoomName } from './room-names.ts';
 import {
@@ -54,7 +54,6 @@ type MatchRoom = {
   starting?: MatchRecord;
   lifecycleRetryAt?: number;
   cancelled?: boolean;
-  finishNotified?: boolean;
   notificationRetryAt?: number;
   scope: InstanceScope;
   generations: Record<string, string>;
@@ -78,6 +77,10 @@ type DevelopmentRoom = {
 type Room = MatchRoom | DevelopmentRoom;
 const isMatchRoom = (room: Room): room is MatchRoom => !('localSetup' in room);
 type Attachment = {
+  reportReceived: boolean;
+  clientReport?: ConnectionReport;
+  connectionId: string;
+  roomId: string;
   actorId: string;
   windowStart: number;
   count: number;
@@ -127,11 +130,7 @@ export class GameRoom extends DurableObject<Env> {
     return this.userLobby().join(actor, token, generation, password, invite, scope);
   }
   async createdRoomInvite(actor: string) {
-    const creation = await this.ctx.storage.get<{ actor: string; invite: string }>(
-      'creation',
-    );
-    if (creation?.actor !== actor) throw new Error('ROOM_HOST_REQUIRED');
-    return creation.invite;
+    return this.userLobby().createdInvite(actor);
   }
   async userRoomMatchFinished(matchId: string) {
     return this.userLobby().matchFinished(matchId);
@@ -213,8 +212,6 @@ export class GameRoom extends DurableObject<Env> {
     const registered = await registerMatch(this.env, scope, matchRecord(state));
     this.restoreDefinition(state, registered);
     return this.ctx.blockConcurrencyWhile(async () => {
-      if (await this.ctx.storage.get('instanceDeleted'))
-        throw new Error('INSTANCE_NOT_FOUND');
       const previous = await this.readMatchRoom();
       const sessions = Object.fromEntries(
         actors.map((actor) => [tokens[actor.id], actor.id]),
@@ -273,11 +270,10 @@ export class GameRoom extends DurableObject<Env> {
     scope: InstanceScope,
     generation: string,
     guest = false,
+    serverName?: string | null,
   ) {
     this.requireMatchId(matchId);
     return this.ctx.blockConcurrencyWhile(async () => {
-      if (await this.ctx.storage.get('instanceDeleted'))
-        return { ok: false as const, code: 'INSTANCE_NOT_FOUND' };
       if (
         (await this.ctx.storage.get(`closed:${generation}`)) ||
         (await this.ctx.storage.get(`revoked:${token}`))
@@ -318,7 +314,18 @@ export class GameRoom extends DurableObject<Env> {
           );
           this.restoreDefinition(room.state, registered);
         } catch (error) {
-          return { ok: false as const, code: failureCode(error) };
+          const code = failureCode(error);
+          if (
+            [
+              'MATCH_CLOSED',
+              'MATCH_DEFINITION_CONFLICT',
+              'INSTANCE_NOT_FOUND',
+              'INSTANCE_DELETING',
+            ].includes(code)
+          )
+            return { ok: false as const, code };
+          // Failure does not establish whether D1 committed the registration.
+          return { ok: false as const, code: 'GAME_DATABASE_UNAVAILABLE' };
         }
       }
       if (room.starting) return { ok: false as const, code: 'MATCH_STARTING' };
@@ -349,6 +356,7 @@ export class GameRoom extends DurableObject<Env> {
       room.state.players.push({
         id: actorId,
         name,
+        serverName,
         ...(guest ? { guest: true } : {}),
         correct: 0,
         mistakes: 0,
@@ -388,40 +396,6 @@ export class GameRoom extends DurableObject<Env> {
     });
   }
 
-  async deletionStatus(
-    instanceId: string,
-  ): Promise<{ safe: boolean; scope: InstanceScope | null }> {
-    const parent = await this.userLobby().read();
-    if (parent) {
-      if (parent.scope.id !== instanceId) return { safe: false, scope: parent.scope };
-      if (parent.starting) return { safe: false, scope: parent.scope };
-      return parent.match
-        ? this.env.GAME_ROOM.getByName(matchRoomName(parent.match.id)).deletionStatus(
-            instanceId,
-          )
-        : { safe: true, scope: parent.scope };
-    }
-    return this.ctx.blockConcurrencyWhile(async () => {
-      const room = await this.readMatchRoom();
-      if (!room) return { safe: true, scope: null };
-      if (room.scope.id !== instanceId) return { safe: false, scope: room.scope };
-      const finished = room.state.phase === 'FINISHED' || room.state.phase === 'INVALID';
-      const safe =
-        room.state.phase === 'WAITING' ||
-        (finished &&
-          (!room.state.completed || room.state.result?.storage === 'confirmed'));
-      return { safe, scope: room.scope };
-    });
-  }
-
-  async inventoryScope() {
-    const parent = await this.userLobby().read();
-    if (parent) return { instanceId: parent.scope.id, owner: parent.scope.owner };
-    const room = await readStored<Room>(this.ctx.storage, 'room');
-    if (!room || !isMatchRoom(room)) return null;
-    return { instanceId: room.scope.id, owner: room.scope.owner };
-  }
-
   async persistenceStatus(instanceId: string) {
     const room = await this.readMatchRoom();
     if (room?.scope.id !== instanceId) return null;
@@ -431,102 +405,6 @@ export class GameRoom extends DurableObject<Env> {
       storage: room.state.result?.storage ?? null,
       errorCode: room.resultErrorCode ?? null,
     };
-  }
-
-  async anonymizeAccount(actorId: string, questionIds: string[]) {
-    if (await this.userLobby().read()) return this.userLobby().anonymize(actorId);
-    await this.ctx.blockConcurrencyWhile(async () => {
-      const room = await readStored<Room>(this.ctx.storage, 'room');
-      if (!room) return;
-      anonymizeState(room.state, actorId, new Set(questionIds));
-      changed(room.state, Date.now());
-      await this.save(room);
-      this.broadcast(room);
-    });
-  }
-
-  async registerInventory(scope: InstanceScope) {
-    return this.ctx.blockConcurrencyWhile(async () => {
-      const parent = await this.userLobby().read();
-      if (parent) {
-        if (parent.scope.id !== scope.id || parent.scope.owner !== scope.owner)
-          throw new Error('INSTANCE_MISMATCH');
-        await registerInstanceRoom(this.env, scope, this.ctx.id.toString(), true);
-        return;
-      }
-      const room = await this.readMatchRoom();
-      if (!room) return;
-      if (room.scope.id !== scope.id || room.scope.owner !== scope.owner)
-        throw new Error('INSTANCE_MISMATCH');
-    });
-  }
-
-  async eraseInstance(instanceId: string) {
-    if (await this.userLobby().read()) {
-      const status = await this.deletionStatus(instanceId);
-      if (!status.safe) return { ok: false as const, code: 'MATCH_STARTED' };
-    }
-    return this.ctx.blockConcurrencyWhile(async () => {
-      const parent = await this.userLobby().read();
-      if (parent) {
-        if (parent.scope.id !== instanceId)
-          return { ok: false as const, code: 'INSTANCE_MISMATCH' };
-        if (parent.starting) return { ok: false as const, code: 'START_PENDING' };
-        if (
-          parent.match &&
-          !(
-            await this.env.GAME_ROOM.getByName(
-              matchRoomName(parent.match.id),
-            ).deletionStatus(instanceId)
-          ).safe
-        )
-          return { ok: false as const, code: 'RESULT_PENDING' };
-      }
-      const room = await this.readMatchRoom();
-      if (room) {
-        if (room.scope.id !== instanceId)
-          return { ok: false as const, code: 'INSTANCE_MISMATCH' };
-        if (
-          room.state.phase !== 'WAITING' &&
-          !['FINISHED', 'INVALID'].includes(room.state.phase)
-        )
-          return { ok: false as const, code: 'MATCH_STARTED' };
-        if (room.state.completed && room.state.result?.storage !== 'confirmed')
-          return { ok: false as const, code: 'RESULT_PENDING' };
-      }
-      for (const socket of this.liveSockets())
-        this.closeSocket(socket, 1008, 'INSTANCE_DELETED');
-      await this.ctx.storage.deleteAll();
-      await this.ctx.storage.put('instanceDeleted', instanceId);
-      await this.ctx.storage.deleteAlarm();
-      return { ok: true as const };
-    });
-  }
-
-  async eraseRestoredInstance(receipt: { id: string; owner: string; deletedAt: string }) {
-    // Only the maintenance service calls this with an independently preserved completion receipt.
-    await this.ctx.blockConcurrencyWhile(async () => {
-      const parent = await this.userLobby().read();
-      if (
-        parent &&
-        (parent.scope.id !== receipt.id ||
-          parent.scope.owner !== receipt.owner ||
-          parent.createdAt > Date.parse(receipt.deletedAt))
-      )
-        throw new Error('RESTORED_ROOM_CONFLICT');
-      const room = await this.readMatchRoom();
-      if (
-        room &&
-        (room.scope.owner !== receipt.owner ||
-          (room.state.startedAt ?? 0) > Date.parse(receipt.deletedAt))
-      )
-        throw new Error('RESTORED_ROOM_CONFLICT');
-      for (const socket of this.liveSockets())
-        this.closeSocket(socket, 1008, 'INSTANCE_DELETED');
-      await this.ctx.storage.deleteAll();
-      await this.ctx.storage.put('instanceDeleted', receipt.id);
-      await this.ctx.storage.deleteAlarm();
-    });
   }
 
   async stopWaiting(instanceId: string) {
@@ -544,30 +422,40 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async cancelReservation(
+    kind: 'match' | 'room',
     actorId: string,
     revoke = false,
     generation?: string,
     token?: string,
     forfeit = false,
   ) {
-    if (await this.userLobby().read())
+    if (kind === 'room')
       return this.userLobby().cancel(actorId, revoke, generation, token, forfeit);
+    if (kind !== 'match') throw new Error('INVALID_ROOM_KIND');
     return this.ctx.blockConcurrencyWhile(async () => {
       const room = await this.readMatchRoom();
+      if (!room) {
+        if ((!revoke || forfeit) && generation)
+          await this.ctx.storage.put(`closed:${generation}`, true);
+        if (revoke && token) await this.ctx.storage.put(`revoked:${token}`, true);
+        return true;
+      }
       if (
-        room?.generations[actorId] &&
+        room.generations[actorId] &&
         generation &&
         room.generations[actorId] !== generation
       )
         return false;
       if (room?.starting) return false;
       if (revoke && token) {
-        if (!forfeit && (await this.ctx.storage.get(`revoked:${token}`))) return true;
+        // A marker may have committed before saving the session removal failed.
+        if (
+          !forfeit &&
+          room.sessions[token] !== actorId &&
+          (await this.ctx.storage.get(`revoked:${token}`))
+        )
+          return true;
         await this.ctx.storage.put(`revoked:${token}`, true);
-      }
-      if (!room) {
-        if (generation) await this.ctx.storage.put(`closed:${generation}`, true);
-        return true;
       }
       await this.sweep(room, Date.now());
       if (
@@ -739,6 +627,11 @@ export class GameRoom extends DurableObject<Env> {
 
   async fetch(request: Request) {
     if (await this.userLobby().read()) return this.userLobby().fetch(request);
+    if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
+      return new Response(null, { status: 426 });
+    const socketId = connectionId(request);
+    if (socketId === null)
+      return Response.json({ code: 'INVALID_CONNECTION_ID' }, { status: 400 });
     await this.refreshForeignWaiting(true, request);
     let validation:
       | {
@@ -750,9 +643,6 @@ export class GameRoom extends DurableObject<Env> {
       | undefined;
     for (;;) {
       const result = await this.ctx.blockConcurrencyWhile(async () => {
-        if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket')
-          return new Response(null, { status: 426 });
-
         const room = await readStored<Room>(this.ctx.storage, 'room');
         const session = request.headers.get('X-Game-Session') ?? '';
         const actorId =
@@ -834,6 +724,9 @@ export class GameRoom extends DurableObject<Env> {
         const pair = new WebSocketPair();
         this.ctx.acceptWebSocket(pair[1], [actorId]);
         pair[1].serializeAttachment({
+          reportReceived: false,
+          connectionId: socketId,
+          roomId: room.state.matchId,
           actorId,
           windowStart: now,
           count: 0,
@@ -841,6 +734,7 @@ export class GameRoom extends DurableObject<Env> {
           live: true,
           lastSeq: null,
         } satisfies Attachment);
+        this.logSocket('game_socket_connected', pair[1]);
         await this.sweep(room, now);
 
         if (
@@ -926,6 +820,8 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
+    const receivedAt = Date.now();
+    if (logConnectionReport(socket, message, this.ctx.id.toString())) return;
     if (await this.userLobby().read()) return this.userLobby().message(socket, message);
     await this.ctx.blockConcurrencyWhile(async () => {
       const room = await readStored<Room>(this.ctx.storage, 'room');
@@ -991,22 +887,36 @@ export class GameRoom extends DurableObject<Env> {
               roomSeq: room.state.roomSeq,
             }
         : adjudicate(room.state, attachment.actorId, command, now);
+      const savingAt = Date.now();
       await this.save(
         room,
         room.state.matchKind === 'room' && !previous
           ? { key, value: { fingerprint, reply } }
           : undefined,
       );
+      const savedAt = Date.now();
+      if (
+        this.env.PROBES_ENABLED === 'true' &&
+        this.env.ROOM_LIFECYCLE_LOGS === 'true' &&
+        savedAt - receivedAt >= 500
+      )
+        console.info(
+          JSON.stringify({
+            event: 'game_command_slow',
+            matchId: room.state.matchId,
+            commandId: command.commandId,
+            type: command.type,
+            receivedAt,
+            savedAt,
+            beforeAdjudicationMs: now - receivedAt,
+            adjudicationMs: savingAt - now,
+            saveMs: savedAt - savingAt,
+            phase: room.state.phase,
+            deadline: room.state.deadline,
+          }),
+        );
       this.send(socket, { type: 'ack', reply });
       this.broadcast(room);
-    });
-  }
-
-  async expireReview() {
-    if (await this.userLobby().read()) return this.userLobby().alarm();
-    await this.ctx.blockConcurrencyWhile(async () => {
-      const room = await readStored<Room>(this.ctx.storage, 'room');
-      if (room && expireReview(room.state, Date.now())) await this.save(room);
     });
   }
 
@@ -1042,6 +952,14 @@ export class GameRoom extends DurableObject<Env> {
       status = 'confirmed';
     } catch (error) {
       if (!(error instanceof ResultConflict)) {
+        console.error(
+          JSON.stringify({
+            event: 'result_save_failed',
+            matchId: pending.record.matchId,
+            objectId: this.ctx.id.toString(),
+            ...failureDetails(error),
+          }),
+        );
         await this.ctx.blockConcurrencyWhile(async () => {
           const room = await this.readMatchRoom();
           if (!room || room.state.matchId !== pending.record.matchId) return;
@@ -1084,28 +1002,81 @@ export class GameRoom extends DurableObject<Env> {
       );
   }
 
-  async webSocketClose(socket: WebSocket) {
+  async webSocketClose(
+    socket: WebSocket,
+    code: number,
+    _reason: string,
+    wasClean: boolean,
+  ) {
+    this.logSocket('game_socket_disconnected', socket, { closeCode: code, wasClean });
     await this.disconnect(socket);
   }
-  async webSocketError(socket: WebSocket) {
+  async webSocketError(socket: WebSocket, error: unknown) {
+    console.error(
+      JSON.stringify({
+        event: 'game_socket_failed',
+        objectId: this.ctx.id.toString(),
+        connectionId: this.attachment(socket).connectionId,
+        ...failureDetails(error),
+      }),
+    );
     await this.disconnect(socket);
   }
 
   private async disconnect(socket: WebSocket) {
-    if (await this.userLobby().read()) return this.userLobby().disconnect(socket);
-    await this.ctx.blockConcurrencyWhile(async () => {
-      this.closeSocket(socket, 1000, 'Closed');
-      const room = await readStored<Room>(this.ctx.storage, 'room');
-      if (!room) return;
+    let stage = 'route.read';
+    try {
+      if (await this.userLobby().read()) {
+        stage = 'lobby.disconnect';
+        return await this.userLobby().disconnect(socket);
+      }
+      stage = 'game.disconnect';
+      await this.ctx.blockConcurrencyWhile(async () => {
+        this.closeSocket(socket, 1000, 'Closed');
+        const room = await readStored<Room>(this.ctx.storage, 'room');
+        if (!room) return;
 
-      await this.sweep(room, Date.now());
-      await this.save(room);
-      this.broadcast(room);
-    });
+        await this.sweep(room, Date.now());
+        await this.save(room);
+        this.broadcast(room);
+      });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: 'game_disconnect_failed',
+          objectId: this.ctx.id.toString(),
+          connectionId: this.attachment(socket).connectionId,
+          stage,
+          ...failureDetails(error),
+        }),
+      );
+      throw error;
+    }
   }
 
   private attachment(socket: WebSocket): Attachment {
     return socket.deserializeAttachment() as Attachment;
+  }
+
+  private logSocket(
+    event: string,
+    socket: WebSocket,
+    details: Record<string, unknown> = {},
+  ) {
+    const attachment = this.attachment(socket);
+    console.info(
+      JSON.stringify({
+        event,
+        at: Date.now(),
+        objectId: this.ctx.id.toString(),
+        roomId: attachment.roomId,
+        connectionId: attachment.connectionId,
+        heartbeatAgeMs: Date.now() - attachment.lastSeen,
+        reportReceived: attachment.reportReceived,
+        clientReport: attachment.clientReport,
+        ...details,
+      }),
+    );
   }
 
   private liveSockets() {
@@ -1115,6 +1086,10 @@ export class GameRoom extends DurableObject<Env> {
   private closeSocket(socket: WebSocket, code: number, reason: string) {
     const attachment = this.attachment(socket);
     attachment.live = false;
+    this.logSocket('game_socket_closed', socket, {
+      closeCode: code,
+      code: /^[A-Z_]{3,80}$/.test(reason) ? reason : 'CLOSED',
+    });
     socket.serializeAttachment(attachment);
     try {
       socket.close(code, reason);
@@ -1155,18 +1130,22 @@ export class GameRoom extends DurableObject<Env> {
         ).userRoomMatchFinished(pending.matchId);
     } catch (error) {
       console.error(
-        'MATCH_FINISH_NOTIFICATION_RETRY',
-        pending.matchId,
-        failureCode(error),
+        JSON.stringify({
+          event: 'match_finish_notification_failed',
+          matchId: pending.matchId,
+          objectId: this.ctx.id.toString(),
+          ...failureDetails(error),
+        }),
       );
       return;
     }
     await this.ctx.blockConcurrencyWhile(async () => {
       const room = await this.readMatchRoom();
       if (!room || room.state.matchId !== pending.matchId) return;
-      room.finishNotified = true;
-      delete room.notificationRetryAt;
-      await this.save(room);
+      for (const socket of this.liveSockets())
+        this.closeSocket(socket, 1000, 'MATCH_FINISHED');
+      await this.ctx.storage.deleteAll();
+      await this.ctx.storage.deleteAlarm();
     });
   }
 
@@ -1174,18 +1153,32 @@ export class GameRoom extends DurableObject<Env> {
     const pending = await this.ctx.blockConcurrencyWhile(async () => {
       const room = await readStored<Room>(this.ctx.storage, 'room');
       if (!room || !isMatchRoom(room)) return;
+      // Active matches are swept and saved by alarm() itself.
+      if (
+        room.state.phase !== 'WAITING' &&
+        !room.state.result &&
+        room.lifecycleRetryAt === undefined
+      )
+        return;
       await this.sweep(room, Date.now());
       await this.save(room);
       if (room.lifecycleRetryAt === undefined || room.lifecycleRetryAt > Date.now())
         return;
       room.lifecycleRetryAt = Date.now() + settings.results.retryIntervalMs;
       await this.save(room);
-      return { matchId: room.state.matchId, starting: room.starting };
+      return {
+        matchId: room.state.matchId,
+        owner: room.scope.owner,
+        starting: room.starting,
+      };
     });
     if (!pending) return;
+    let deleted = false;
     try {
-      if (pending.starting) await startMatch(this.env, pending.starting);
-      else await cancelMatch(this.env, pending.matchId);
+      const result = pending.starting
+        ? await startMatch(this.env, pending.starting)
+        : await cancelMatch(this.env, pending.owner, pending.matchId);
+      deleted = result === 'deleted';
     } catch (error) {
       if (failureCode(error) === 'MATCH_START_DENIED') {
         await this.ctx.blockConcurrencyWhile(async () => {
@@ -1197,13 +1190,24 @@ export class GameRoom extends DurableObject<Env> {
           await this.save(room);
         });
       }
-      console.error('MATCH_LIFECYCLE_RETRY', pending.matchId, failureCode(error));
+      console.error(
+        JSON.stringify({
+          event: 'match_lifecycle_failed',
+          matchId: pending.matchId,
+          objectId: this.ctx.id.toString(),
+          ...failureDetails(error),
+        }),
+      );
       return;
     }
     await this.ctx.blockConcurrencyWhile(async () => {
       const room = await this.readMatchRoom();
       if (!room || room.state.matchId !== pending.matchId) return;
-      if (pending.starting) {
+      if (deleted) {
+        delete room.starting;
+        room.lobby.closed = true;
+        room.cancelled = true;
+      } else if (pending.starting) {
         if (!room.starting) return;
         room.state.startedAt = pending.starting.startedAt as number;
         room.state.phase = 'REVEALING';
@@ -1273,10 +1277,8 @@ export class GameRoom extends DurableObject<Env> {
     room: Room,
     receipt?: { key: string; value: { fingerprint: string; reply: Reply } },
   ) {
-    expireReview(room.state, Date.now());
     if (
       isMatchRoom(room) &&
-      !room.finishNotified &&
       (room.cancelled ||
         room.state.result?.storage === 'confirmed' ||
         room.state.result?.storage === 'conflict') &&
@@ -1302,8 +1304,6 @@ export class GameRoom extends DurableObject<Env> {
       const deadlines = this.liveSockets().map(
         (socket) => this.attachment(socket).lastSeen + heartbeatTimeout,
       );
-      const reviewAt = reviewDeadline(room.state);
-      if (reviewAt !== undefined) deadlines.push(reviewAt);
       if (isMatchRoom(room)) {
         if (room.notificationRetryAt !== undefined)
           deadlines.push(room.notificationRetryAt);

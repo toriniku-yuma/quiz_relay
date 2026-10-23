@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, ne, or, sql } from 'drizzle-orm';
 import { normalizeDisplayName } from '../../shared/profile.ts';
 import type { BroughtQuestion, RoomSettings } from '../../shared/rooms.ts';
 import { validateBroughtSet } from '../../shared/rooms.ts';
@@ -7,6 +7,8 @@ import { contentHash } from '../catalog/hash.ts';
 import { changeD1, readD1 } from '../db/d1.ts';
 import {
   federationQuestionLinks,
+  federationReservations,
+  federationSessions,
   guestSessions,
   instanceDeletions,
   instances,
@@ -19,7 +21,6 @@ import {
   questionSettings,
   questionSubmissions,
   questionVersions,
-  roomDirectory,
 } from '../db/schema.ts';
 import type { Env } from '../env.ts';
 import { sharedQuestionAvailableSQL } from '../federation/question-access.ts';
@@ -35,7 +36,12 @@ import {
 import { requireUnrestricted } from '../organization/moderation.ts';
 import { publishQuestionCatalog } from '../questions/catalog.ts';
 
-export type Participant = { id: string; name: string; guest: boolean };
+export type Participant = {
+  id: string;
+  name: string;
+  serverName?: string | null;
+  guest: boolean;
+};
 export const guestLifetime = 30 * 86400000;
 export async function guestIdentity(env: Env, token: string) {
   if (!/^[0-9a-f]{64}$/.test(token)) throw new OrganizationError('GUEST_REQUIRED', 403);
@@ -140,6 +146,7 @@ export async function participantContext(
   guestToken?: string,
   existing = false,
   creating = false,
+  foreignCookies: { id: string; secret: string }[] = [],
 ) {
   const { db, close } = organizationDatabase(env);
   try {
@@ -152,6 +159,7 @@ export async function participantContext(
       actor = {
         id: identity.account.actorId,
         name: identity.account.displayName ?? '',
+        serverName: identity.organization.name,
         guest: false,
       };
       privileged = identity.account.administrator || identity.permissions.length > 0;
@@ -171,6 +179,45 @@ export async function participantContext(
           instance.id,
           'rooms',
         );
+    } else if (foreignCookies.length) {
+      if (!existing || creating) throw new OrganizationError('SESSION_REQUIRED', 401);
+      const credentials = await Promise.all(
+        foreignCookies.map(async ({ id, secret }) =>
+          and(
+            eq(federationReservations.id, validId(id)),
+            eq(federationSessions.hash, await contentHash(secret)),
+          ),
+        ),
+      );
+      const sessions = await db
+        .select({ reservation: federationReservations })
+        .from(federationSessions)
+        .innerJoin(
+          federationReservations,
+          eq(federationReservations.id, federationSessions.reservationId),
+        )
+        .where(
+          and(
+            or(...credentials),
+            gt(federationSessions.expiresAt, Date.now()),
+            ne(federationReservations.state, 'closed'),
+          ),
+        );
+      const actors = new Set(sessions.map(({ reservation }) => reservation.actorId));
+      if (actors.size !== 1) throw new OrganizationError('SESSION_REQUIRED', 401);
+      const reservation = sessions[0].reservation;
+      const [row] = await db
+        .select()
+        .from(instances)
+        .where(eq(instances.id, validId(instanceId)));
+      if (!row) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
+      instance = row;
+      actor = {
+        id: reservation.actorId,
+        name: reservation.displayName,
+        serverName: reservation.serverName,
+        guest: false,
+      };
     } else {
       const guest = await guestIdentity(env, guestToken ?? '');
       const [row] = await db
@@ -186,6 +233,14 @@ export async function participantContext(
       instance = row;
       actor = { id: guest.actorId, name: guest.name, guest: true };
       if (creating) throw new OrganizationError('LOGIN_REQUIRED', 403);
+    }
+    if (!subject && !foreignCookies.length) {
+      const [organization] = await db
+        .select({ name: organizations.name })
+        .from(organizations)
+        .where(eq(organizations.id, instance.organizationId));
+      if (!organization) throw new OrganizationError('SETUP_REQUIRED', 409);
+      actor.serverName = organization.name;
     }
     if (!existing) {
       if (instance.state === 'archived')
@@ -366,23 +421,6 @@ export async function mutatePersonalSet(
     await close();
   }
 }
-export async function roomIds(env: Env, instanceId: string) {
-  const { db, close } = organizationDatabase(env);
-  try {
-    return await db
-      .select()
-      .from(roomDirectory)
-      .where(
-        and(
-          eq(roomDirectory.instanceId, validId(instanceId)),
-          eq(roomDirectory.public, true),
-          eq(roomDirectory.closed, false),
-        ),
-      );
-  } finally {
-    await close();
-  }
-}
 export async function roomSharedSources(env: Env, instanceId: string) {
   const { db, close } = organizationDatabase(env);
   try {
@@ -421,41 +459,6 @@ export async function roomOptions(env: Env, instanceId: string) {
         .select()
         .from(questionCategories)
         .where(eq(questionCategories.instanceId, instanceId));
-    });
-  } finally {
-    await close();
-  }
-}
-export async function publishRoom(
-  env: Env,
-  id: string,
-  instanceId: string,
-  publicRoom: boolean,
-  closed: boolean,
-) {
-  const { db, close } = organizationDatabase(env);
-  try {
-    await changeD1(db, async (writes) => {
-      const [instance] = await db
-        .select()
-        .from(instances)
-        .where(eq(instances.id, instanceId));
-      if (!instance) throw new OrganizationError('INSTANCE_NOT_FOUND', 404);
-      const [existing] = await db
-        .select()
-        .from(roomDirectory)
-        .where(eq(roomDirectory.id, id));
-      if (existing && existing.instanceId !== instanceId)
-        throw new OrganizationError('OPERATION_CONFLICT', 409);
-      writes.push(
-        db
-          .insert(roomDirectory)
-          .values({ id, instanceId, public: publicRoom, closed })
-          .onConflictDoUpdate({
-            target: roomDirectory.id,
-            set: { public: publicRoom, closed },
-          }),
-      );
     });
   } finally {
     await close();

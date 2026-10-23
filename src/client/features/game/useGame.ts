@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import type { Command, GameMessage, Panel, Snapshot } from '../../../shared/game';
+import type { ResultsOverview } from '../../../shared/results';
 import { settings } from '../../../shared/settings';
+import { playRequest } from '../rooms/api';
 import { type ConnectionStatus, connectGameSocket } from './connection';
 
 import { applyGameUpdate, readGameSession, saveGameSession } from './recovery';
@@ -48,9 +50,91 @@ export function useGame(
   const socket = useRef<WebSocket | null>(null);
   const pendingCommand = useRef<Command | null>(null);
   const offset = useRef(0);
+  const confirmedRoom = useRef<string | null>(null);
+  const [parentRoomId, setParentRoomId] = useState<string | null>(null);
+  const previousSession = useRef({ mode, subject });
 
   useEffect(() => {
-    if (!room) return;
+    if (
+      previousSession.current.mode !== mode ||
+      previousSession.current.subject !== subject
+    ) {
+      previousSession.current = { mode, subject };
+      const restored = readGameSession(mode, subject);
+      currentRoom.current = restored?.room ?? null;
+      currentSnapshot.current = restored?.snapshot ?? null;
+      confirmedRoom.current = null;
+      pendingCommand.current = null;
+      setRoom(currentRoom.current);
+      setSnapshot(currentSnapshot.current);
+      setParentRoomId(null);
+      setPanel(null);
+      setActorId('');
+      setPending(false);
+      setConnection('idle');
+      setError('');
+      return;
+    }
+    if (mode !== 'formal' || !room || confirmedRoom.current === room.id) return;
+    const activeRoom = room;
+    const resultStorage = snapshot?.result?.storage;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const reservation = socketPath
+      ? new URL(socketPath, location.origin).searchParams.get('reservation')
+      : null;
+    async function restoreResult() {
+      try {
+        const result = await playRequest<ResultsOverview>(
+          `${API_PATHS.playResults}${reservation ? `?reservation=${encodeURIComponent(reservation)}` : ''}`,
+          { section: 'history', matchId: activeRoom.id },
+          activeRoom.instanceId ?? instanceId,
+          controller.signal,
+        );
+        if (controller.signal.aborted || currentRoom.current !== room) return;
+        const entry = result.history.find((entry) => entry.matchId === activeRoom.id);
+        if (entry?.snapshot) {
+          confirmedRoom.current = activeRoom.id;
+          currentSnapshot.current = entry.snapshot;
+          setSnapshot(entry.snapshot);
+          setParentRoomId(entry.parentRoomId ?? null);
+          if (result.actorId) setActorId(result.actorId);
+          setPanel(null);
+          pendingCommand.current = null;
+          setPending(false);
+          setError('');
+          saveGameSession(room, entry.snapshot, mode, subject);
+          socket.current?.close();
+          setConnection('closed');
+          return;
+        }
+      } catch (error) {
+        if (controller.signal.aborted || currentRoom.current !== room) return;
+        if (connection === 'stopped' || resultStorage)
+          setError(
+            error instanceof Error ? error.message : '結果を取得できませんでした。',
+          );
+      }
+      if (connection === 'closed' || connection === 'stopped' || resultStorage)
+        timer = setTimeout(() => void restoreResult(), 5000);
+    }
+    void restoreResult();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [
+    room,
+    mode,
+    subject,
+    instanceId,
+    socketPath,
+    connection,
+    snapshot?.result?.storage,
+  ]);
+
+  useEffect(() => {
+    if (!room || currentRoom.current !== room) return;
     const stillActive = () => currentRoom.current === room;
 
     const url = new URL(
@@ -75,9 +159,12 @@ export function useGame(
       error: (value) => {
         if (stillActive()) setError(value);
       },
-      finished: () => currentSnapshot.current?.result?.storage === 'confirmed',
+      finished: () =>
+        confirmedRoom.current === room.id ||
+        (mode === 'local' && !!currentSnapshot.current?.result),
       released: () => {
         if (!stillActive()) return;
+        if (mode === 'formal' && currentSnapshot.current?.phase !== 'WAITING') return;
         currentRoom.current = null;
         setRoom(null);
         if (!currentSnapshot.current?.result) {
@@ -95,7 +182,7 @@ export function useGame(
         if (pendingCommand.current) ws.send(JSON.stringify(pendingCommand.current));
       },
       message: (data) => {
-        if (!stillActive()) return false;
+        if (!stillActive() || confirmedRoom.current === room.id) return false;
         const message = JSON.parse(data) as GameMessage;
         if (message.type === 'state' || message.type === 'delta') {
           const next = applyGameUpdate(currentSnapshot.current, message);
@@ -179,6 +266,8 @@ export function useGame(
   const attach = useCallback(
     (id: string, connectedInstance?: string) => {
       setError('');
+      confirmedRoom.current = null;
+      setParentRoomId(null);
       currentSnapshot.current = null;
       pendingCommand.current = null;
       setPending(false);
@@ -196,6 +285,8 @@ export function useGame(
   );
 
   const leave = useCallback(() => {
+    confirmedRoom.current = null;
+    setParentRoomId(null);
     currentRoom.current = null;
     setRoom(null);
     setSnapshot(null);
@@ -238,6 +329,7 @@ export function useGame(
 
   return {
     snapshot,
+    parentRoomId,
     roomId: room?.id ?? null,
     roomInstanceId: room?.instanceId ?? instanceId,
     attach,

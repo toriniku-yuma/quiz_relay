@@ -2,7 +2,6 @@ import { applyD1Migrations, env } from 'cloudflare:test';
 import { eq } from 'drizzle-orm';
 import { beforeAll, expect, it, vi } from 'vitest';
 import { eraseInstance } from '../src/erasure/instances';
-import { reconcileRoomInventory } from '../src/erasure/inventory';
 import { eraseAuthentication } from '../src/erasure/jobs';
 import { exportPrivacyJournal, restorePrivacyJournal } from '../src/erasure/recovery';
 import { eraseResultNames } from '../src/erasure/results';
@@ -13,7 +12,6 @@ import {
   databaseRevision,
   instanceDeletions,
   instanceGrants,
-  instanceRooms,
   instances,
   matches,
   organizationAccounts,
@@ -21,7 +19,6 @@ import {
   questionVersions,
   resultOutbox,
   resultPlayers,
-  roomInventoryScans,
 } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
 import {
@@ -31,7 +28,7 @@ import {
   setupOrganization,
 } from '../src/worker/organization/database';
 import { saveProfile } from '../src/worker/organization/profile';
-import { recordWithdrawal } from '../src/worker/organization/withdrawal';
+import { recordWithdrawal, withdrawAccount } from '../src/worker/organization/withdrawal';
 import { commitFixtureResult } from './fixtures/match';
 import { questions } from './fixtures/questions';
 import { resultFixture } from './fixtures/result';
@@ -68,28 +65,6 @@ async function target() {
   const [instance] = await db.select().from(instances).where(eq(instances.id, id));
   return { instance, subject, account, organization };
 }
-function services(safe = true) {
-  const room = {
-    deletionStatus: vi.fn(async () => ({ safe })),
-    eraseInstance: vi.fn(async () => ({ ok: true })),
-    eraseRestoredInstance: vi.fn(async () => {}),
-    anonymizeAccount: vi.fn(async () => {}),
-    inventoryScope: vi.fn(
-      async () => null as { owner: string; instanceId?: string } | null,
-    ),
-    registerInventory: vi.fn(async () => {}),
-  };
-  const matchmaker = {
-    beginWithdrawal: vi.fn(async () => ({ ok: true })),
-    logoutActor: vi.fn(async () => {}),
-    anonymizeAccount: vi.fn(async () => {}),
-  };
-  const environment = {
-    GAME_ROOM: { get: () => room, idFromString: (id: string) => id },
-    MATCHMAKER: { getByName: () => matchmaker },
-  } as unknown as Pick<Env, 'GAME_ROOM' | 'MATCHMAKER'>;
-  return { room, matchmaker, environment };
-}
 async function deletion(instance: typeof instances.$inferSelect) {
   const { account } = await organizationIdentity(db, 'admin');
   const id = crypto.randomUUID();
@@ -97,7 +72,7 @@ async function deletion(instance: typeof instances.$inferSelect) {
     writes.push(
       db
         .update(instances)
-        .set({ state: 'archived', roomInventoryComplete: true })
+        .set({ state: 'archived' })
         .where(eq(instances.id, instance.id)),
       db.insert(instanceDeletions).values({
         id,
@@ -185,9 +160,6 @@ it('認証削除の失敗と同時呼出しを保存し、期限後だけ再試�
 });
 it('結果原本・outbox・参加者を匿名化してから退会を完了し、監査の再匿名化を繰り返さない', async () => {
   const { subject, account, instance } = await target();
-  await changeD1(db, async (writes) => {
-    writes.push(db.update(instances).set({ roomInventoryComplete: true }));
-  });
   const { record } = resultFixture();
   record.owner = instance.owner;
   record.result.finishedAt = Date.now();
@@ -205,24 +177,23 @@ it('結果原本・outbox・参加者を匿名化してから退会を完了し�
       }),
     );
   });
-  const id = crypto.randomUUID(),
-    { environment, matchmaker } = services();
+  const id = crypto.randomUUID();
   await recordWithdrawal(db, subject, id, 'local');
   expect(await eraseAuthentication(db, id, async () => {})).toBe(true);
-  expect(await anonymizeWithdrawal(db, environment, id)).toBe(false);
+  expect(await anonymizeWithdrawal(db, id)).toBe(true);
   const [pending] = await db
     .select()
     .from(accountWithdrawals)
     .where(eq(accountWithdrawals.id, id));
   expect(pending.auditErasedAt).not.toBeNull();
-  expect(pending.erasedAt).toBeNull();
+  expect(pending.erasedAt).not.toBeNull();
   expect(
     (
       await db.select().from(organizationEvents).where(eq(organizationEvents.id, eventId))
     )[0].details,
   ).toEqual({ action: 'grants', redacted: true });
-  expect(await eraseResultNames(db)).toBe(1);
-  expect(await anonymizeWithdrawal(db, environment, id)).toBe(true);
+  expect(await eraseResultNames(db)).toBe(0);
+  expect(await anonymizeWithdrawal(db, id)).toBe(true);
   expect(
     (await db.select().from(accountWithdrawals).where(eq(accountWithdrawals.id, id)))[0]
       .auditErasedAt,
@@ -240,29 +211,6 @@ it('結果原本・outbox・参加者を匿名化してから退会を完了し�
         .where(eq(resultPlayers.matchId, record.matchId))
     ).find((player) => player.actorId === account.actorId)?.name,
   ).toBe('退会ユーザー');
-  expect(matchmaker.anonymizeAccount).toHaveBeenCalled();
-});
-it('未確定の試合があるインスタンスを削除せず、受付を取り消す', async () => {
-  const { instance } = await target(),
-    id = await deletion(instance),
-    { room, environment } = services(false);
-  await changeD1(db, async (writes) => {
-    writes.push(
-      db
-        .insert(instanceRooms)
-        .values({ roomId: '1'.repeat(64), instanceId: instance.id }),
-    );
-  });
-  await expect(eraseInstance(db, environment.GAME_ROOM, id)).rejects.toThrow(
-    'RESULT_OR_MATCH_PENDING',
-  );
-  expect(room.eraseInstance).not.toHaveBeenCalled();
-  expect(
-    await db.select().from(instanceDeletions).where(eq(instanceDeletions.id, id)),
-  ).toEqual([]);
-  expect(
-    await db.select().from(instances).where(eq(instances.id, instance.id)),
-  ).toHaveLength(1);
 });
 it('削除は対象の原本だけを消し、他インスタンスと削除済みの証跡を保つ', async () => {
   const first = await target(),
@@ -272,11 +220,10 @@ it('削除は対象の原本だけを消し、他インスタンスと削除済�
     record.owner = instance.owner;
     await commitFixtureResult(runtime.GAME_D1, record);
   }
-  const id = await deletion(first.instance),
-    { environment } = services();
-  expect(await eraseInstance(db, environment.GAME_ROOM, id)).toBe(false);
+  const id = await deletion(first.instance);
+  expect(await eraseInstance(db, id)).toBe(false);
   const queries = vi.spyOn(db.$client, 'prepare');
-  expect(await eraseInstance(db, environment.GAME_ROOM, id)).toBe(true);
+  expect(await eraseInstance(db, id)).toBe(true);
   expect(queries.mock.calls.length).toBeLessThanOrEqual(50);
   queries.mockRestore();
   expect(
@@ -314,90 +261,15 @@ it('削除は対象の原本だけを消し、他インスタンスと削除済�
       );
     }),
   ).rejects.toThrow('INSTANCE_DELETION_RECORDED');
-  expect(await eraseInstance(db, environment.GAME_ROOM, id)).toBe(true);
-});
-it('DO削除失敗で原本を保ち、同じ受付から再開する', async () => {
-  const { instance } = await target(),
-    id = await deletion(instance),
-    { room, environment } = services();
-  await changeD1(db, async (writes) => {
-    writes.push(
-      db
-        .insert(instanceRooms)
-        .values({ roomId: '2'.repeat(64), instanceId: instance.id }),
-    );
-  });
-  room.eraseInstance.mockRejectedValueOnce(new Error('isolated unavailable'));
-  expect(await eraseInstance(db, environment.GAME_ROOM, id)).toBe(false);
-  await expect(eraseInstance(db, environment.GAME_ROOM, id)).rejects.toThrow(
-    'isolated unavailable',
-  );
-  expect(
-    await db.select().from(instances).where(eq(instances.id, instance.id)),
-  ).toHaveLength(1);
-  expect(
-    (await db.select().from(instanceDeletions).where(eq(instanceDeletions.id, id)))[0]
-      .roomCursor,
-  ).toBeNull();
-  expect(await eraseInstance(db, environment.GAME_ROOM, id)).toBe(true);
-});
-it('部屋一覧の確認は停止中だけ進め、失敗したページを確定しない', async () => {
-  const { instance } = await target(),
-    { room, environment } = services();
-  room.inventoryScope.mockResolvedValue({
-    owner: instance.owner,
-    instanceId: instance.id,
-  });
-  await changeD1(db, async (writes) => {
-    writes.push(
-      db
-        .update(instances)
-        .set({ roomInventoryComplete: false })
-        .where(eq(instances.id, instance.id)),
-    );
-  });
-  const inventory = {
-    ...environment,
-    LOCAL_ROOM_INVENTORY: JSON.stringify(['3'.repeat(64)]),
-  };
-  room.registerInventory.mockRejectedValueOnce(new Error('isolated unavailable'));
-  await expect(reconcileRoomInventory(db, inventory)).rejects.toThrow(
-    'isolated unavailable',
-  );
-  expect((await db.select().from(roomInventoryScans))[0].complete).toBe(false);
-  expect(await reconcileRoomInventory(db, inventory)).toBe(true);
-  expect(
-    (await db.select().from(instances).where(eq(instances.id, instance.id)))[0]
-      .roomInventoryComplete,
-  ).toBe(true);
-  await changeD1(db, async (writes) => {
-    writes.push(
-      db
-        .update(instances)
-        .set({ state: 'published', roomInventoryComplete: false })
-        .where(eq(instances.id, instance.id)),
-    );
-  });
-  await expect(reconcileRoomInventory(db, inventory)).rejects.toThrow(
-    'INVENTORY_REQUIRES_PAUSE',
-  );
-  await changeD1(db, async (writes) => {
-    writes.push(
-      db
-        .update(instances)
-        .set({ state: 'preparing', roomInventoryComplete: true })
-        .where(eq(instances.id, instance.id)),
-    );
-  });
+  expect(await eraseInstance(db, id)).toBe(true);
 });
 it('復旧で退会と削除の証跡を再適用し、偽の証跡でDBを変更しない', async () => {
   const { subject, account, instance } = await target(),
     withdrawal = crypto.randomUUID();
   await recordWithdrawal(db, subject, withdrawal, 'local');
-  const deletionId = await deletion(instance),
-    { environment } = services();
-  await eraseInstance(db, environment.GAME_ROOM, deletionId);
-  await eraseInstance(db, environment.GAME_ROOM, deletionId);
+  const deletionId = await deletion(instance);
+  await eraseInstance(db, deletionId);
+  await eraseInstance(db, deletionId);
   const journal = await exportPrivacyJournal(db);
   const tampered = structuredClone(journal);
   tampered.withdrawals[0].subject = 'wrong';
@@ -429,7 +301,39 @@ it('復旧で退会と削除の証跡を再適用し、偽の証跡でDBを変�
         .select()
         .from(instanceDeletions)
         .where(eq(instanceDeletions.id, deletionId))
-    )[0].inventoryPending,
-  ).toBe(true);
+    )[0].deletedAt,
+  ).not.toBeNull();
   await restorePrivacyJournal(db, journal);
+});
+
+it('退会受付後は待機枠を取り消してから非公開Workerで消去する', async () => {
+  const { subject, account } = await target();
+  const calls: string[] = [];
+  const logoutActor = vi.fn(async () => {
+    calls.push('cancel');
+    return { ok: true };
+  });
+  const environment = {
+    GAME_D1: runtime.GAME_D1,
+    GAME_CONFIG_PROFILE: 'local',
+    MATCHMAKER: { getByName: () => ({ logoutActor }) },
+    ACCOUNT_ERASURE: {
+      fetch: async () => {
+        const [saved] = await db
+          .select()
+          .from(organizationAccounts)
+          .where(eq(organizationAccounts.actorId, account.actorId));
+        expect(saved.withdrawnAt).not.toBeNull();
+        calls.push('erase');
+        return Response.json({ ready: true });
+      },
+    },
+  } as unknown as Env;
+  await withdrawAccount(db, environment, subject, {
+    operationId: crypto.randomUUID(),
+    subject,
+    confirmation: '退会',
+  });
+  expect(logoutActor).toHaveBeenCalledWith(account.actorId, []);
+  expect(calls).toEqual(['cancel', 'erase']);
 });

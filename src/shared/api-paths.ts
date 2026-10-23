@@ -8,6 +8,8 @@ export const API_PATHS = {
   federationQuestions: '/api/federation/questions',
   federationKey: '/federation/v1/key',
   federationQuestionSync: '/federation/v1/questions/sync',
+  participationAuthorize: '/federation/v1/participation/authorize',
+  foreignLoginJoin: '/api/v1/participation/login/join',
   participationTickets: '/api/v1/participation-tickets',
   foreignLoginTickets: '/api/v1/foreign-login-tickets',
   foreignLoginExchange: '/api/v1/participation/login/exchange',
@@ -16,9 +18,6 @@ export const API_PATHS = {
   foreignLoginRooms: '/api/v1/participation/login/rooms',
   participationReservations: '/api/v1/participation/reservations',
   participationValidation: '/federation/v1/participation/validate',
-  participationRelease: '/federation/v1/participation/release',
-  participationStatus: '/federation/v1/participation/status',
-  participationLogout: '/federation/v1/participation/logout',
   federationInbox: '/federation/v1/inbox',
   federationReview: '/federation/v1/results/review',
   federationResults: '/api/v1/federation/results',
@@ -96,5 +95,7 @@ export const API_PATHS = {
 export type ApiPath = (typeof API_PATHS)[keyof typeof API_PATHS];
 
 export function instanceApiPath(path: string, instanceId = '') {
-  return instanceId ? `${path}?instance=${encodeURIComponent(instanceId)}` : path;
+  return instanceId
+    ? `${path}${path.includes('?') ? '&' : '?'}instance=${encodeURIComponent(instanceId)}`
+    : path;
 }

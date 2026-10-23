@@ -17,7 +17,6 @@ CREATE TABLE `quiz_game_account_withdrawals` (
 	`audit_erased_at` text,
 	`retry_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
 	`attempts` integer DEFAULT 0 NOT NULL,
-	`room_cursor` text,
 	`last_attempt_at` text DEFAULT '1970-01-01T00:00:00.000Z' NOT NULL,
 	FOREIGN KEY (`organization_id`) REFERENCES `quiz_game_organizations`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`actor_id`) REFERENCES `quiz_game_organization_accounts`(`actor_id`) ON UPDATE no action ON DELETE no action
@@ -141,7 +140,6 @@ CREATE TABLE `quiz_federation_control_inbox` (
 	`message` text NOT NULL,
 	`received_at` integer NOT NULL,
 	`applied_at` integer,
-	`room_cursor` text,
 	`conflict_hash` text,
 	PRIMARY KEY(`peer_origin`, `event_id`),
 	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
@@ -333,17 +331,6 @@ CREATE TABLE `quiz_federation_question_staging` (
 	FOREIGN KEY (`import_id`) REFERENCES `quiz_federation_question_imports`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE TABLE `quiz_federation_reservation_closures` (
-	`peer_origin` text NOT NULL,
-	`operation_id` text NOT NULL,
-	`source_actor_id` text NOT NULL,
-	`confirmed` integer DEFAULT false NOT NULL,
-	`expires_at` integer NOT NULL,
-	PRIMARY KEY(`peer_origin`, `operation_id`),
-	FOREIGN KEY (`peer_origin`) REFERENCES `quiz_federation_peers`(`origin`) ON UPDATE no action ON DELETE no action
-);
---> statement-breakpoint
-CREATE INDEX `federation_closure_expiry` ON `quiz_federation_reservation_closures` (`expires_at`);--> statement-breakpoint
 CREATE TABLE `quiz_federation_reservations` (
 	`id` text PRIMARY KEY NOT NULL,
 	`peer_origin` text NOT NULL,
@@ -456,9 +443,6 @@ CREATE TABLE `quiz_game_instance_deletions` (
 	`requested_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
 	`deleted_at` text,
 	`accepted_at` text,
-	`check_cursor` text,
-	`room_cursor` text,
-	`inventory_pending` integer DEFAULT false NOT NULL,
 	`last_attempt_at` text DEFAULT '1970-01-01T00:00:00.000Z' NOT NULL,
 	FOREIGN KEY (`organization_id`) REFERENCES `quiz_game_organizations`(`id`) ON UPDATE no action ON DELETE no action
 );
@@ -478,11 +462,22 @@ CREATE INDEX `d1_instanceGrants_1` ON `quiz_game_instance_grants` (`actor_id`);-
 CREATE TABLE `quiz_game_instance_rooms` (
 	`room_id` text PRIMARY KEY NOT NULL,
 	`instance_id` text NOT NULL,
-	`review_attempted_at` text DEFAULT '1970-01-01T00:00:00.000Z' NOT NULL,
+	`settings` text NOT NULL,
+	`host_id` text NOT NULL,
+	`creator_id` text NOT NULL,
+	`creation_hash` text NOT NULL,
+	`created_at` integer NOT NULL,
+	`revision` integer NOT NULL,
+	`password` text,
+	`invite` text,
+	`original` text,
+	`source_owner` text,
+	`source_id` text,
+	`closed` integer NOT NULL,
 	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE INDEX `d1_instanceRooms_1` ON `quiz_game_instance_rooms` (`review_attempted_at`,`room_id`);--> statement-breakpoint
+CREATE INDEX `d1_instanceRooms_1` ON `quiz_game_instance_rooms` (`instance_id`,`closed`);--> statement-breakpoint
 CREATE TABLE `quiz_game_instances` (
 	`id` text PRIMARY KEY NOT NULL,
 	`organization_id` text NOT NULL,
@@ -494,7 +489,6 @@ CREATE TABLE `quiz_game_instances` (
 	`ranked_pause_reason` text,
 	`casual_pause_reason` text,
 	`casual_config` text DEFAULT '{"enabled":true,"players":4,"casualGuests":false,"roomGuests":false}' NOT NULL,
-	`room_inventory_complete` integer DEFAULT false NOT NULL,
 	FOREIGN KEY (`organization_id`) REFERENCES `quiz_game_organizations`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "instance_name_length" CHECK(length(trim("quiz_game_instances"."name")) BETWEEN 1 AND 80),
 	CONSTRAINT "instance_owner_length" CHECK(length(trim("quiz_game_instances"."owner")) BETWEEN 1 AND 256),
@@ -880,23 +874,20 @@ CREATE TABLE `quiz_game_result_privacy_jobs` (
 );
 --> statement-breakpoint
 CREATE INDEX `result_privacy_due` ON `quiz_game_result_privacy_jobs` (`due_at`,`match_id`);--> statement-breakpoint
-CREATE TABLE `quiz_game_room_directory` (
-	`id` text PRIMARY KEY NOT NULL,
-	`instance_id` text NOT NULL,
-	`public` integer NOT NULL,
-	`closed` integer DEFAULT false NOT NULL,
-	FOREIGN KEY (`instance_id`) REFERENCES `quiz_game_instances`(`id`) ON UPDATE no action ON DELETE no action
+CREATE TABLE `quiz_game_room_members` (
+	`room_id` text NOT NULL,
+	`actor_id` text NOT NULL,
+	`name` text NOT NULL,
+	`guest` integer NOT NULL,
+	`token` text NOT NULL,
+	`generation` text NOT NULL,
+	`joined_at` integer NOT NULL,
+	`expires` integer NOT NULL,
+	PRIMARY KEY(`room_id`, `actor_id`),
+	FOREIGN KEY (`room_id`) REFERENCES `quiz_game_instance_rooms`(`room_id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-CREATE INDEX `d1_roomDirectory_1` ON `quiz_game_room_directory` (`instance_id`,`public`,`closed`);--> statement-breakpoint
-CREATE TABLE `quiz_game_room_inventory_scans` (
-	`id` text PRIMARY KEY NOT NULL,
-	`scope_ids` text NOT NULL,
-	`cursor` text,
-	`complete` integer DEFAULT false NOT NULL,
-	`local_hash` text
-);
---> statement-breakpoint
+CREATE INDEX `d1_roomMembers_1` ON `quiz_game_room_members` (`actor_id`,`expires`);--> statement-breakpoint
 CREATE TABLE `quiz_game_ruleset_versions` (
 	`owner` text NOT NULL,
 	`ruleset_id` text NOT NULL,

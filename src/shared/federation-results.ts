@@ -21,6 +21,7 @@ export type FederatedResult = {
   players: {
     id: string;
     name: string;
+    serverName?: string | null;
     correct: number;
     mistakes: number;
     ratingDelta: number;

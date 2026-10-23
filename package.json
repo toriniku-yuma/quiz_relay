@@ -12,7 +12,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm test && node --experimental-vm-modules --test tests/federation-runtime.test.mjs && node scripts/check-vite-config.mjs && node scripts/check-game-catalog-seed.mjs && pnpm run build",
+    "check": "pnpm run lint && pnpm run typecheck && pnpm test && node --experimental-vm-modules --test tests/federation-runtime.test.mjs tests/federation-load.test.mjs && node scripts/check-vite-config.mjs && node scripts/check-game-catalog-seed.mjs && pnpm run build",
     "deploy": "pnpm run build && wrangler deploy",
     "probe": "node --env-file=.dev.vars scripts/probe.mjs",
     "federation:check:cloud": "node scripts/check-federation-cloud.mjs",

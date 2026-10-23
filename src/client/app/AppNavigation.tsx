@@ -187,6 +187,14 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
         data-sidebar-scroll
         className="menu-scrollbar -mr-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-3"
       >
+        {foreign && (
+          <a
+            className="mb-3 block font-bold underline"
+            href={`${foreign.account.homeOrigin}/game/`}
+          >
+            所属元に戻る
+          </a>
+        )}
         {(auth.user || foreign) && (
           <div className="pb-5">
             <h2 className="mb-2 px-3 text-base font-bold">組織・インスタンス</h2>
@@ -352,6 +360,14 @@ export default function Navigation({ mobile = false }: { mobile?: boolean }) {
             </span>
           )}
         </p>
+        {foreign && (
+          <a
+            className="mb-3 block font-bold underline"
+            href={`${foreign.account.homeOrigin}/game/`}
+          >
+            所属元に戻る
+          </a>
+        )}
         {(auth.user || foreign) && (
           <MenuPopover title="アカウント" upward>
             {auth.user && (

@@ -1,6 +1,6 @@
 import canonicalize from 'canonicalize';
 import { and, eq, inArray, isNotNull } from 'drizzle-orm';
-import { changeD1, connectD1 } from '../db/d1.ts';
+import { changeD1, connectD1, type Database } from '../db/d1.ts';
 import {
   instanceDeletions,
   instances,
@@ -26,6 +26,11 @@ export function matchRecord(state: State): MatchRecord {
     ...(state.parentRoomId ? { parentRoomId: state.parentRoomId } : {}),
     definition: { ...state.definition, rules: state.rules },
     questions: state.questions,
+    questionCount:
+      state.rules.winMode === 'questions' && state.rules.questionLimit !== undefined
+        ? Math.min(state.questions.length, state.rules.questionLimit)
+        : state.questions.length,
+    questionNumber: state.questionIndex + 1,
     startedAt: state.startedAt ?? null,
     result: null,
     answerStats: [],
@@ -38,6 +43,16 @@ export function matchRecord(state: State): MatchRecord {
 function database(env: Env) {
   if (!env.GAME_D1) throw new Error('RESULT_DATABASE_NOT_CONFIGURED');
   return connectD1(env.GAME_D1);
+}
+
+async function instanceDeleted(db: Database, owner: string) {
+  const [deletion] = await db
+    .select()
+    .from(instanceDeletions)
+    .where(eq(instanceDeletions.owner, owner));
+  if (!deletion?.acceptedAt || !deletion.deletedAt) return false;
+  const [instance] = await db.select().from(instances).where(eq(instances.owner, owner));
+  return !instance;
 }
 
 export async function registerMatch(env: Env, scope: InstanceScope, source: MatchRecord) {
@@ -107,6 +122,7 @@ export async function startMatch(env: Env, source: MatchRecord) {
       .select()
       .from(matches)
       .where(eq(matches.matchId, source.matchId));
+    if (!existing && (await instanceDeleted(db, source.owner))) return 'deleted' as const;
     if (!existing || !['waiting', 'running'].includes(existing.status))
       throw new Error('MATCH_CLOSED');
     const record = await privateResult(db, source);
@@ -122,6 +138,16 @@ export async function startMatch(env: Env, source: MatchRecord) {
         throw new Error('MATCH_START_CONFLICT');
       return;
     }
+    const [instance] = await db
+      .select()
+      .from(instances)
+      .where(eq(instances.owner, source.owner));
+    const [deletion] = await db
+      .select()
+      .from(instanceDeletions)
+      .where(eq(instanceDeletions.owner, source.owner));
+    if (!instance || instance.state === 'archived' || deletion)
+      throw new Error('MATCH_START_DENIED');
     const [withdrawn] = await db
       .select({ id: organizationAccounts.actorId })
       .from(organizationAccounts)
@@ -154,14 +180,18 @@ export async function startMatch(env: Env, source: MatchRecord) {
   });
 }
 
-export async function cancelMatch(env: Env, matchId: string) {
+export async function cancelMatch(env: Env, owner: string, matchId: string) {
   const db = database(env);
   return changeD1(db, async (writes) => {
     const [existing] = await db
       .select()
       .from(matches)
       .where(eq(matches.matchId, matchId));
-    if (!existing) throw new Error('MATCH_NOT_FOUND');
+    if (!existing) {
+      if (await instanceDeleted(db, owner)) return 'deleted' as const;
+      throw new Error('MATCH_NOT_FOUND');
+    }
+    if (existing.owner !== owner) throw new Error('MATCH_OWNER_MISMATCH');
     if (existing.status === 'cancelled') return;
     if (existing.status !== 'waiting') throw new Error('MATCH_NOT_WAITING');
     const cancelledAt = Date.now();

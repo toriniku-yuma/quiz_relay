@@ -13,10 +13,11 @@ import {
   competitions,
   federationMetadata,
   federationPeers,
+  federationPolicies,
   federationQuestionImports,
   federationResultDeliveries,
-  instanceRooms,
   instances,
+  matches,
   matchmakingSettings,
   organizations,
   questionAvailability,
@@ -29,25 +30,33 @@ import {
   rulesetVersions,
 } from '../src/worker/db/schema';
 import type { Env } from '../src/worker/env';
+import { authorizeForeignLogin } from '../src/worker/federation/login';
 import { manageFederation } from '../src/worker/federation/management';
 import { syncPeerMetadata } from '../src/worker/federation/metadata';
-import { authorizeParticipation } from '../src/worker/federation/participation';
+import { questionSharing } from '../src/worker/federation/question-management';
 import { foreignHistory } from '../src/worker/federation/results';
 import { matchRoomName, userRoomName } from '../src/worker/game/room-names';
 import { rules } from '../src/worker/game/rules';
-import { failureCode, handleError, notFound } from '../src/worker/http/handlers';
+import { failureCode, failureDetails } from '../src/worker/http/diagnostics';
+import { handleError, notFound } from '../src/worker/http/handlers';
 import game, { GameRoom, Matchmaker, Probe } from '../src/worker/index';
+import { matchmaker } from '../src/worker/matchmaking/instance';
 import {
   OrganizationError,
   requireAdministrator,
   validId,
 } from '../src/worker/organization/access';
-import { organizationIdentity } from '../src/worker/organization/database';
+import {
+  addInstance,
+  organizationIdentity,
+  setupOrganization,
+} from '../src/worker/organization/database';
 import { saveProfile } from '../src/worker/organization/profile';
 import { authorizeProbe } from '../src/worker/probes/authorize';
 import { publishQuestionCatalog } from '../src/worker/questions/catalog';
 import { QuestionPlan } from '../src/worker/questions/plan';
 import { participantContext } from '../src/worker/rooms/database';
+import { history } from '../src/worker/rooms/reports';
 import { roomResult } from '../src/worker/rooms/rpc';
 
 // Only this isolated QA entry owns setup controls. No test account or bypass enters the game entry.
@@ -71,6 +80,7 @@ app.onError((error, context) => {
     console.error(
       JSON.stringify({
         event: 'load_failed',
+        ...failureDetails(error),
         code,
       }),
     );
@@ -95,6 +105,34 @@ async function testIdentity(env: FederationTestEnv) {
     throw new OrganizationError('QA_TARGET_MISMATCH', 403);
   return { db, subject: env.TEST_ADMIN_SUBJECT, ...identity };
 }
+app.post('/api/probes/game/bootstrap', async (context) => {
+  const env = context.env;
+  if (
+    !['A', 'B'].includes(env.TEST_NODE) ||
+    !env.TEST_ADMIN_SUBJECT ||
+    env.FEDERATION_ORIGIN !==
+      `https://quiz-relay-federation-${env.TEST_NODE.toLowerCase()}-test.quiz-relay.workers.dev`
+  )
+    throw new OrganizationError('QA_TARGET_MISMATCH', 403);
+  const input = await context.req.json<Record<string, unknown>>();
+  if (
+    Object.keys(input).join(',') !== 'confirmation' ||
+    input.confirmation !== '新規検証環境'
+  )
+    throw new OrganizationError('INVALID_SETUP', 400);
+  const db = connectD1(env.GAME_D1);
+  await setupOrganization(
+    db,
+    { ...env, INITIAL_ADMIN_SUBJECT: env.TEST_ADMIN_SUBJECT },
+    env.TEST_ADMIN_SUBJECT,
+    { name: `連携検証 ${env.TEST_NODE}`, instanceName: `${env.TEST_NODE}-1` },
+  );
+  await addInstance(db, env.TEST_ADMIN_SUBJECT, {
+    id: crypto.randomUUID(),
+    name: `${env.TEST_NODE}-2`,
+  });
+  return context.json({ ready: true });
+});
 app.get('/api/probes/game/status', async (context) => {
   const { db } = await testIdentity(context.env);
   return context.json({
@@ -207,25 +245,33 @@ app.post('/api/probes/game/persistence', async (context) => {
     throw new OrganizationError('QA_TARGET_MISMATCH', 403);
   const rooms = await db
     .select()
-    .from(instanceRooms)
-    .where(eq(instanceRooms.instanceId, instance.id))
+    .from(matches)
+    .where(eq(matches.owner, instance.owner))
+    .orderBy(desc(matches.createdAt))
     .limit(10);
   return context.json({
-    rooms: await Promise.all(
-      rooms.map(async (row) => ({
-        roomId: row.roomId,
-        ...(await context.env.GAME_ROOM.get(
-          context.env.GAME_ROOM.idFromString(row.roomId),
-        ).persistenceStatus(instance.id)),
-      })),
-    ),
+    rooms: rooms.map((row) => ({
+      roomId: row.matchId,
+      matchId: row.matchId,
+      phase: ['waiting', 'cancelled'].includes(row.status)
+        ? 'WAITING'
+        : row.status === 'running'
+          ? 'REVEALING'
+          : 'FINISHED',
+      storage: ['confirmed', 'invalid'].includes(row.status)
+        ? 'confirmed'
+        : row.status === 'conflict'
+          ? 'conflict'
+          : 'pending',
+    })),
   });
 });
 app.post('/api/probes/game/deliveries', async (context) => {
   const { db, organization } = await testIdentity(context.env);
   const input = await context.req.json<Record<string, unknown>>();
-  if (Object.keys(input).join(',') !== 'instanceId')
+  if (!['instanceId', 'instanceId,matchId'].includes(Object.keys(input).sort().join(',')))
     throw new OrganizationError('INVALID_SETUP', 400);
+  const matchId = input.matchId === undefined ? undefined : validId(input.matchId);
   const [instance] = await db
     .select()
     .from(instances)
@@ -253,7 +299,14 @@ app.post('/api/probes/game/deliveries', async (context) => {
       quarantined: federationResultDeliveries.quarantined,
     })
     .from(federationResultDeliveries)
-    .where(eq(federationResultDeliveries.instanceId, instance.id))
+    .where(
+      and(
+        eq(federationResultDeliveries.instanceId, instance.id),
+        matchId === undefined
+          ? undefined
+          : eq(federationResultDeliveries.matchId, matchId),
+      ),
+    )
     .orderBy(
       desc(sql`json_extract(${federationResultDeliveries.payload}, '$.finishedAt')`),
     )
@@ -481,6 +534,104 @@ app.post('/api/probes/game/peer', async (context) => {
     });
   return context.json({ ok: true });
 });
+app.post('/api/probes/game/sharing', async (context) => {
+  const env = context.env,
+    { db, subject } = await testIdentity(env);
+  const input = await context.req.json<Record<string, unknown>>();
+  if (
+    Object.keys(input).sort().join(',') !== 'action,instanceId,peerInstanceId' ||
+    !['policy', 'import', 'resume'].includes(String(input.action))
+  )
+    throw new OrganizationError('INVALID_SETUP', 400);
+  const instanceId = validId(input.instanceId),
+    peerInstanceId = validId(input.peerInstanceId);
+  const [instance] = await db
+    .select()
+    .from(instances)
+    .where(eq(instances.id, instanceId));
+  if (instance?.name !== `${env.TEST_NODE}-1`)
+    throw new OrganizationError('QA_TARGET_MISMATCH', 403);
+  if (input.action === 'policy') {
+    await manageFederation(db, subject, {
+      operation: 'policy',
+      instanceId,
+      peerOrigin: env.PEER_ORIGIN,
+      peerInstanceId,
+    });
+    const [policy] = await db
+      .select()
+      .from(federationPolicies)
+      .where(
+        and(
+          eq(federationPolicies.instanceId, instanceId),
+          eq(federationPolicies.peerOrigin, env.PEER_ORIGIN),
+          eq(federationPolicies.peerInstanceId, peerInstanceId),
+        ),
+      );
+    return context.json(
+      await manageFederation(db, subject, {
+        operation: 'policies',
+        items: [
+          {
+            id: policy.id,
+            revision: policy.revision,
+            sendQuestions: true,
+            receiveQuestions: true,
+          },
+        ],
+      }),
+    );
+  }
+  const [existing] =
+    input.action === 'resume'
+      ? await db
+          .select()
+          .from(federationQuestionImports)
+          .where(
+            and(
+              eq(federationQuestionImports.instanceId, instanceId),
+              eq(federationQuestionImports.peerOrigin, env.PEER_ORIGIN),
+              eq(federationQuestionImports.sourceInstanceId, peerInstanceId),
+              eq(federationQuestionImports.enabled, true),
+            ),
+          )
+          .limit(1)
+      : [];
+  if (input.action === 'resume' && !existing)
+    throw new OrganizationError('IMPORT_NOT_FOUND', 404);
+  const id = existing ? existing.id : crypto.randomUUID();
+  if (input.action === 'import')
+    await questionSharing(env, subject, {
+      operation: 'import',
+      instanceId,
+      id,
+      revision: 0,
+      peerOrigin: env.PEER_ORIGIN,
+      sourceInstanceId: peerInstanceId,
+      config: {
+        categories: [],
+        targetCategoryId: crypto.randomUUID(),
+        difficulty: { '0': 0, '1': 1, '2': 2 },
+        fallback: 0,
+      },
+      enabled: true,
+      newCategoryName: '連携検証の共有問題',
+      newCategoryImportOnly: true,
+    });
+  if (!env.ACCOUNT_ERASURE) throw new OrganizationError('ERASURE_UNAVAILABLE', 503);
+  const response = await env.ACCOUNT_ERASURE.fetch(
+    'https://account-erasure.internal/maintenance',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: 'federationQuestions', importId: id }),
+    },
+  );
+  return new Response(response.body, {
+    status: response.status,
+    headers: response.headers,
+  });
+});
 app.post('/api/probes/game/sync', async (context) => {
   const env = context.env,
     { subject } = await testIdentity(env);
@@ -533,8 +684,30 @@ async function loadIdentity(env: FederationTestEnv, input: Record<string, unknow
   };
 }
 app.post('/api/probes/game/load/prepare', async (context) => {
-  await loadIdentity(context.env, await context.req.json<Record<string, unknown>>());
-  return context.json({ prepared: true });
+  const identity = await loadIdentity(
+    context.env,
+    await context.req.json<Record<string, unknown>>(),
+  );
+  return context.json({ prepared: true, actorId: identity.actorId });
+});
+app.post('/api/probes/game/load/results', async (context) => {
+  const input = await context.req.json<Record<string, unknown>>();
+  const identity = await loadIdentity(context.env, input);
+  const participant = await participantContext(
+    context.env,
+    identity.instance.id,
+    'room',
+    identity.subject,
+    undefined,
+    true,
+  );
+  return context.json({
+    ...(await history(context.env, participant, {
+      section: 'history',
+      matchId: validId(input.matchId),
+    })),
+    instanceId: identity.instance.id,
+  });
 });
 app.post('/api/probes/game/load/history', async (context) => {
   const input = await context.req.json<Record<string, unknown>>();
@@ -543,7 +716,22 @@ app.post('/api/probes/game/load/history', async (context) => {
     throw new OrganizationError('QA_TARGET_MISMATCH', 403);
   const page = await foreignHistory(context.env, identity.subject);
   return context.json({
-    history: page.history.map((entry) => ({ matchId: entry.matchId })),
+    history: page.history.map(({ matchId, reason, winnerId, finishedAt, players }) => ({
+      matchId,
+      reason,
+      winnerId,
+      finishedAt,
+      players: players.map(
+        ({ id, correct, mistakes, disqualified, forfeited, role }) => ({
+          id,
+          correct,
+          mistakes,
+          disqualified,
+          forfeited,
+          role,
+        }),
+      ),
+    })),
   });
 });
 app.post('/api/probes/game/load/config', async (context) => {
@@ -580,19 +768,34 @@ app.post('/api/probes/game/load/enter', async (context) => {
   if (input.mode === 'foreign') {
     if (context.env.TEST_NODE !== 'B')
       throw new OrganizationError('QA_TARGET_MISMATCH', 403);
-    return context.json(
-      await authorizeParticipation(context.env, identity.subject, {
+    const [metadata] = await identity.db
+      .select()
+      .from(federationMetadata)
+      .where(
+        and(
+          eq(federationMetadata.instanceId, identity.instance.id),
+          eq(federationMetadata.peerOrigin, context.env.PEER_ORIGIN),
+        ),
+      );
+    const target = metadata?.payload.instances.find(
+      (instance) => instance.name === 'A-2',
+    );
+    if (!target) throw new OrganizationError('QA_TARGET_MISMATCH', 403);
+    return context.json({
+      ...(await authorizeForeignLogin(context.env, identity.subject, {
         sourceOrganizationId: identity.organization.id,
-        hostInstanceId: '4ed56d67-fd75-4d02-8f0a-64966df2e897',
+        hostInstanceId: target.id,
         peerOrigin: context.env.PEER_ORIGIN,
         mode: 'ranked',
-        operationId,
-      }),
-    );
+        state: operationId,
+      })),
+      hostInstanceId: target.id,
+      sourceOrganizationId: identity.organization.id,
+    });
   }
   if (context.env.TEST_NODE !== 'A')
     throw new OrganizationError('QA_TARGET_MISMATCH', 403);
-  const maker = context.env.MATCHMAKER.getByName(identity.organization.id);
+  const maker = matchmaker(context.env);
   if (input.mode === 'ranked')
     return context.json(
       await maker.enter(
@@ -602,6 +805,7 @@ app.post('/api/probes/game/load/enter', async (context) => {
         { id: identity.instance.id, owner: identity.instance.owner },
         false,
         operationId,
+        identity.organization.name,
       ),
     );
   if (input.mode !== 'room') throw new OrganizationError('INVALID_LOAD_MODE', 400);
@@ -675,7 +879,7 @@ app.post('/api/probes/game/load/room', async (context) => {
   );
   if (input.action === 'leave') {
     return context.json(
-      await context.env.MATCHMAKER.getByName(identity.organization.id).cancel(
+      await matchmaker(context.env).cancel(
         identity.actorId,
         identity.runId,
         false,
@@ -684,12 +888,13 @@ app.post('/api/probes/game/load/room', async (context) => {
       ),
     );
   }
-  if (!['ready', 'start', 'leave', 'return'].includes(String(input.action)))
+  if (!['ready', 'start', 'leave', 'return', 'settings'].includes(String(input.action)))
     throw new OrganizationError('INVALID_LOAD_ACTION', 400);
   const result = roomResult(
     await lobby.mutateUserRoom(participant.actor, {
       action: input.action,
       ready: true,
+      settings: input.settings,
       revision: view.revision,
       operationId: validId(input.operationId),
     }),
@@ -717,12 +922,29 @@ app.get('/api/probes/game/load/socket', async (context) => {
   if (context.env.TEST_NODE !== 'A')
     throw new OrganizationError('QA_TARGET_MISMATCH', 403);
   if (parent) roomResult(await stub.userRoomView(identity.actorId, token));
-  else if (!(await stub.reservationIdentity(identity.actorId, token)))
-    throw new OrganizationError('SESSION_REQUIRED', 401);
+  else {
+    try {
+      await stub.reservationIdentity(identity.actorId, token);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'STALE_RESERVATION')
+        throw new OrganizationError('SESSION_REQUIRED', 401);
+      throw error;
+    }
+  }
   const headers = new Headers(context.req.raw.headers);
   headers.set('X-Game-Session', token);
   headers.set('X-Game-Instance', identity.instance.id);
-  return stub.fetch(new Request(context.req.raw, { headers }));
+  const response = await stub.fetch(new Request(context.req.raw, { headers }));
+  if (response.status === 101)
+    console.info(
+      JSON.stringify({
+        event: 'load_socket_opened',
+        connectionId: input.connection,
+        roomId: room,
+        socketKind: parent ? 'lobby' : 'game',
+      }),
+    );
+  return response;
 });
 app.route('/', game);
 export default Object.assign(app, {

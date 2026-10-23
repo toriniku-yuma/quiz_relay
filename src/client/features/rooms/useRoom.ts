@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { API_PATHS } from '../../../shared/api-paths';
 import type { RoomView } from '../../../shared/rooms';
+import { settings } from '../../../shared/settings';
 import { connectGameSocket } from '../game/connection';
 import { useGame } from '../game/useGame';
 import { useMutation } from '../moderation/useMutation';
+import { OrganizationRequestError } from '../organization/useOrganization';
 import { playRequest } from './api';
 
 export function useRoom(
@@ -21,6 +23,8 @@ export function useRoom(
   });
   const [room, setRoom] = useState<RoomView | null>(null),
     [error, setError] = useState(''),
+    [lobbyError, setLobbyError] = useState(''),
+    [connectionAttempt, setConnectionAttempt] = useState(0),
     [connection, setConnection] = useState('idle');
   const game = useGame(
     'formal',
@@ -38,7 +42,6 @@ export function useRoom(
     [],
   );
   useEffect(() => {
-    leaveGame();
     try {
       const saved = identity ? JSON.parse(sessionStorage.getItem(key) ?? 'null') : null;
       current.current = saved;
@@ -49,7 +52,7 @@ export function useRoom(
       setActive(null);
     }
     setRoom(null);
-  }, [identity, key, leaveGame]);
+  }, [identity, key]);
   const refresh = useCallback(async () => {
     if (!active) return;
     const result = await request<{ room: RoomView }>(
@@ -73,6 +76,7 @@ export function useRoom(
       setActive(next);
       setRestored(false);
       setError('');
+      setLobbyError('');
     },
     [key, leaveGame],
   );
@@ -87,6 +91,10 @@ export function useRoom(
     setRoom(null);
     leaveGame();
   }, [key, leaveGame]);
+  const reconnect = useCallback(() => {
+    setLobbyError('');
+    setConnectionAttempt((attempt) => attempt + 1);
+  }, []);
   const exit = useMutation(
     API_PATHS.roomLeave,
     (request) => {
@@ -102,6 +110,7 @@ export function useRoom(
     const timer = setTimeout(() => void retryExit.current({}), 1500);
     return () => clearTimeout(timer);
   }, [exit.uncertain, exit.busy]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 手動再接続では参加先・対戦状態を変えず、ロビー接続だけを作り直す。
   useEffect(() => {
     if (!active) return;
     const url = new URL(foreign?.lobbySocket ?? API_PATHS.roomSocket, location.origin);
@@ -109,7 +118,8 @@ export function useRoom(
     url.searchParams.set('room', active.id);
     url.searchParams.set('instance', active.instanceId);
     let live = true,
-      closed = false;
+      closed = false,
+      received = false;
     const stillActive = () => live && current.current === active;
     void request<{ room: RoomView }>(
       API_PATHS.roomView,
@@ -117,18 +127,19 @@ export function useRoom(
       active.instanceId,
     )
       .then((response) => {
-        if (stillActive()) {
+        if (stillActive() && !received) {
           closed = response.room.closed;
           setRoom(response.room);
+          setLobbyError('');
         }
       })
       .catch((caughtError) => {
-        if (!stillActive()) return;
+        if (!stillActive() || received) return;
         if (['ROOM_CLOSED', 'ROOM_NOT_FOUND'].includes(caughtError.code)) {
           leave();
           return;
         }
-        setError(caughtError.message);
+        setLobbyError(caughtError.message);
       });
     const disconnect = connectGameSocket(url, {
       sync: () => 'sync',
@@ -137,7 +148,7 @@ export function useRoom(
         if (stillActive()) setConnection(value);
       },
       error: (value) => {
-        if (stillActive()) setError(value);
+        if (stillActive()) setLobbyError(value);
       },
       released: () => {
         if (stillActive()) leave();
@@ -149,7 +160,9 @@ export function useRoom(
         if (value.type !== 'lobby' || !value.room || value.room.id !== active.id)
           return false;
         closed = value.room.closed;
+        received = true;
         setRoom(value.room);
+        setLobbyError('');
         return true;
       },
     });
@@ -157,23 +170,62 @@ export function useRoom(
       live = false;
       disconnect();
     };
-  }, [active, leave, request, foreign?.lobbySocket]);
+  }, [active, leave, request, foreign?.lobbySocket, connectionAttempt]);
   useEffect(() => {
     if (!room?.matchRoom || !active || room.id !== active.id) return;
+    const target = active;
     let live = true;
-    void request<{ room: string }>(
-      API_PATHS.roomGame,
-      { room: active.id },
-      active.instanceId,
-    )
-      .then((response) => {
-        if (live && current.current === active) attach(response.room);
-      })
-      .catch((caughtError) => {
-        if (live && current.current === active) setError(caughtError.message);
-      });
+    let retry: ReturnType<typeof setTimeout>;
+    const deadline = Date.now() + settings.connection.retryWindowMs;
+    const stillActive = () => live && current.current === active;
+    const timeout = setTimeout(() => {
+      if (stillActive()) {
+        setError(
+          '試合への接続を復旧できませんでした。通信状態を確認して再読み込みしてください。',
+        );
+        live = false;
+      }
+      clearTimeout(retry);
+    }, settings.connection.retryWindowMs);
+    async function connect() {
+      if (!stillActive()) return;
+      let response: { room: string };
+      try {
+        response = await request<{ room: string }>(
+          API_PATHS.roomGame,
+          { room: target.id },
+          target.instanceId,
+        );
+      } catch (caughtError) {
+        if (!stillActive()) return;
+        setError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : '試合への接続情報を取得できませんでした。',
+        );
+        const transient =
+          (caughtError instanceof OrganizationRequestError &&
+            (caughtError.status >= 500 || caughtError.status === 408)) ||
+          caughtError instanceof TypeError ||
+          (caughtError instanceof DOMException && caughtError.name === 'TimeoutError');
+        if (transient && Date.now() + settings.connection.retryIntervalMs < deadline)
+          retry = setTimeout(() => void connect(), settings.connection.retryIntervalMs);
+        else {
+          clearTimeout(timeout);
+          live = false;
+        }
+        return;
+      }
+      if (!stillActive()) return;
+      clearTimeout(timeout);
+      setError('');
+      attach(response.room);
+    }
+    void connect();
     return () => {
       live = false;
+      clearTimeout(retry);
+      clearTimeout(timeout);
     };
   }, [room?.matchRoom, room?.id, active, attach, request]);
   return {
@@ -181,8 +233,9 @@ export function useRoom(
     active,
     room,
     game,
-    error,
+    error: error || lobbyError,
     connection,
+    reconnect,
     refresh,
     join,
     leave,

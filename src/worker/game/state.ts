@@ -25,8 +25,6 @@ export { rules } from './rules.ts';
 
 export type State = {
   parentRoomId?: string;
-  reviewExpired?: boolean;
-  guestNamesExpired?: boolean;
   answerStats: {
     actorId: string;
     result: 'correct' | 'wrong' | 'timeout';

@@ -3,6 +3,7 @@ import { createPublicKey } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { importPKCS8, importSPKI } from 'jose';
 import { API_PATHS } from '../src/shared/api-paths.ts';
+import { FEDERATION_FRESH_MS } from '../src/shared/federation.ts';
 import { QUESTION_SYNC_FRESH_MS } from '../src/shared/federation-questions.ts';
 import {
   bodyHash,
@@ -107,6 +108,18 @@ async function main() {
     const result = ['a', 'b'].map((name) => {
       const node = config.env[name],
         privateNode = privateConfig.env[name];
+      for (const settings of [node, privateNode]) {
+        assert(
+          settings.observability.enabled && settings.observability.redact_query_string,
+          'LOG_CONFIGURATION_REQUIRED',
+        );
+        assert.deepEqual(
+          settings.observability.logs,
+          { enabled: true, persist: true, head_sampling_rate: 1, invocation_logs: false },
+          'LOG_PERSISTENCE_REQUIRED',
+        );
+        assert.equal(settings.observability.traces.enabled, false);
+      }
       assert(
         (privateNode.workers_dev ?? privateConfig.workers_dev) === false &&
           (privateNode.preview_urls ?? privateConfig.preview_urls) === false &&
@@ -133,7 +146,11 @@ async function main() {
         ),
         'DO_MISMATCH',
       );
-      assert(node.triggers.crons.includes('* * * * *'), 'CRON_MISSING');
+      assert(
+        JSON.stringify(node.triggers.crons) ===
+          JSON.stringify(['0 * * * *', '0 19 * * *']),
+        'CRON_MISSING',
+      );
       return { name, vars: node.vars, databaseId: node.d1_databases[0].database_id };
     });
     assert(
@@ -261,7 +278,9 @@ async function main() {
             row.instanceId === instance.id && row.peerOrigin === node.vars.PEER_ORIGIN,
         );
         assert(
-          metadata && !metadata.errorCode && Date.now() - metadata.lastSuccessAt < 90000,
+          metadata &&
+            !metadata.errorCode &&
+            Date.now() - metadata.lastSuccessAt < FEDERATION_FRESH_MS,
           'METADATA_STALE',
         );
       }
@@ -378,6 +397,21 @@ async function main() {
         ),
         'PRIVATE_EVIDENCE_EXPORTED',
       );
+    });
+    await check(`${label} signed stale-snapshot rejection`, async () => {
+      const changed = await signedRequest(
+        sender,
+        receiver,
+        API_PATHS.federationQuestionSync,
+        'questions.request',
+        'questions.response',
+        {
+          sourceInstanceId: receiver.instance,
+          targetInstanceId: sender.instance,
+          snapshot: '0'.repeat(64),
+        },
+      );
+      assert.deepEqual(changed.body, { code: 'QUESTION_SNAPSHOT_CHANGED' });
     });
   }
   assert(

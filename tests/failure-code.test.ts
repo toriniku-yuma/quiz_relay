@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { failureCode } from '../src/worker/http/handlers';
+import { failureCode } from '../src/worker/http/diagnostics';
 
 it('DB原因を辿って固定コードだけを返し、SQLや秘密を含む例外を公開しない', () => {
   const database = new Error('D1_ERROR: UNIQUE constraint failed: table.id');
